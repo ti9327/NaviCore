@@ -5,6 +5,9 @@ build/
 *.elf
 *.map
 
+# Exception: hosted assets in /model/ (e.g. transmitter model files)
+!model/*.bin
+
 # Editor / IDE
 .vscode/
 .idea/

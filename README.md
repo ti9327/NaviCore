@@ -1,5 +1,7 @@
 # RC Controller
 
+[**🚀 Launch the config tool →**](https://greghulette.github.io/RC-Controller/)
+
 WCB-based RC controller firmware for ESP32-S3 (WCB HW 3.2). Reads SBUS from an
 RC receiver, dispatches matrix buttons / switches / knobs to local and remote
 Maestros and WCB boards over ESP-NOW, and ships with a browser-based config

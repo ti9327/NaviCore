@@ -1,0 +1,22 @@
+# Arduino build artifacts
+build/
+*.hex
+*.bin
+*.elf
+*.map
+
+# Editor / IDE
+.vscode/
+.idea/
+*.code-workspace
+*.swp
+*.bak
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Claude Code worktree / session state
+.claude/

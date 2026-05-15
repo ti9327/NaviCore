@@ -428,6 +428,56 @@
       <div class="noconn" style="margin-top:4px">All HCR actions route through this destination. Set once, save to board.</div>
     </div>
 
+    <!-- WCB Network credentials — shared with all WCBs on this ESP-NOW system -->
+    <div class="sb-section">
+      <h3 style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span>WCB Network</span>
+        <span id="wcb-network-dirty"
+              style="display:none;font-size:9px;font-weight:700;background:var(--yellow);color:#000;padding:2px 8px;border-radius:10px;letter-spacing:0.5px">
+          REBOOT PENDING
+        </span>
+      </h3>
+      <div class="wcb-send-row">
+        <label>MAC Oct2:</label>
+        <input type="text" id="wcb-oct2" maxlength="2" placeholder="00"
+               style="width:54px;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;text-transform:uppercase"
+               oninput="onWcbHexInput('macOct2', this); updateWcbDirtyBadge()">
+        <small style="color:var(--muted);font-size:10px">hex</small>
+      </div>
+      <div class="wcb-send-row">
+        <label>MAC Oct3:</label>
+        <input type="text" id="wcb-oct3" maxlength="2" placeholder="00"
+               style="width:54px;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;text-transform:uppercase"
+               oninput="onWcbHexInput('macOct3', this); updateWcbDirtyBadge()">
+        <small style="color:var(--muted);font-size:10px">hex</small>
+      </div>
+      <div class="wcb-send-row">
+        <label>Password:</label>
+        <input type="text" id="wcb-password" maxlength="39" style="flex:1;min-width:0"
+               oninput="config.wcbNetwork.password = this.value; updateWcbDirtyBadge()">
+      </div>
+      <div class="wcb-send-row">
+        <label>Quantity:</label>
+        <input type="number" id="wcb-quantity" min="1" max="20" style="width:60px"
+               oninput="config.wcbNetwork.quantity = Math.max(1, Math.min(20, +this.value || 1)); updateWcbDirtyBadge()">
+      </div>
+      <div class="wcb-send-row">
+        <label>Device ID:</label>
+        <input type="number" id="wcb-deviceid" min="1" max="20" style="width:60px"
+               oninput="config.wcbNetwork.deviceId = Math.max(1, Math.min(20, +this.value || 1)); updateWcbDirtyBadge()">
+        <small style="color:var(--muted);font-size:10px">1-19 or 20</small>
+      </div>
+      <div class="btn-row" style="margin-top:8px">
+        <button class="btn btn-warn" id="btn-wcb-reboot" type="button" disabled
+                style="font-size:11px;padding:5px 12px"
+                onclick="rebootBoard()">⟳ Reboot Board</button>
+      </div>
+      <div class="noconn" style="margin-top:6px">
+        ESP-NOW credentials. Must match every other WCB on this system. Query a known WCB with <b>?WCBM</b> / <b>?WCBP</b> / <b>?WCBQ</b> over its USB serial port.
+        After Save to Board, hit <b>Reboot Board</b> (or power-cycle) — the running WCB client only reads these at boot.
+      </div>
+    </div>
+
     <!-- Maestro Locations — describes where each of the 8 logical Maestros is wired -->
     <div class="sb-section">
       <h3>Maestro Locations</h3>
@@ -1176,6 +1226,10 @@ let config = {
   // is set in Maestro Control Center.
   maestros:      Array.from({ length: NUM_MAESTRO_SLOTS },
                             (_, i) => ({ type: 0, device: 1 + i })),
+  // WCB network credentials — populated from device's wcb_config.h on first
+  // GET_CONFIG; user edits via the WCB Network sidebar section. Changes need
+  // a reboot to take effect (WCBClient initialises once in setup()).
+  wcbNetwork:    { macOct2: 0, macOct3: 0, password: '', quantity: 4, deviceId: 3 },
 };
 
 const modeLabels = ['', 'SW Down (Mode 1)', 'SW Mid (Mode 2)', 'SW Up (Mode 3)'];
@@ -1301,8 +1355,9 @@ function setConnected(v) {
   document.getElementById('conn-dot').className = 'status-dot' + (v ? ' connected' : '');
   document.getElementById('status-text').textContent = v ? 'Connected' : 'Disconnected';
   document.getElementById('btn-connect').textContent = v ? 'Disconnect' : 'Connect';
-  ['btn-refresh','btn-save','btn-defaults','btn-mon-start','btn-qs-send'].forEach(id => {
-    document.getElementById(id).disabled = !v;
+  ['btn-refresh','btn-save','btn-defaults','btn-mon-start','btn-qs-send','btn-wcb-reboot'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = !v;
   });
   setTerminalEnabled(v);
   document.getElementById('monitor-note').style.display = v ? 'none' : 'block';
@@ -1554,8 +1609,15 @@ function applyConfig(data) {
       config.maestros.push({ type: 0, device: 1 + config.maestros.length });
     }
   }
+  if (data.wcbNetwork) {
+    config.wcbNetwork = { ...config.wcbNetwork, ...data.wcbNetwork };
+  }
   document.getElementById('tapwin-input').value = config.tapWindowMs;
   applyHcrDestUI();
+  applyWcbNetworkUI();
+  // The values we just loaded are what the running WCBClient on the board
+  // was constructed with — snapshot them as the baseline for dirty tracking.
+  snapshotWcbBaseline();
   renderMaestroLocations();
   const mcEl = document.getElementById('cfg-matrix-ch');
   if (mcEl && config.matrixChannel) mcEl.value = config.matrixChannel;
@@ -1650,6 +1712,85 @@ function applyHcrDestUI() {
   const tSel = document.getElementById('hcr-transport');
   if (tSel) tSel.value = d.transport || 'serial';
   renderHcrDestFields();
+}
+
+// ── WCB Network sidebar ────────────────────────────────────────────────────
+// Baseline = the credentials the running WCBClient on the board was constructed
+// with (snapshotted on GET_CONFIG). WCBClient inits ONCE in firmware setup(),
+// so Save to Board persists new values to NVS but the running client keeps
+// using the baseline until a reboot. The dirty badge reflects exactly that.
+let wcbNetworkBaseline = null;
+
+function snapshotWcbBaseline() {
+  const w = config.wcbNetwork || {};
+  wcbNetworkBaseline = {
+    macOct2:  w.macOct2  | 0,
+    macOct3:  w.macOct3  | 0,
+    password: w.password || '',
+    quantity: w.quantity | 0,
+    deviceId: w.deviceId | 0,
+  };
+  updateWcbDirtyBadge();
+}
+
+function isWcbNetworkDirty() {
+  if (!wcbNetworkBaseline) return false;
+  const w = config.wcbNetwork || {};
+  return (w.macOct2  | 0) !== wcbNetworkBaseline.macOct2  ||
+         (w.macOct3  | 0) !== wcbNetworkBaseline.macOct3  ||
+         (w.password || '') !== wcbNetworkBaseline.password ||
+         (w.quantity | 0) !== wcbNetworkBaseline.quantity ||
+         (w.deviceId | 0) !== wcbNetworkBaseline.deviceId;
+}
+
+function updateWcbDirtyBadge() {
+  const badge = document.getElementById('wcb-network-dirty');
+  if (badge) badge.style.display = isWcbNetworkDirty() ? '' : 'none';
+}
+
+// Populates the WCB Network inputs from config.wcbNetwork. Hex octets are
+// rendered as uppercase 2-digit strings; password and counts are plain values.
+function applyWcbNetworkUI() {
+  const w = config.wcbNetwork
+    || (config.wcbNetwork = { macOct2: 0, macOct3: 0, password: '', quantity: 4, deviceId: 3 });
+  const oct2 = document.getElementById('wcb-oct2');
+  const oct3 = document.getElementById('wcb-oct3');
+  const pw   = document.getElementById('wcb-password');
+  const qty  = document.getElementById('wcb-quantity');
+  const did  = document.getElementById('wcb-deviceid');
+  if (oct2) oct2.value = (w.macOct2 || 0).toString(16).toUpperCase().padStart(2, '0');
+  if (oct3) oct3.value = (w.macOct3 || 0).toString(16).toUpperCase().padStart(2, '0');
+  if (pw)   pw.value   = w.password || '';
+  if (qty)  qty.value  = w.quantity || 4;
+  if (did)  did.value  = w.deviceId || 3;
+  updateWcbDirtyBadge();
+}
+
+// Parses a 1-2 char hex input and writes the byte into config.wcbNetwork[field].
+// Empty / invalid input falls back to 0; clamps to 0-255.
+function onWcbHexInput(field, el) {
+  const v = parseInt(el.value, 16);
+  config.wcbNetwork[field] = (isFinite(v) ? v & 0xFF : 0);
+}
+
+// Sends a REBOOT command to the firmware. The board ACKs then ESP.restart()s,
+// which drops the USB connection; the GUI will see a disconnect event and the
+// user reconnects to pick up the freshly-instantiated WCBClient.
+async function rebootBoard() {
+  if (!port) {
+    alert('Not connected to a board.');
+    return;
+  }
+  const msg = isWcbNetworkDirty()
+    ? 'Reboot the board?\n\nThe running WCB client will reload from NVS — make sure you ran Save to Board first, or the new credentials will be lost.'
+    : 'Reboot the board?';
+  if (!confirm(msg)) return;
+  try {
+    await sendJSON({ type: 'REBOOT' });
+    console.log('[REBOOT] sent — board will disconnect shortly');
+  } catch (err) {
+    console.warn('[REBOOT] send failed:', err);
+  }
 }
 
 function renderHcrDestFields() {
@@ -3137,6 +3278,18 @@ function exportConfigCsv() {
     rows.push(csvRow(pad(['config','funcBinding_mode','','' + config.funcBindings.mode])));
   }
 
+  // WCB Network credentials — one row per field. MAC octets are exported as
+  // uppercase 2-digit hex strings; the import parser uses parseInt(_, 16) to
+  // decode them so the round-trip is stable.
+  if (config.wcbNetwork) {
+    const w = config.wcbNetwork;
+    rows.push(csvRow(pad(['config','wcbMacOct2','','' + (w.macOct2 | 0).toString(16).toUpperCase().padStart(2, '0')])));
+    rows.push(csvRow(pad(['config','wcbMacOct3','','' + (w.macOct3 | 0).toString(16).toUpperCase().padStart(2, '0')])));
+    rows.push(csvRow(pad(['config','wcbPassword','','' + (w.password || '')])));
+    rows.push(csvRow(pad(['config','wcbQuantity','','' + (w.quantity | 0)])));
+    rows.push(csvRow(pad(['config','wcbDeviceId','','' + (w.deviceId | 0)])));
+  }
+
   // Global HCR destination — every HCR action shares this routing.
   if (config.hcrDest) {
     const d = config.hcrDest;
@@ -3280,12 +3433,15 @@ function handleConfigImportFile(event) {
         ...config,
         mappings: {},
         thresholds: config.thresholds ? config.thresholds.map(t => ({ ...t })) : defaultThresholds(),
-        // Preserve in-memory defaults for hcrDest/maestros unless the CSV
-        // explicitly contains them — then we replace.
+        // Preserve in-memory defaults for hcrDest/maestros/wcbNetwork unless
+        // the CSV explicitly contains them — then we replace.
         hcrDest:  config.hcrDest ? { ...config.hcrDest } : { transport: 'serial', port: 'S3' },
         maestros: Array.isArray(config.maestros)
                     ? config.maestros.map(m => ({ ...m }))
                     : Array.from({ length: NUM_MAESTRO_SLOTS }, (_, i) => ({ type: 0, device: 1 + i })),
+        wcbNetwork: config.wcbNetwork
+                      ? { ...config.wcbNetwork }
+                      : { macOct2: 0, macOct3: 0, password: '', quantity: 4, deviceId: 3 },
       };
       let csvHadHcrDest = false;
       let csvHadMaestros = false;
@@ -3336,6 +3492,23 @@ function handleConfigImportFile(event) {
           } else if (control === 'funcbinding_mode') {
             imported.funcBindings = imported.funcBindings || {};
             imported.funcBindings.mode = Number(value || channel || imported.funcBindings.mode || 0);
+          } else if (control === 'wcbmacoct2' || control === 'wcbmacoct3' ||
+                     control === 'wcbpassword' || control === 'wcbquantity' ||
+                     control === 'wcbdeviceid') {
+            imported.wcbNetwork = imported.wcbNetwork
+              || { macOct2: 0, macOct3: 0, password: '', quantity: 4, deviceId: 3 };
+            const raw = value || channel || '';
+            if (control === 'wcbmacoct2') {
+              imported.wcbNetwork.macOct2 = (parseInt(raw, 16) | 0) & 0xFF;
+            } else if (control === 'wcbmacoct3') {
+              imported.wcbNetwork.macOct3 = (parseInt(raw, 16) | 0) & 0xFF;
+            } else if (control === 'wcbpassword') {
+              imported.wcbNetwork.password = String(raw);
+            } else if (control === 'wcbquantity') {
+              imported.wcbNetwork.quantity = Math.max(1, Math.min(20, Number(raw) || 1));
+            } else if (control === 'wcbdeviceid') {
+              imported.wcbNetwork.deviceId = Math.max(1, Math.min(20, Number(raw) || 1));
+            }
           }
           continue;
         }
@@ -3487,6 +3660,7 @@ function handleConfigImportFile(event) {
       renderSwitchHighlights();
       renderKnobHighlights();
       applyHcrDestUI();
+      applyWcbNetworkUI();
       renderMaestroLocations();
     } catch (err) {
       alert('Import failed: ' + err.message);
@@ -3656,6 +3830,7 @@ document.querySelectorAll('input[name="unit-toggle"]').forEach(r => {
 // ── Init ─────────────────────────────────────────────────────────────────
 applyUnitToggle();
 applyHcrDestUI();
+applyWcbNetworkUI();
 renderMaestroLocations();
 renderAssignmentList();
 updateButtonHighlights();

@@ -22,11 +22,12 @@ tool that talks to the board over Web Serial.
 ## Layout
 
 ```
-RC_Controller.ino    Main sketch
+RC-Controller.ino    Main sketch
 rc_config.h          Config struct, JSON serialisation, NVS persistence
 wcb_config.h         WCB board ID / port definitions
 sbus_reader.h        SBUS decoder + passthrough tee
-config_tool/        Browser-based config GUI (Web Serial)
+config_tool/         Browser-based config GUI (Web Serial)
+model/               FrSky X18 transmitter model file (download below)
 ```
 
 ## Required libraries
@@ -41,6 +42,20 @@ Local libraries (drop into your sketchbook `libraries/` folder):
 - `WCBClient` + `WCBStream`
 - `PololuMaestro`
 - `hcr`
+
+## Downloads
+
+### FrSky X18 transmitter model
+
+The RC Controller assumes a specific channel map (SBUS channels 1–15 for
+sticks/switches, CH7 for the button matrix, etc.). To save you setting all
+that up by hand on your X18, the matching transmitter model file is bundled
+in the [`model/`](model) folder.
+
+- [**Download:** r2 web gui.bin](<model/r2 web gui.bin>) — ~2.4 KB
+
+Copy it to the `MODELS/` folder on the X18's SD card, then load it from the
+transmitter's model select screen.
 
 ## Configuration tool
 

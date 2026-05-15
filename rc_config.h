@@ -2,7 +2,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 //  rc_config.h — RC button / switch / knob mapping configuration
 //
-//  Adapted from Body_Controller_ESP32_GUI for the RC_Controller project.
+//  Adapted from Body_Controller_ESP32_GUI for the RC-Controller project.
 //  Key changes vs. BC version:
 //    • Action types: RA_ESPNOW/RA_HCR/RA_ANIM → RA_WCB_UNICAST/RA_WCB_BROADCAST/
 //                   RA_MAESTRO_LOCAL/RA_MAESTRO_REMOTE
@@ -15,6 +15,7 @@
 #include <Arduino.h>
 #include <Preferences.h>
 #include <ArduinoJson.h>
+#include "wcb_config.h"   // provides WCB_MAC_OCT2/3, WCB_PASSWORD, WCB_QUANTITY, WCB_DEVICE_ID used as factory defaults
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Action types
@@ -203,6 +204,20 @@ struct RcHcrDest {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+//  WCB network credentials — formerly compile-time #defines in wcb_config.h.
+//  Now NVS-backed and runtime-editable via the GUI. The values in wcb_config.h
+//  are used only as factory defaults on a fresh device with no stored NVS data.
+//  Changes take effect on the next boot (WCBClient constructs once in setup()).
+// ─────────────────────────────────────────────────────────────────────────────
+struct RcWcbNetwork {
+  uint8_t macOct2;        // 2nd octet of shared WCB MAC scheme (0x00-0xFF)
+  uint8_t macOct3;        // 3rd octet of shared WCB MAC scheme
+  char    password[40];   // ESP-NOW network password (≤39 chars)
+  uint8_t quantity;       // total WCBs in the system
+  uint8_t deviceId;       // this RC controller's unique ID (1-19, or 20 for special slot)
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 //  Maestro locations (8 slots, ID 1-8)
 //
 //  Buttons / knobs / actions reference Maestros by their slot ID (1-8) only —
@@ -250,6 +265,7 @@ struct RcConfig {
   RcFuncBindings funcBindings;
   RcHcrDest      hcrDest;
   RcMaestroSlot  maestros[RC_NUM_MAESTROS];  // ID 1-8 → maestros[0..7]
+  RcWcbNetwork   wcbNetwork;
 };
 
 extern RcConfig rcConfig;
@@ -388,6 +404,14 @@ void rcConfigLoadDefaults() {
     rcConfig.maestros[i].type   = 0;
     rcConfig.maestros[i].device = (uint8_t)(1 + i);   // 1, 2, ..., 8
   }
+
+  // WCB network credentials — compile-time defaults from wcb_config.h.
+  // NVS overrides these at runtime (see rcConfigLoadNVS).
+  rcConfig.wcbNetwork.macOct2  = WCB_MAC_OCT2;
+  rcConfig.wcbNetwork.macOct3  = WCB_MAC_OCT3;
+  strlcpy(rcConfig.wcbNetwork.password, WCB_PASSWORD, sizeof(rcConfig.wcbNetwork.password));
+  rcConfig.wcbNetwork.quantity = WCB_QUANTITY;
+  rcConfig.wcbNetwork.deviceId = WCB_DEVICE_ID;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -586,6 +610,14 @@ String rcConfigToJSON() {
     mObj["device"] = rcConfig.maestros[i].device;      // 0-127 protocol, 255 compact
   }
 
+  // WCB network credentials — required for ESP-NOW peer setup.
+  JsonObject wcbObj = doc.createNestedObject("wcbNetwork");
+  wcbObj["macOct2"]  = rcConfig.wcbNetwork.macOct2;
+  wcbObj["macOct3"]  = rcConfig.wcbNetwork.macOct3;
+  wcbObj["password"] = rcConfig.wcbNetwork.password;
+  wcbObj["quantity"] = rcConfig.wcbNetwork.quantity;
+  wcbObj["deviceId"] = rcConfig.wcbNetwork.deviceId;
+
   String out;
   serializeJson(doc, out);
   return out;
@@ -717,6 +749,17 @@ bool rcConfigFromJSON(const JsonObject& doc) {
       strlcpy(rcConfig.hcrDest.target, hcrObj["port"]   | "S3", sizeof(rcConfig.hcrDest.target));
       rcConfig.hcrDest.wcbPort = 0;
     }
+  }
+
+  if (doc.containsKey("wcbNetwork")) {
+    JsonObject wcbObj = doc["wcbNetwork"];
+    rcConfig.wcbNetwork.macOct2  = (uint8_t)(wcbObj["macOct2"]  | rcConfig.wcbNetwork.macOct2);
+    rcConfig.wcbNetwork.macOct3  = (uint8_t)(wcbObj["macOct3"]  | rcConfig.wcbNetwork.macOct3);
+    strlcpy(rcConfig.wcbNetwork.password,
+            wcbObj["password"] | rcConfig.wcbNetwork.password,
+            sizeof(rcConfig.wcbNetwork.password));
+    rcConfig.wcbNetwork.quantity = (uint8_t)(wcbObj["quantity"] | rcConfig.wcbNetwork.quantity);
+    rcConfig.wcbNetwork.deviceId = (uint8_t)(wcbObj["deviceId"] | rcConfig.wcbNetwork.deviceId);
   }
   return true;
 }
@@ -857,6 +900,19 @@ void rcConfigSaveNVS() {
     }
     String s; serializeJson(doc, s);
     prefs.putString("mae", s);
+  }
+
+  // WCB network credentials
+  {
+    DynamicJsonDocument doc(256);
+    JsonObject root = doc.to<JsonObject>();
+    root["macOct2"]  = rcConfig.wcbNetwork.macOct2;
+    root["macOct3"]  = rcConfig.wcbNetwork.macOct3;
+    root["password"] = rcConfig.wcbNetwork.password;
+    root["quantity"] = rcConfig.wcbNetwork.quantity;
+    root["deviceId"] = rcConfig.wcbNetwork.deviceId;
+    String s; serializeJson(doc, s);
+    prefs.putString("wcb", s);
   }
 
   prefs.end();
@@ -1006,6 +1062,21 @@ void rcConfigLoadNVS() {
         strlcpy(rcConfig.hcrDest.target, root["port"]   | "S3", sizeof(rcConfig.hcrDest.target));
         rcConfig.hcrDest.wcbPort = 0;
       }
+    }
+  }
+
+  if (prefs.isKey("wcb")) {
+    String s = prefs.getString("wcb", "");
+    DynamicJsonDocument doc(256);
+    if (deserializeJson(doc, s) == DeserializationError::Ok) {
+      JsonObject root = doc.as<JsonObject>();
+      rcConfig.wcbNetwork.macOct2  = (uint8_t)(root["macOct2"]  | rcConfig.wcbNetwork.macOct2);
+      rcConfig.wcbNetwork.macOct3  = (uint8_t)(root["macOct3"]  | rcConfig.wcbNetwork.macOct3);
+      strlcpy(rcConfig.wcbNetwork.password,
+              root["password"] | rcConfig.wcbNetwork.password,
+              sizeof(rcConfig.wcbNetwork.password));
+      rcConfig.wcbNetwork.quantity = (uint8_t)(root["quantity"] | rcConfig.wcbNetwork.quantity);
+      rcConfig.wcbNetwork.deviceId = (uint8_t)(root["deviceId"] | rcConfig.wcbNetwork.deviceId);
     }
   }
 

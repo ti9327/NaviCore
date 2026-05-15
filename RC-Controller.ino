@@ -1,5 +1,5 @@
 // =============================================================================
-//  RC_Controller.ino — WCB-based RC Controller
+//  RC-Controller.ino — WCB-based RC Controller
 //  Target hardware: WCB HW 3.2 (ESP32-S3)
 //
 //  Features:
@@ -21,6 +21,7 @@
 //    {"type":"START_MONITOR"}    → streams PWM_UPDATE every 50 ms until STOP_MONITOR
 //    {"type":"STOP_MONITOR"}     → {"type":"ACK","ok":true}
 //    {"type":"RESET_DEFAULTS"}   → reloads factory defaults, replies ACK
+//    {"type":"REBOOT"}           → ACKs then restarts the board after 250 ms
 //    {"type":"TRIGGER","mode":1,"btn":3,"tap":1} → fires virtual button press
 //    {"type":"WCB_SEND","target":2,"cmd":":PP100"} → manually fires WCB command
 //
@@ -86,7 +87,11 @@
 //  stream (remote), and which Pololu device # to embed.  See maestroWrite()
 //  below for the dispatch.
 // =============================================================================
-WCBClient wcb(WCB_MAC_OCT2, WCB_MAC_OCT3, WCB_PASSWORD, WCB_QUANTITY, WCB_DEVICE_ID);
+// Heap-allocated in setup() AFTER NVS config loads, so the values come from
+// rcConfig.wcbNetwork (GUI-editable) instead of the wcb_config.h #defines.
+// The #defines are still the factory defaults on a fresh device — see
+// rcConfigLoadDefaults() in rc_config.h.
+WCBClient* wcb = nullptr;
 
 // One stream, broadcast to all WCBs.  target_port is ignored for broadcast.
 WCBStream maestroBroadcast(/*target_wcb=*/0, /*target_port=*/0);
@@ -409,9 +414,9 @@ static void executeHcrAction(const RcAction& a) {
     Serial.printf("[DISPATCH] HCR→WCB%u:port%u  %s",
                   target, dest.wcbPort, payload.c_str());
     if (target == 0) {
-      wcb.broadcast(payload.c_str());
+      wcb->broadcast(payload.c_str());
     } else if (target >= 1 && target <= WCB_MAX_BOARDS) {
-      wcb.sendRaw(target, dest.wcbPort,
+      wcb->sendRaw(target, dest.wcbPort,
                   (const uint8_t*)payload.c_str(), payload.length());
     }
     return;
@@ -467,13 +472,13 @@ void rcExecuteAction(const RcAction& a) {
       uint8_t boardId = (uint8_t)atoi(a.target);
       if (boardId >= 1 && boardId <= WCB_MAX_BOARDS) {
         Serial.printf("[DISPATCH] WCB→%d  %s\n", boardId, a.cmd);
-        wcb.send(boardId, a.cmd);
+        wcb->send(boardId, a.cmd);
       }
       break;
     }
     case RA_WCB_BROADCAST:
       Serial.printf("[DISPATCH] WCB broadcast  %s\n", a.cmd);
-      wcb.broadcast(a.cmd);
+      wcb->broadcast(a.cmd);
       break;
 
     case RA_MAESTRO_LOCAL:
@@ -870,6 +875,14 @@ void handleSerialInput() {
           rcConfigLoadDefaults();
           Serial.println("{\"type\":\"ACK\",\"ok\":true}");
 
+        } else if (strcmp(type,"REBOOT")==0) {
+          // ACK first so the GUI hears the reply, then restart after a brief
+          // delay so the USB TX buffer drains before the reset kills it.
+          Serial.println("{\"type\":\"ACK\",\"ok\":true,\"msg\":\"rebooting\"}");
+          Serial.flush();
+          delay(250);
+          ESP.restart();
+
         } else if (strcmp(type,"TRIGGER")==0) {
           int mode = hdr["mode"] | 1;
           int btn  = hdr["btn"]  | 0;
@@ -885,8 +898,8 @@ void handleSerialInput() {
         } else if (strcmp(type,"WCB_SEND")==0) {
           int target     = hdr["target"] | 0;
           const char* cmd = hdr["cmd"]   | "";
-          if (target == 0)                               wcb.broadcast(cmd);
-          else if (target >= 1 && target <= WCB_MAX_BOARDS) wcb.send((uint8_t)target, cmd);
+          if (target == 0)                               wcb->broadcast(cmd);
+          else if (target >= 1 && target <= WCB_MAX_BOARDS) wcb->send((uint8_t)target, cmd);
           Serial.println("{\"type\":\"ACK\",\"ok\":true}");
 
         } else {
@@ -903,16 +916,17 @@ void handleSerialInput() {
           else
             fn = serialInputBuf[2] - '0';
           switch (fn) {
-            case 1:  Serial.println("RC_Controller — WCB HW 3.2"); break;
+            case 1:  Serial.println("RC-Controller — WCB HW 3.2"); break;
             case 2:  ESP.restart(); break;
             case 9:  dumpSbusState(); break;
             case 10: sbusLiveDump = !sbusLiveDump;
                      Serial.printf("SBUS live dump %s\n", sbusLiveDump ? "ON (1Hz)" : "OFF"); break;
             case 11: {
-              Serial.printf("WCB device ID: %d  quantity: %d\n", WCB_DEVICE_ID, WCB_QUANTITY);
+              Serial.printf("WCB device ID: %d  quantity: %d\n",
+                            rcConfig.wcbNetwork.deviceId, rcConfig.wcbNetwork.quantity);
               Serial.print("  Board status: ");
-              for (int i = 1; i <= WCB_QUANTITY; i++)
-                Serial.printf("WCB%d=%s ", i, wcb.isOnline(i) ? "UP" : "dn");
+              for (int i = 1; i <= rcConfig.wcbNetwork.quantity; i++)
+                Serial.printf("WCB%d=%s ", i, wcb->isOnline(i) ? "UP" : "dn");
               Serial.println();
               break;
             }
@@ -941,7 +955,7 @@ void setup() {
   Serial.setRxBufferSize(4096);
   Serial.begin(115200);
   delay(1500);
-  Serial.println("\n\n=== RC_Controller (WCB HW 3.2) ===");
+  Serial.println("\n\n=== RC-Controller (WCB HW 3.2) ===");
 
   // Status LED
   statusLed.begin();
@@ -973,20 +987,28 @@ void setup() {
   Serial.printf("[SBUS] OUT on SoftwareSerial TX (GPIO%d) — byte-streaming passthrough\n",
                 SBUS_OUT_PIN);
 
-  // WCB Client — sets STA mode + custom MAC + inits ESP-NOW
-  // No WiFi AP or web server — ESP-NOW only.
-  if (!wcb.begin()) {
-    Serial.println("[WCB] ERROR: wcb.begin() failed — check wcb_config.h");
-    setStatusLed(C_ORANGE, 200);
-  } else {
-    wcb.onCommand(onWCBCommand);
-    Serial.printf("[WCB] Joined network as device ID %d (quantity=%d)\n",
-                  WCB_DEVICE_ID, WCB_QUANTITY);
-  }
-
-  // RC Config: defaults then NVS overrides
+  // RC Config: defaults then NVS overrides. Must run BEFORE constructing
+  // WCBClient so the network credentials come from rcConfig.wcbNetwork.
   rcConfigLoadDefaults();
   rcConfigLoadNVS();
+
+  // WCB Client — sets STA mode + custom MAC + inits ESP-NOW.
+  // No WiFi AP or web server — ESP-NOW only.  Credentials come from NVS
+  // (editable via the GUI's "WCB Network" sidebar); a reboot is required
+  // for credential changes to take effect.
+  wcb = new WCBClient(rcConfig.wcbNetwork.macOct2,
+                      rcConfig.wcbNetwork.macOct3,
+                      rcConfig.wcbNetwork.password,
+                      rcConfig.wcbNetwork.quantity,
+                      rcConfig.wcbNetwork.deviceId);
+  if (!wcb->begin()) {
+    Serial.println("[WCB] ERROR: wcb->begin() failed — check WCB Network settings in GUI");
+    setStatusLed(C_ORANGE, 200);
+  } else {
+    wcb->onCommand(onWCBCommand);
+    Serial.printf("[WCB] Joined network as device ID %d (quantity=%d)\n",
+                  rcConfig.wcbNetwork.deviceId, rcConfig.wcbNetwork.quantity);
+  }
 
   // Clear state
   memset(pendingActions, 0, sizeof(pendingActions));
@@ -994,7 +1016,7 @@ void setup() {
   serialInputBuf.reserve(256);
 
   setStatusLed(C_BLUE, 10);
-  Serial.println("[RC_Controller] Setup complete.");
+  Serial.println("[RC-Controller] Setup complete.");
   Serial.println("  Connect config_tool/index.html via Web Serial for configuration.");
   Serial.println("  CLI: #L01=info  #L09=SBUS dump  #L10=live  #L11=WCB status  #L12=RC state");
   Serial.println("  Send PING to test. Send GET_CONFIG to read mappings.");
@@ -1005,7 +1027,7 @@ void setup() {
 // =============================================================================
 void loop() {
   // WCB — heartbeats, ACKs, WCBStream flushes
-  wcb.update();
+  if (wcb) wcb->update();
 
   // SBUS
   processSbus();

@@ -169,8 +169,27 @@ bool          lostFrameOld          = false;
 bool          sbusLiveDump          = false;
 unsigned long sbusLiveDumpLastMs    = 0;
 
-int oldValueMatrix  = 100;
+int oldValueMatrix  = 100;   // raw matrix SBUS value — kept fresh for status/diagnostics
 int oldValueMode    = 100;
+
+// ── Matrix-button edge state machine ─────────────────────────────────────────
+// Replaces the old raw-value-delta gate (abs(mxVal-oldValueMatrix) >= 5) that
+// silently dropped fast re-presses of the same button (the value was identical
+// across the two sampled SBUS frames so no "edge" was seen).
+//
+// Asymmetric debounce:
+//   • A press FIRES only after the decoded button is stable for
+//     MATRIX_DEBOUNCE_FRAMES consecutive frames — rejects single-frame noise /
+//     resistor-ladder sweep transients.
+//   • The detector RE-ARMS on a SINGLE neutral/gap frame (decoded == 0) — so a
+//     fast re-press registers even if the channel only dips to neutral for one
+//     SBUS frame between presses.
+// Only a true sub-frame tap (press+release inside one ~7-14 ms frame interval)
+// is now unrecoverable — a hard SBUS-protocol limit, not logic.
+#define MATRIX_DEBOUNCE_FRAMES 2
+bool matrixArmed     = true;   // true → ready to accept the next press
+int  matrixCandidate = 0;      // decoded button currently being debounced
+int  matrixCandCount = 0;      // consecutive frames matrixCandidate has held
 
 // =============================================================================
 //  Mode state
@@ -744,13 +763,32 @@ void processSbus() {
     else                    FunctionSwState = 3;
   }
 
-  // Button matrix
+  // Button matrix — edge-detected with an asymmetric debounce (see
+  // matrixArmed/Candidate state above). Decodes EVERY frame instead of
+  // gating on raw value delta, so a fast re-press of the same button is no
+  // longer dropped.
   int mxCh = rcConfig.matrixChannel;
   if (mxCh >= 1 && mxCh <= 24) {
     int mxVal = sbusValues[mxCh - 1];
-    if (abs(mxVal - oldValueMatrix) >= 5) {
-      oldValueMatrix = mxVal;
-      RCRadio_Matrix_Buttons(mxVal);
+    oldValueMatrix = mxVal;                 // keep fresh for status/diagnostics
+    int decoded = pwmToButton(mxVal);       // 0 = neutral / between-band gap
+    if (decoded == 0) {
+      // Neutral/gap — re-arm on a single frame so quick re-presses register.
+      matrixArmed     = true;
+      matrixCandidate = 0;
+      matrixCandCount = 0;
+    } else {
+      if (decoded == matrixCandidate) {
+        if (matrixCandCount < MATRIX_DEBOUNCE_FRAMES) matrixCandCount++;
+      } else {
+        matrixCandidate = decoded;
+        matrixCandCount = 1;
+      }
+      // Fire once when a button has been stable long enough AND we're armed.
+      if (matrixArmed && matrixCandCount >= MATRIX_DEBOUNCE_FRAMES) {
+        matrixArmed = false;                // consume — needs a neutral frame to re-arm
+        RCRadio_Matrix_Buttons(mxVal);
+      }
     }
   }
 

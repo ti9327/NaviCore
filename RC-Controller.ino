@@ -94,7 +94,14 @@
 WCBClient* wcb = nullptr;
 
 // One stream, broadcast to all WCBs.  target_port is ignored for broadcast.
-WCBStream maestroBroadcast(/*target_wcb=*/0, /*target_port=*/0);
+//
+// MUST be constructed AFTER `wcb` (in setup()): WCBStream's constructor
+// self-registers with the WCBClient singleton via WCBClient::instance(), and
+// that registration is what makes wcb->update() drive this stream's flush.
+// If it were a global it would construct at static-init time — before the
+// heap-allocated WCBClient exists — and silently fail to register, so no
+// Maestro bytes would ever leave the board over ESP-NOW.
+WCBStream* maestroBroadcast = nullptr;
 
 // =============================================================================
 //  Aux serial ports S3, S4  +  dedicated SBUS OUT
@@ -264,7 +271,8 @@ static void maestroWrite(uint8_t id, uint8_t cmd_compact,
   if (slot.type == 0) return;          // disabled
   if (slot.device > 127) return;       // invalid Pololu device #
 
-  Stream* dest = (slot.type == 1) ? (Stream*)&Serial2 : (Stream*)&maestroBroadcast;
+  Stream* dest = (slot.type == 1) ? (Stream*)&Serial2 : (Stream*)maestroBroadcast;
+  if (!dest) return;                    // remote slot but stream not yet up
   uint8_t hdr[3] = { 0xAA, slot.device, (uint8_t)(cmd_compact & 0x7F) };
   dest->write(hdr, 3);
   if (payload && plen) dest->write(payload, plen);
@@ -404,6 +412,7 @@ static void executeHcrAction(const RcAction& a) {
 
   if (dest.transport == 1) {
     // ── WCB transport (raw forward via ESP-NOW) ────────────────────────────
+    if (!wcb) { Serial.println("[DISPATCH] HCR-WCB: wcb not ready — skipped"); return; }
     String payload = hcrFormatCommand(a.fn, a.chan, a.track);
     if (payload.length() == 0) {
       Serial.printf("[DISPATCH] HCR-WCB: bad fn=%u chan=%d track=%d — skipped\n",
@@ -411,13 +420,26 @@ static void executeHcrAction(const RcAction& a) {
       return;
     }
     uint8_t target = (uint8_t)atoi(dest.target);
-    Serial.printf("[DISPATCH] HCR→WCB%u:port%u  %s",
+    Serial.printf("[DISPATCH] HCR→WCB%u:port%u  %s\n",
                   target, dest.wcbPort, payload.c_str());
     if (target == 0) {
-      wcb->broadcast(payload.c_str());
+      bool ok = wcb->broadcast(payload.c_str());
+      Serial.printf("[DISPATCH] HCR-WCB broadcast %s\n", ok ? "OK" : "FAIL");
     } else if (target >= 1 && target <= WCB_MAX_BOARDS) {
-      wcb->sendRaw(target, dest.wcbPort,
-                  (const uint8_t*)payload.c_str(), payload.length());
+      // sendRaw() silently rejects a port outside 1-5 — surface that here so a
+      // misconfigured HCR Destination doesn't fail invisibly.
+      if (dest.wcbPort < 1 || dest.wcbPort > 5) {
+        Serial.printf("[DISPATCH] HCR-WCB: invalid port %u (must be 1-5) — "
+                      "check HCR Destination in the config tool, not sent\n",
+                      dest.wcbPort);
+      } else {
+        bool ok = wcb->sendRaw(target, dest.wcbPort,
+                               (const uint8_t*)payload.c_str(), payload.length());
+        Serial.printf("[DISPATCH] HCR-WCB sendRaw(WCB%u, port%u, %u bytes) %s\n",
+                      target, dest.wcbPort, payload.length(), ok ? "OK" : "FAIL");
+      }
+    } else {
+      Serial.printf("[DISPATCH] HCR-WCB: target %u out of range — not sent\n", target);
     }
     return;
   }
@@ -664,12 +686,27 @@ static void dispatchHcrVolume(uint8_t audioChan, uint8_t vol) {
   executeHcrAction(a);
 }
 
+// Per-knob last-processed raw SBUS value. Knobs only re-dispatch when their
+// channel moves past KNOB_CHANGE_DEADBAND counts — otherwise a stationary
+// stick/knob would spam a Maestro/HCR command on every SBUS frame (~70+/s),
+// and SBUS line jitter (±1-2 counts) would do the same. Matches the ≥5
+// deadband the matrix/mode selectors already use. Sentinel 0xFFFF forces the
+// first frame through so the initial position is always sent.
+#define KNOB_CHANGE_DEADBAND 5
+static uint16_t lastKnobRaw[RC_NUM_KNOBS] = {
+  0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF
+};
+
 void processKnobs() {
   for (int i = 0; i < RC_NUM_KNOBS; i++) {
     RcKnob& kn = rcConfig.knobs[i];
     if (kn.channel < 1 || kn.channel > 24) continue;
     if (kn.function == KF_NONE || kn.outputCount == 0) continue;
     uint16_t raw = sbusValues[kn.channel - 1];
+
+    // Only dispatch when the source actually moved (or on the first frame).
+    if (abs((int)raw - (int)lastKnobRaw[i]) < KNOB_CHANGE_DEADBAND) continue;
+    lastKnobRaw[i] = raw;
 
     for (uint8_t o = 0; o < kn.outputCount && o < RC_KNOB_MAX_OUTPUTS; o++) {
       const RcKnobOutput& out = kn.outputs[o];
@@ -1009,6 +1046,12 @@ void setup() {
     Serial.printf("[WCB] Joined network as device ID %d (quantity=%d)\n",
                   rcConfig.wcbNetwork.deviceId, rcConfig.wcbNetwork.quantity);
   }
+
+  // Construct the broadcast Maestro stream AFTER wcb exists. WCBStream's
+  // constructor self-registers with the WCBClient singleton; doing this here
+  // (rather than at global scope) is what guarantees wcb->update() actually
+  // drives the stream's flush so remote Maestro bytes go out over ESP-NOW.
+  maestroBroadcast = new WCBStream(/*target_wcb=*/0, /*target_port=*/0);
 
   // Clear state
   memset(pendingActions, 0, sizeof(pendingActions));

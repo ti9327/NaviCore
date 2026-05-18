@@ -327,10 +327,10 @@
   <span id="status-text">Disconnected</span>
   <button class="btn btn-primary" id="btn-connect">Connect</button>
   <button class="btn btn-blue"    id="btn-refresh" disabled>Refresh</button>
-  <button class="btn btn-success" id="btn-save"    disabled>Save to Board</button>
-  <button class="btn btn-warn"    id="btn-defaults" disabled>Reset Defaults</button>
-  <button class="btn btn-ghost" id="btn-export-cfg" type="button">Export Config CSV</button>
-  <button class="btn btn-ghost" id="btn-import-cfg" type="button">Import Config CSV</button>
+  <button class="btn btn-success" id="btn-save"    disabled>Save</button>
+  <button class="btn btn-ghost" id="btn-hwsetup" type="button">Config</button>
+  <button class="btn btn-ghost" id="btn-export-cfg" type="button">Export</button>
+  <button class="btn btn-ghost" id="btn-import-cfg" type="button">Import</button>
   <button class="btn btn-ghost" id="btn-calibrate" type="button">Calibrate RC</button>
 </div>
 <input id="cfg-import-file" type="file" accept=".csv,text/csv" style="display:none">
@@ -414,115 +414,9 @@
       <div class="noconn" style="margin-top:4px">Time window for multi-tap detection</div>
     </div>
 
-    <!-- Global HCR destination — every HCR action shares this -->
-    <div class="sb-section">
-      <h3>HCR Destination</h3>
-      <div class="wcb-send-row">
-        <label>Via:</label>
-        <select id="hcr-transport" onchange="renderHcrDestFields()" style="font-size:12px">
-          <option value="serial">Serial</option>
-          <option value="wcb">WCB</option>
-        </select>
-      </div>
-      <div class="wcb-send-row" id="hcr-dest-fields"></div>
-      <div class="noconn" style="margin-top:4px">All HCR actions route through this destination. Set once, save to board.</div>
-    </div>
-
-    <!-- Global MP3 Trigger destination — every MP3 action shares this -->
-    <div class="sb-section">
-      <h3>MP3 Destination</h3>
-      <div class="wcb-send-row">
-        <label>Via:</label>
-        <select id="mp3-transport" onchange="renderMp3DestFields()" style="font-size:12px">
-          <option value="serial">Serial (local)</option>
-          <option value="wcb">WCB</option>
-        </select>
-      </div>
-      <div class="wcb-send-row" id="mp3-dest-fields"></div>
-      <div class="noconn" style="margin-top:4px">All MP3 Trigger actions route here. <b>Serial</b> = MP3 Trigger wired to this controller's S3/S4. <b>WCB</b> = wired to a WCB (configured there with <b>?MP3,S&lt;port&gt;</b>). Set once, save to board.</div>
-    </div>
-
-    <!-- Aux serial port baud — single source of truth for S3/S4 line rate -->
-    <div class="sb-section">
-      <h3>Aux Serial Ports</h3>
-      <div class="wcb-send-row">
-        <label>S3 baud:</label>
-        <input type="number" id="aux-baud-s3" min="1200" max="57600" step="100" value="9600"
-               style="width:80px;font-size:12px"
-               title="S3 line rate. 9600 for HCR; 38400 for an MP3 Trigger v2. Keep ≤57600 (bit-banged SoftwareSerial)."
-               oninput="config.auxBaud.S3 = Math.max(1200, Math.min(57600, parseInt(this.value,10)||9600))">
-      </div>
-      <div class="wcb-send-row">
-        <label>S4 baud:</label>
-        <input type="number" id="aux-baud-s4" min="1200" max="57600" step="100" value="9600"
-               style="width:80px;font-size:12px"
-               title="S4 line rate. 9600 for HCR; 38400 for an MP3 Trigger v2. Keep ≤57600 (bit-banged SoftwareSerial)."
-               oninput="config.auxBaud.S4 = Math.max(1200, Math.min(57600, parseInt(this.value,10)||9600))">
-      </div>
-      <div class="noconn" style="margin-top:4px">One port = one device = one baud. HCR-local / MP3-local / Serial actions all use the port's baud here. Reboot (or re-save) for changes to take effect.</div>
-    </div>
-
-    <!-- WCB Network credentials — shared with all WCBs on this ESP-NOW system -->
-    <div class="sb-section">
-      <h3 style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-        <span>WCB Network</span>
-        <span id="wcb-network-dirty"
-              style="display:none;font-size:9px;font-weight:700;background:var(--yellow);color:#000;padding:2px 8px;border-radius:10px;letter-spacing:0.5px">
-          REBOOT PENDING
-        </span>
-      </h3>
-      <div class="wcb-send-row">
-        <label>MAC Oct2:</label>
-        <input type="text" id="wcb-oct2" maxlength="2" placeholder="00"
-               style="width:54px;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;text-transform:uppercase"
-               oninput="onWcbHexInput('macOct2', this); updateWcbDirtyBadge()">
-        <small style="color:var(--muted);font-size:10px">hex</small>
-      </div>
-      <div class="wcb-send-row">
-        <label>MAC Oct3:</label>
-        <input type="text" id="wcb-oct3" maxlength="2" placeholder="00"
-               style="width:54px;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;text-transform:uppercase"
-               oninput="onWcbHexInput('macOct3', this); updateWcbDirtyBadge()">
-        <small style="color:var(--muted);font-size:10px">hex</small>
-      </div>
-      <div class="wcb-send-row">
-        <label>Password:</label>
-        <input type="text" id="wcb-password" maxlength="39" style="flex:1;min-width:0"
-               oninput="config.wcbNetwork.password = this.value; updateWcbDirtyBadge()">
-      </div>
-      <div class="wcb-send-row">
-        <label>Quantity:</label>
-        <input type="number" id="wcb-quantity" min="1" max="20" style="width:60px"
-               oninput="config.wcbNetwork.quantity = Math.max(1, Math.min(20, +this.value || 1)); updateWcbDirtyBadge()">
-      </div>
-      <div class="wcb-send-row">
-        <label>Device ID:</label>
-        <input type="number" id="wcb-deviceid" min="1" max="20" style="width:60px"
-               oninput="config.wcbNetwork.deviceId = Math.max(1, Math.min(20, +this.value || 1)); updateWcbDirtyBadge()">
-        <small style="color:var(--muted);font-size:10px">1-19 or 20</small>
-      </div>
-      <div class="btn-row" style="margin-top:8px">
-        <button class="btn btn-warn" id="btn-wcb-reboot" type="button" disabled
-                style="font-size:11px;padding:5px 12px"
-                onclick="rebootBoard()">⟳ Reboot Board</button>
-      </div>
-      <div class="noconn" style="margin-top:6px">
-        ESP-NOW credentials. Must match every other WCB on this system. Query a known WCB with <b>?WCBM</b> / <b>?WCBP</b> / <b>?WCBQ</b> over its USB serial port.
-        After Save to Board, hit <b>Reboot Board</b> (or power-cycle) — the running WCB client only reads these at boot.
-      </div>
-    </div>
-
-    <!-- Maestro Locations — describes where each of the 8 logical Maestros is wired -->
-    <div class="sb-section">
-      <h3>Maestro Locations</h3>
-      <div id="maestro-locations" style="display:flex;flex-direction:column;gap:6px"></div>
-      <div class="noconn" style="margin-top:6px">
-        Defines where each logical Maestro lives. Buttons/knobs only pick
-        "Maestro 1-8" and don't care about the wiring. Every physical Maestro
-        must have a unique Pololu device # (0-127) set in Maestro Control Center —
-        the value here must match it so only the addressed Maestro responds.
-      </div>
-    </div>
+    <!-- Hardware-setup panels (WCB Network, HCR/MP3 Destination, Aux Serial,
+         Maestro Locations) live in the Hardware Setup modal — see #hwsetup-modal.
+         Opened via the "⚙ Hardware Setup" button in the top bar. -->
 
     <!-- WCB quick-send (uses firmware's WCB_SEND handler) -->
     <div class="sb-section">
@@ -1069,6 +963,160 @@
   </div>
 </div>
 
+<!-- ── Hardware Setup Modal — configure-once wiring/credentials ── -->
+<div class="modal-overlay" id="hwsetup-modal">
+  <div class="modal" style="width:680px">
+    <div class="modal-header">
+      <span class="modal-title">Hardware Setup</span>
+      <button class="btn btn-ghost" onclick="closeHwSetup()" style="padding:4px 10px">✕</button>
+    </div>
+    <div class="modal-body">
+
+      <!-- WCB Network credentials — shared with all WCBs on this ESP-NOW system -->
+      <div class="sb-section">
+        <h3 style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <span>WCB Network</span>
+          <span id="wcb-network-dirty"
+                style="display:none;font-size:9px;font-weight:700;background:var(--yellow);color:#000;padding:2px 8px;border-radius:10px;letter-spacing:0.5px">
+            REBOOT PENDING
+          </span>
+        </h3>
+        <div class="wcb-send-row">
+          <label>MAC Oct2:</label>
+          <input type="text" id="wcb-oct2" maxlength="2" placeholder="00"
+                 style="width:54px;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;text-transform:uppercase"
+                 oninput="onWcbHexInput('macOct2', this); updateWcbDirtyBadge()">
+          <small style="color:var(--muted);font-size:10px">hex</small>
+        </div>
+        <div class="wcb-send-row">
+          <label>MAC Oct3:</label>
+          <input type="text" id="wcb-oct3" maxlength="2" placeholder="00"
+                 style="width:54px;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;text-transform:uppercase"
+                 oninput="onWcbHexInput('macOct3', this); updateWcbDirtyBadge()">
+          <small style="color:var(--muted);font-size:10px">hex</small>
+        </div>
+        <div class="wcb-send-row">
+          <label>Password:</label>
+          <input type="text" id="wcb-password" maxlength="39" style="flex:1;min-width:0"
+                 oninput="config.wcbNetwork.password = this.value; updateWcbDirtyBadge()">
+        </div>
+        <div class="wcb-send-row">
+          <label>Quantity:</label>
+          <input type="number" id="wcb-quantity" min="1" max="20" style="width:60px"
+                 oninput="config.wcbNetwork.quantity = Math.max(1, Math.min(20, +this.value || 1)); updateWcbDirtyBadge()">
+        </div>
+        <div class="wcb-send-row">
+          <label>Device ID:</label>
+          <input type="number" id="wcb-deviceid" min="1" max="20" style="width:60px"
+                 oninput="config.wcbNetwork.deviceId = Math.max(1, Math.min(20, +this.value || 1)); updateWcbDirtyBadge()">
+          <small style="color:var(--muted);font-size:10px">1-19 or 20</small>
+        </div>
+        <div class="btn-row" style="margin-top:8px">
+          <button class="btn btn-warn" id="btn-wcb-reboot" type="button" disabled
+                  style="font-size:11px;padding:5px 12px"
+                  onclick="rebootBoard()">⟳ Reboot Board</button>
+        </div>
+        <div class="noconn" style="margin-top:6px">
+          ESP-NOW credentials. Must match every other WCB on this system. Query a known WCB with <b>?WCBM</b> / <b>?WCBP</b> / <b>?WCBQ</b> over its USB serial port.
+          After Save to Board, hit <b>Reboot Board</b> (or power-cycle) — the running WCB client only reads these at boot.
+        </div>
+      </div>
+
+      <!-- Global HCR destination — every HCR action shares this -->
+      <div class="sb-section">
+        <h3>HCR Destination</h3>
+        <div class="wcb-send-row">
+          <label>Via:</label>
+          <select id="hcr-transport" onchange="renderHcrDestFields()" style="font-size:12px">
+            <option value="serial">Serial</option>
+            <option value="wcb">WCB</option>
+          </select>
+        </div>
+        <div class="wcb-send-row" id="hcr-dest-fields"></div>
+        <div class="noconn" style="margin-top:4px">All HCR actions route through this destination. Set once, save to board.</div>
+      </div>
+
+      <!-- Global MP3 Trigger destination — every MP3 action shares this -->
+      <div class="sb-section">
+        <h3>MP3 Destination</h3>
+        <div class="wcb-send-row">
+          <label>Via:</label>
+          <select id="mp3-transport" onchange="renderMp3DestFields()" style="font-size:12px">
+            <option value="serial">Serial (local)</option>
+            <option value="wcb">WCB</option>
+          </select>
+        </div>
+        <div class="wcb-send-row" id="mp3-dest-fields"></div>
+        <div class="noconn" style="margin-top:4px">All MP3 Trigger actions route here. <b>Serial</b> = MP3 Trigger wired to this controller's S3/S4. <b>WCB</b> = wired to a WCB (configured there with <b>?MP3,S&lt;port&gt;</b>). Set once, save to board.</div>
+      </div>
+
+      <!-- Serial port baud — single source of truth for S3/S4 + Maestro bus -->
+      <div class="sb-section">
+        <h3>Serial Port Baud</h3>
+        <div class="wcb-send-row">
+          <label>Maestro (S2):</label>
+          <input type="number" id="aux-baud-maestro" min="1200" max="115200" step="100" value="115200"
+                 style="width:80px;font-size:12px"
+                 title="Local Maestro bus (Serial2 hardware UART). Must match each wired Maestro's Serial Settings (or its Detect Baud mode). Remote/Kyber Maestros are unaffected."
+                 oninput="config.auxBaud.maestro = Math.max(1200, Math.min(115200, parseInt(this.value,10)||115200))">
+        </div>
+        <div class="wcb-send-row">
+          <label>S3 baud:</label>
+          <input type="number" id="aux-baud-s3" min="1200" max="57600" step="100" value="9600"
+                 style="width:80px;font-size:12px"
+                 title="S3 line rate. 9600 for HCR; 38400 for an MP3 Trigger v2. Keep ≤57600 (bit-banged SoftwareSerial)."
+                 oninput="config.auxBaud.S3 = Math.max(1200, Math.min(57600, parseInt(this.value,10)||9600))">
+        </div>
+        <div class="wcb-send-row">
+          <label>S4 baud:</label>
+          <input type="number" id="aux-baud-s4" min="1200" max="57600" step="100" value="9600"
+                 style="width:80px;font-size:12px"
+                 title="S4 line rate. 9600 for HCR; 38400 for an MP3 Trigger v2. Keep ≤57600 (bit-banged SoftwareSerial)."
+                 oninput="config.auxBaud.S4 = Math.max(1200, Math.min(57600, parseInt(this.value,10)||9600))">
+        </div>
+        <div class="noconn" style="margin-top:4px"><b>Maestro (S2)</b> = local Pololu Maestro bus (up to 115200). <b>S3/S4</b> = aux ports for HCR-local / MP3-local / Serial actions (one port = one device = one baud, ≤57600). Reboot (or re-save) for changes to take effect.</div>
+      </div>
+
+      <!-- Button matrix tap detection tuning -->
+      <div class="sb-section">
+        <h3>Button Matrix</h3>
+        <div class="wcb-send-row">
+          <label>Debounce (frames):</label>
+          <input type="number" id="matrix-debounce-input" min="1" max="4" step="1" value="1"
+                 style="width:60px;font-size:12px"
+                 title="Consecutive in-band SBUS frames a button must hold before a press is accepted. 1 = fastest (safe for a digital SBUS source). Raise to 2-4 only for a noisy analog transmitter matrix."
+                 oninput="config.matrixDebounceFrames = Math.max(1, Math.min(4, parseInt(this.value,10)||1))">
+          <small style="color:var(--muted);font-size:10px">1 = fastest</small>
+        </div>
+        <div class="noconn" style="margin-top:4px">
+          Frames the matrix channel must hold a button before it registers. At ~111&nbsp;fps each frame ≈ 9&nbsp;ms.
+          <b>1</b> is correct for a digital SBUS source (no analog sweep to filter) and resolves taps ~2× faster.
+          Raise to 2–4 only if driving from a physical resistor-ladder transmitter matrix. Applies on Save — no reboot.
+        </div>
+      </div>
+
+      <!-- Maestro Locations — describes where each of the 8 logical Maestros is wired -->
+      <div class="sb-section" style="border-bottom:none">
+        <h3>Maestro Locations</h3>
+        <div id="maestro-locations" style="display:flex;flex-direction:column;gap:6px"></div>
+        <div class="noconn" style="margin-top:6px">
+          Defines where each logical Maestro lives. Buttons/knobs only pick
+          "Maestro 1-8" and don't care about the wiring. Every physical Maestro
+          must have a unique Pololu device # (0-127) set in Maestro Control Center —
+          the value here must match it so only the addressed Maestro responds.
+        </div>
+      </div>
+
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-warn" id="btn-defaults" disabled
+              style="margin-right:auto" type="button">Restore Defaults</button>
+      <button class="btn btn-success" id="btn-hwsetup-save" disabled type="button">Save</button>
+      <button class="btn btn-ghost" onclick="closeHwSetup()">Done</button>
+    </div>
+  </div>
+</div>
+
 <!-- ── Calibration Modal ── -->
 <div class="modal-overlay" id="calibration-modal">
   <div class="modal calib-wide-modal">
@@ -1119,7 +1167,8 @@
     <div class="modal-footer">
       <button class="btn btn-ghost"   onclick="clearModalDispatch()">Clear All</button>
       <button class="btn btn-ghost"   onclick="closeModal()">Cancel</button>
-      <button class="btn btn-success" onclick="saveModalDispatch()">Apply</button>
+      <button class="btn btn-success" onclick="saveModalDispatch()"
+              title="Apply this mapping and save the full config to the board (same as the top-bar Save). Updates the page only if not connected.">Apply</button>
     </div>
   </div>
 </div>
@@ -1132,6 +1181,9 @@ let port = null;
 let reader = null;
 let writer = null;
 let readBuffer = '';
+let disconnecting = false;   // true while disconnect() tears down — stops the
+                             // read loop from re-acquiring a reader (which
+                             // would deadlock port.close()).
 let isMonitoring = false;
 let currentMode  = 1;
 let editingBtn   = null;
@@ -1249,6 +1301,7 @@ const switchDefaults = {
 let config = {
   tapWindowMs:   500,
   matrixChannel: 7,
+  matrixDebounceFrames: 1,
   funcBindings: { mode: 4 },
   thresholds:    defaultThresholds(),
   mappings:      {},
@@ -1270,7 +1323,7 @@ let config = {
   mp3Dest:       { transport: 'wcb', target: '2', port: 'S3' },
   // Aux SoftwareSerial port baud — single source of truth for S3/S4 line rate.
   // HCR-local, MP3-local, and Serial actions all use the port at this baud.
-  auxBaud:       { S3: 9600, S4: 9600 },
+  auxBaud:       { S3: 9600, S4: 9600, maestro: 115200 },
 };
 
 const modeLabels = ['', 'SW Down (Mode 1)', 'SW Mid (Mode 2)', 'SW Up (Mode 3)'];
@@ -1405,20 +1458,49 @@ document.getElementById('btn-connect').addEventListener('click', async () => {
   }
 });
 
+// Resolve when `p` settles OR after `ms` — whichever first. Never rejects, so
+// a wedged serial op (stuck write / cancel / close) can't freeze teardown.
+function settleWithin(p, ms) {
+  return Promise.race([
+    Promise.resolve(p).then(() => {}, () => {}),
+    new Promise(res => setTimeout(res, ms)),
+  ]);
+}
+
 async function disconnect() {
-  if (isMonitoring) await stopMonitor();
-  try { if (reader) { await reader.cancel(); reader = null; } } catch(e) {}
-  try { if (writer) { writer.releaseLock(); writer = null; } } catch(e) {}
-  try { await port.close(); } catch(e) {}
-  port = null;
-  setConnected(false);
+  if (disconnecting) return;          // re-entrancy guard (rapid clicks)
+  disconnecting = true;               // stop startReading() re-acquiring a reader
+  try {
+    // Best-effort STOP_MONITOR — bounded so a back-pressured write can't hang.
+    if (isMonitoring && writer) {
+      await settleWithin(sendJSON({ type: 'STOP_MONITOR' }), 400);
+    }
+    isMonitoring = false;
+
+    // Cancel the read loop. With `disconnecting` set, startReading() exits
+    // instead of grabbing a new reader, so the stream is left unlocked.
+    if (reader) { await settleWithin(reader.cancel(), 800); reader = null; }
+
+    try { if (writer) writer.releaseLock(); } catch (_) {}
+    writer = null;
+
+    if (port) { await settleWithin(port.close(), 800); }
+  } finally {
+    port = null;
+    disconnecting = false;
+    setConnected(false);
+    const ms = document.getElementById('btn-mon-start');
+    const mx = document.getElementById('btn-mon-stop');
+    if (ms) ms.disabled = true;
+    if (mx) mx.disabled = true;
+  }
 }
 
 function setConnected(v) {
   document.getElementById('conn-dot').className = 'status-dot' + (v ? ' connected' : '');
   document.getElementById('status-text').textContent = v ? 'Connected' : 'Disconnected';
   document.getElementById('btn-connect').textContent = v ? 'Disconnect' : 'Connect';
-  ['btn-refresh','btn-save','btn-defaults','btn-mon-start','btn-qs-send','btn-wcb-reboot'].forEach(id => {
+  ['btn-refresh','btn-save','btn-hwsetup-save','btn-defaults','btn-mon-start','btn-qs-send','btn-wcb-reboot'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.disabled = !v;
   });
@@ -1581,7 +1663,7 @@ initTerminal();
 // ── Read loop ──────────────────────────────────────────────────────────────
 async function startReading() {
   const decoder = new TextDecoder();
-  while (port && port.readable) {
+  while (port && port.readable && !disconnecting) {
     try {
       reader = port.readable.getReader();
       try {
@@ -1601,7 +1683,7 @@ async function startReading() {
         reader = null;
       }
     } catch (e) {
-      if (!port) break;
+      if (!port || disconnecting) break;
       console.warn('Read recovered after:', e.name || 'error', '— continuing');
       readBuffer = '';
       await new Promise(r => setTimeout(r, 50));
@@ -1658,6 +1740,8 @@ function handleBoardMessage(line) {
 function applyConfig(data) {
   if (!data) return;
   if (data.tapWindowMs   !== undefined) config.tapWindowMs   = data.tapWindowMs;
+  if (data.matrixDebounceFrames !== undefined)
+    config.matrixDebounceFrames = Math.max(1, Math.min(4, +data.matrixDebounceFrames || 1));
   if (data.matrixChannel !== undefined) config.matrixChannel = data.matrixChannel;
   if (data.funcBindings)               config.funcBindings  = data.funcBindings;
   if (data.thresholds)  config.thresholds = data.thresholds;
@@ -1682,6 +1766,8 @@ function applyConfig(data) {
     config.auxBaud = { ...config.auxBaud, ...data.auxBaud };
   }
   document.getElementById('tapwin-input').value = config.tapWindowMs;
+  { const el = document.getElementById('matrix-debounce-input');
+    if (el) el.value = config.matrixDebounceFrames ?? 1; }
   applyHcrDestUI();
   applyWcbNetworkUI();
   applyMp3DestUI();
@@ -1785,17 +1871,20 @@ function applyHcrDestUI() {
   renderHcrDestFields();
 }
 
-// ── Aux serial port baud sidebar ───────────────────────────────────────────
-// Single source of truth for S3/S4 line rate. Clamps to 1200-57600 (bit-banged
-// SoftwareSerial on ESP32-S3 chokes above ~57600).
+// ── Serial port baud panel ─────────────────────────────────────────────────
+// Single source of truth for S3/S4 (bit-banged SoftwareSerial, clamp ≤57600)
+// and the local Maestro bus on Serial2 (hardware UART, allows up to 115200).
 function applyAuxBaudUI() {
-  const a = config.auxBaud || (config.auxBaud = { S3: 9600, S4: 9600 });
+  const a = config.auxBaud || (config.auxBaud = { S3: 9600, S4: 9600, maestro: 115200 });
   a.S3 = Math.max(1200, Math.min(57600, parseInt(a.S3, 10) || 9600));
   a.S4 = Math.max(1200, Math.min(57600, parseInt(a.S4, 10) || 9600));
+  a.maestro = Math.max(1200, Math.min(115200, parseInt(a.maestro, 10) || 115200));
   const s3 = document.getElementById('aux-baud-s3');
   const s4 = document.getElementById('aux-baud-s4');
+  const ms = document.getElementById('aux-baud-maestro');
   if (s3) s3.value = a.S3;
   if (s4) s4.value = a.S4;
+  if (ms) ms.value = a.maestro;
 }
 
 // ── MP3 Destination sidebar ────────────────────────────────────────────────
@@ -3096,10 +3185,14 @@ function renderSwitchHighlights() {
 }
 
 // Dispatch Apply / Clear All to the right handler.
-function saveModalDispatch() {
+async function saveModalDispatch() {
+  // Write the modal's edits into the in-memory config (closes modal + renders)…
   if (editingKnob)     saveKnobModal();
   else if (editingSw)  saveSwitchModal();
   else                 saveButton();
+  // …then push the whole config to the board, same as the top-bar Save.
+  // No-op if not connected (sendLine bails when there's no writer).
+  try { await saveConfigToBoard(); } catch (_) {}
 }
 function clearModalDispatch() {
   if (editingKnob)     clearKnobModal();
@@ -3130,10 +3223,12 @@ document.querySelectorAll('.mode-tab').forEach(tab => {
 // ════════════════════════════════════════════════════════════════════════════
 document.getElementById('btn-refresh').addEventListener('click', () => sendJSON({ type: 'GET_CONFIG' }));
 
-document.getElementById('btn-save').addEventListener('click', async () => {
+async function saveConfigToBoard() {
   config.tapWindowMs = +(document.getElementById('tapwin-input').value) || 500;
   await sendJSON({ type: 'SET_CONFIG', data: config });
-});
+}
+document.getElementById('btn-save').addEventListener('click', saveConfigToBoard);
+document.getElementById('btn-hwsetup-save').addEventListener('click', saveConfigToBoard);
 
 document.getElementById('btn-defaults').addEventListener('click', async () => {
   if (!confirm('Reset all button mappings to factory defaults?')) return;
@@ -3146,6 +3241,26 @@ document.getElementById('btn-export-cfg').addEventListener('click', exportConfig
 document.getElementById('btn-import-cfg').addEventListener('click', () => document.getElementById('cfg-import-file').click());
 document.getElementById('btn-calibrate').addEventListener('click', openCalibrationModal);
 document.getElementById('cfg-import-file').addEventListener('change', handleConfigImportFile);
+
+// ── Hardware Setup modal ────────────────────────────────────────────────────
+function openHwSetup() {
+  // Re-sync the fields from config in case it changed since last open.
+  applyWcbNetworkUI();
+  applyHcrDestUI();
+  applyMp3DestUI();
+  applyAuxBaudUI();
+  renderMaestroLocations();
+  { const el = document.getElementById('matrix-debounce-input');
+    if (el) el.value = config.matrixDebounceFrames ?? 1; }
+  document.getElementById('hwsetup-modal').classList.add('open');
+}
+function closeHwSetup() {
+  document.getElementById('hwsetup-modal').classList.remove('open');
+}
+document.getElementById('btn-hwsetup').addEventListener('click', openHwSetup);
+document.getElementById('hwsetup-modal').addEventListener('click', e => {
+  if (e.target === document.getElementById('hwsetup-modal')) closeHwSetup();
+});
 
 document.getElementById('btn-mon-start').addEventListener('click', async () => {
   await sendJSON({ type: 'START_MONITOR' });
@@ -3461,6 +3576,7 @@ function exportConfigCsv() {
 
   rows.push(csvRow(pad(['config','matrixChannel','','' + (config.matrixChannel || '')])));
   rows.push(csvRow(pad(['config','tapWindowMs','','' + (config.tapWindowMs || '')])));
+  rows.push(csvRow(pad(['config','matrixDebounceFrames','','' + (config.matrixDebounceFrames || 1)])));
   if (config.funcBindings && config.funcBindings.mode !== undefined) {
     rows.push(csvRow(pad(['config','funcBinding_mode','','' + config.funcBindings.mode])));
   }
@@ -3504,10 +3620,11 @@ function exportConfigCsv() {
     }
   }
 
-  // Aux serial port baud (S3/S4) — single source of truth for the line rate.
+  // Serial port baud (S3/S4 + local Maestro bus) — single source of truth.
   if (config.auxBaud) {
     rows.push(csvRow(pad(['config','auxBaudS3','','' + (config.auxBaud.S3 || 9600)])));
     rows.push(csvRow(pad(['config','auxBaudS4','','' + (config.auxBaud.S4 || 9600)])));
+    rows.push(csvRow(pad(['config','maestroBaud','','' + (config.auxBaud.maestro || 115200)])));
   }
 
   // Maestro Locations — 8 slot definitions describing each logical Maestro's
@@ -3648,7 +3765,7 @@ function handleConfigImportFile(event) {
                       : { macOct2: 0, macOct3: 0, password: '', quantity: 4, deviceId: 3 },
         mp3Dest: config.mp3Dest ? { ...config.mp3Dest }
                                  : { transport: 'wcb', target: '2', port: 'S3' },
-        auxBaud: config.auxBaud ? { ...config.auxBaud } : { S3: 9600, S4: 9600 },
+        auxBaud: config.auxBaud ? { ...config.auxBaud } : { S3: 9600, S4: 9600, maestro: 115200 },
       };
       let csvHadHcrDest = false;
       let csvHadMaestros = false;
@@ -3696,6 +3813,8 @@ function handleConfigImportFile(event) {
             imported.matrixChannel = Number(value || channel || imported.matrixChannel);
           } else if (control === 'tapwindowms') {
             imported.tapWindowMs = Number(value || channel || imported.tapWindowMs);
+          } else if (control === 'matrixdebounceframes') {
+            imported.matrixDebounceFrames = Math.max(1, Math.min(4, parseInt(value || channel, 10) || 1));
           } else if (control === 'funcbinding_mode') {
             imported.funcBindings = imported.funcBindings || {};
             imported.funcBindings.mode = Number(value || channel || imported.funcBindings.mode || 0);
@@ -3729,10 +3848,13 @@ function handleConfigImportFile(event) {
               imported.mp3Dest.port = (String(raw).toUpperCase() === 'S4') ? 'S4' : 'S3';
             }
           } else if (control === 'auxbauds3' || control === 'auxbauds4') {
-            imported.auxBaud = imported.auxBaud || { S3: 9600, S4: 9600 };
+            imported.auxBaud = imported.auxBaud || { S3: 9600, S4: 9600, maestro: 115200 };
             const b = Math.max(1200, Math.min(57600, parseInt(value || channel, 10) || 9600));
             if (control === 'auxbauds3') imported.auxBaud.S3 = b;
             else                         imported.auxBaud.S4 = b;
+          } else if (control === 'maestrobaud') {
+            imported.auxBaud = imported.auxBaud || { S3: 9600, S4: 9600, maestro: 115200 };
+            imported.auxBaud.maestro = Math.max(1200, Math.min(115200, parseInt(value || channel, 10) || 115200));
           }
           continue;
         }

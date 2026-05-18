@@ -301,6 +301,12 @@ inline int rcMapIndex(int mode, int btn) { return (mode - 1) * 19 + (btn - 1); }
 struct RcConfig {
   int            tapWindowMs;
   int            matrixChannel;   // SBUS channel carrying the multiplexed button matrix
+  // Consecutive in-band SBUS frames a matrix button must hold before a press
+  // is accepted. 1 = fastest (safe for a DIGITAL SBUS source — no analog
+  // resistor-ladder sweep to filter). Raise to 2-4 if driven from a physical
+  // transmitter matrix that sweeps through neighboring bands. Applied live on
+  // SET_CONFIG (no reboot). Clamped 1-4 by the firmware.
+  int            matrixDebounceFrames;
   RcThreshold    thresholds[RC_NUM_THRESHOLDS];
   RcMapping      mappings[RC_NUM_MAPPINGS];
   RcSwitch       switches[RC_NUM_SWITCHES];
@@ -314,6 +320,10 @@ struct RcConfig {
   // the port line rate; HCR / MP3-local / Serial actions all just use the
   // port at this baud (the firmware opens S3/S4 with these in setup()).
   uint32_t       auxBaud[2];
+  // Local Maestro bus baud (Serial2 hardware UART). Must match each wired
+  // Maestro's Serial Settings (or its "Detect baud" mode). Remote/Kyber
+  // Maestros are unaffected — that path is binary over ESP-NOW.
+  uint32_t       maestroBaud;
 };
 
 extern RcConfig rcConfig;
@@ -387,6 +397,7 @@ static inline void setTier3(RcTier& tier, RcAction a0, RcAction a1, RcAction a2)
 void rcConfigLoadDefaults() {
   rcConfig.tapWindowMs   = 500;
   rcConfig.matrixChannel = 7;            // button matrix on CH7
+  rcConfig.matrixDebounceFrames = 1;     // digital SBUS source — fastest; bump for analog matrix
   rcConfig.funcBindings.modeSwitch = SW_SE;  // SE (CH12) drives mode 1/2/3
 
   // Default PWM threshold bands (matches Body Controller layout for compatibility)
@@ -451,6 +462,7 @@ void rcConfigLoadDefaults() {
   // for faster peripherals (e.g. an MP3 Trigger v2 on that port wants 38400).
   rcConfig.auxBaud[0] = 9600;   // S3
   rcConfig.auxBaud[1] = 9600;   // S4
+  rcConfig.maestroBaud = LOCAL_MAESTRO_BAUD_RATE;   // local Maestro bus (Serial2)
 
   // Default Maestro slots — all 8 disabled until user enables them in the
   // GUI Maestro Locations panel.  Device numbers default to match the slot
@@ -596,8 +608,9 @@ static bool actionFromJson(const JsonObject& obj, RcAction& a) {
 String rcConfigToJSON() {
   DynamicJsonDocument doc(32768);
 
-  doc["tapWindowMs"]   = rcConfig.tapWindowMs;
-  doc["matrixChannel"] = rcConfig.matrixChannel;
+  doc["tapWindowMs"]          = rcConfig.tapWindowMs;
+  doc["matrixChannel"]        = rcConfig.matrixChannel;
+  doc["matrixDebounceFrames"] = rcConfig.matrixDebounceFrames;
 
   JsonObject fb = doc.createNestedObject("funcBindings");
   fb["mode"] = rcConfig.funcBindings.modeSwitch;
@@ -703,8 +716,9 @@ String rcConfigToJSON() {
 
   // Aux serial port baud rates — one source of truth for S3/S4 line rate.
   JsonObject auxObj = doc.createNestedObject("auxBaud");
-  auxObj["S3"] = rcConfig.auxBaud[0];
-  auxObj["S4"] = rcConfig.auxBaud[1];
+  auxObj["S3"]      = rcConfig.auxBaud[0];
+  auxObj["S4"]      = rcConfig.auxBaud[1];
+  auxObj["maestro"] = rcConfig.maestroBaud;   // local Maestro bus (Serial2)
 
   String out;
   serializeJson(doc, out);
@@ -717,6 +731,10 @@ String rcConfigToJSON() {
 bool rcConfigFromJSON(const JsonObject& doc) {
   if (doc.containsKey("tapWindowMs"))   rcConfig.tapWindowMs   = doc["tapWindowMs"];
   if (doc.containsKey("matrixChannel")) rcConfig.matrixChannel = doc["matrixChannel"];
+  if (doc.containsKey("matrixDebounceFrames")) {
+    int d = doc["matrixDebounceFrames"] | 1;
+    rcConfig.matrixDebounceFrames = (d < 1) ? 1 : (d > 4 ? 4 : d);   // clamp 1-4
+  }
 
   if (doc.containsKey("funcBindings")) {
     JsonObject fb = doc["funcBindings"];
@@ -867,8 +885,9 @@ bool rcConfigFromJSON(const JsonObject& doc) {
 
   if (doc.containsKey("auxBaud")) {
     JsonObject auxObj = doc["auxBaud"];
-    rcConfig.auxBaud[0] = (uint32_t)(auxObj["S3"] | rcConfig.auxBaud[0]);
-    rcConfig.auxBaud[1] = (uint32_t)(auxObj["S4"] | rcConfig.auxBaud[1]);
+    rcConfig.auxBaud[0] = (uint32_t)(auxObj["S3"]      | rcConfig.auxBaud[0]);
+    rcConfig.auxBaud[1] = (uint32_t)(auxObj["S4"]      | rcConfig.auxBaud[1]);
+    rcConfig.maestroBaud = (uint32_t)(auxObj["maestro"] | rcConfig.maestroBaud);
   }
   return true;
 }
@@ -894,6 +913,7 @@ void rcConfigSaveNVS() {
 
   prefs.putInt("cfg",      rcConfig.tapWindowMs);
   prefs.putInt("matrixCh", rcConfig.matrixChannel);
+  prefs.putInt("mtxDeb",   rcConfig.matrixDebounceFrames);
   prefs.putChar("fbMode",  rcConfig.funcBindings.modeSwitch);
 
   // Thresholds
@@ -1034,12 +1054,13 @@ void rcConfigSaveNVS() {
     prefs.putString("mp3", s);
   }
 
-  // Aux serial port baud (S3/S4)
+  // Serial port baud — aux S3/S4 + local Maestro bus (Serial2)
   {
-    DynamicJsonDocument doc(64);
+    DynamicJsonDocument doc(96);
     JsonObject root = doc.to<JsonObject>();
-    root["S3"] = rcConfig.auxBaud[0];
-    root["S4"] = rcConfig.auxBaud[1];
+    root["S3"]      = rcConfig.auxBaud[0];
+    root["S4"]      = rcConfig.auxBaud[1];
+    root["maestro"] = rcConfig.maestroBaud;
     String s; serializeJson(doc, s);
     prefs.putString("aux", s);
   }
@@ -1054,6 +1075,10 @@ void rcConfigLoadNVS() {
 
   if (prefs.isKey("cfg"))      rcConfig.tapWindowMs   = prefs.getInt("cfg",      rcConfig.tapWindowMs);
   if (prefs.isKey("matrixCh")) rcConfig.matrixChannel = prefs.getInt("matrixCh", rcConfig.matrixChannel);
+  if (prefs.isKey("mtxDeb")) {
+    int d = prefs.getInt("mtxDeb", rcConfig.matrixDebounceFrames);
+    rcConfig.matrixDebounceFrames = (d < 1) ? 1 : (d > 4 ? 4 : d);
+  }
   if (prefs.isKey("fbMode"))   rcConfig.funcBindings.modeSwitch = prefs.getChar("fbMode", rcConfig.funcBindings.modeSwitch);
 
   if (prefs.isKey("th")) {
@@ -1224,11 +1249,12 @@ void rcConfigLoadNVS() {
 
   if (prefs.isKey("aux")) {
     String s = prefs.getString("aux", "");
-    DynamicJsonDocument doc(64);
+    DynamicJsonDocument doc(96);
     if (deserializeJson(doc, s) == DeserializationError::Ok) {
       JsonObject root = doc.as<JsonObject>();
-      rcConfig.auxBaud[0] = (uint32_t)(root["S3"] | rcConfig.auxBaud[0]);
-      rcConfig.auxBaud[1] = (uint32_t)(root["S4"] | rcConfig.auxBaud[1]);
+      rcConfig.auxBaud[0]  = (uint32_t)(root["S3"]      | rcConfig.auxBaud[0]);
+      rcConfig.auxBaud[1]  = (uint32_t)(root["S4"]      | rcConfig.auxBaud[1]);
+      rcConfig.maestroBaud = (uint32_t)(root["maestro"] | rcConfig.maestroBaud);
     }
   }
 

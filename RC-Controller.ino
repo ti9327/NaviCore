@@ -185,14 +185,15 @@ int oldValueMode    = 100;
 //
 // Asymmetric debounce:
 //   • A press FIRES only after the decoded button is stable for
-//     MATRIX_DEBOUNCE_FRAMES consecutive frames — rejects single-frame noise /
-//     resistor-ladder sweep transients.
+//     rcConfig.matrixDebounceFrames consecutive frames — rejects single-frame
+//     noise / resistor-ladder sweep transients. Runtime-configurable (Config
+//     modal); 1 = fastest (safe for a digital SBUS source), up to 4 for a
+//     noisy analog transmitter matrix. Applied live on SET_CONFIG.
 //   • The detector RE-ARMS on a SINGLE neutral/gap frame (decoded == 0) — so a
 //     fast re-press registers even if the channel only dips to neutral for one
 //     SBUS frame between presses.
-// Only a true sub-frame tap (press+release inside one ~7-14 ms frame interval)
-// is now unrecoverable — a hard SBUS-protocol limit, not logic.
-#define MATRIX_DEBOUNCE_FRAMES 2
+// Only a true sub-frame tap (press+release inside one ~9-14 ms frame interval)
+// is unrecoverable — a hard SBUS-protocol limit, not logic.
 bool matrixArmed     = true;   // true → ready to accept the next press
 int  matrixCandidate = 0;      // decoded button currently being debounced
 int  matrixCandCount = 0;      // consecutive frames matrixCandidate has held
@@ -916,14 +917,16 @@ void processSbus() {
       matrixCandidate = 0;
       matrixCandCount = 0;
     } else {
+      int debFrames = rcConfig.matrixDebounceFrames;
+      if (debFrames < 1) debFrames = 1;          // safety clamp (config is 1-4)
       if (decoded == matrixCandidate) {
-        if (matrixCandCount < MATRIX_DEBOUNCE_FRAMES) matrixCandCount++;
+        if (matrixCandCount < debFrames) matrixCandCount++;
       } else {
         matrixCandidate = decoded;
         matrixCandCount = 1;
       }
       // Fire once when a button has been stable long enough AND we're armed.
-      if (matrixArmed && matrixCandCount >= MATRIX_DEBOUNCE_FRAMES) {
+      if (matrixArmed && matrixCandCount >= debFrames) {
         matrixArmed = false;                // consume — needs a neutral frame to re-arm
         RCRadio_Matrix_Buttons(mxVal);
       }
@@ -1178,14 +1181,10 @@ void setup() {
   statusLed.begin();
   setStatusLed(C_RED, 255);
 
-  // Serial2 — local Maestro
-  Serial2.begin(LOCAL_MAESTRO_BAUD_RATE, SERIAL_8N1, MAESTRO_RX_PIN, MAESTRO_TX_PIN);
-  Serial.printf("[Serial2] Local Maestro @ %d baud  TX=GPIO%d\n",
-                LOCAL_MAESTRO_BAUD_RATE, MAESTRO_TX_PIN);
-
-  // Serial3-4 (aux SoftwareSerial) are opened AFTER the config loads, below,
-  // at their configured per-port baud (rcConfig.auxBaud). Nothing uses S3/S4
-  // before setup() finishes, so deferring the open is safe.
+  // Serial2 (local Maestro bus) and Serial3-4 (aux SoftwareSerial) are opened
+  // AFTER the config loads, below, at their configured baud (rcConfig.maestroBaud
+  // / rcConfig.auxBaud). Nothing uses them before setup() finishes, so
+  // deferring the open is safe.
 
   // SBUS OUT — TX-only SoftwareSerial mirroring the SBUS RX line speed/format.
   // RX pin set to -1 (no RX), invert=true for SBUS line polarity.  The
@@ -1206,6 +1205,12 @@ void setup() {
   // WCBClient so the network credentials come from rcConfig.wcbNetwork.
   rcConfigLoadDefaults();
   rcConfigLoadNVS();
+
+  // Serial2 — local Maestro bus, at the configured baud. Must match each
+  // wired Maestro's Serial Settings (or its auto-detect mode).
+  Serial2.begin(rcConfig.maestroBaud, SERIAL_8N1, MAESTRO_RX_PIN, MAESTRO_TX_PIN);
+  Serial.printf("[Serial2] Local Maestro @ %lu baud  TX=GPIO%d\n",
+                (unsigned long)rcConfig.maestroBaud, MAESTRO_TX_PIN);
 
   // Open the aux SoftwareSerial ports at their configured per-port baud.
   // Single source of truth: rcConfig.auxBaud — HCR (local), MP3 Trigger

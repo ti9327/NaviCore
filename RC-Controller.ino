@@ -219,7 +219,6 @@ unsigned long wsMonitorLastSent = 0;
 // =============================================================================
 struct TapState {
   int           lastBtn         = 0;   // most recent button that was tapped (sticky across release)
-  int           prevPollBtn     = 0;   // btn seen on the previous poll — for press-edge detection
   uint8_t       tapCount        = 0;
   unsigned long lastTapMs       = 0;
   bool          deferredPending = false;
@@ -421,6 +420,31 @@ static String hcrFormatCommand(uint8_t fn, int chan, int track) {
   return String("<") + inner + ">\n";
 }
 
+// ── Non-blocking hot-path logging ───────────────────────────────────────────
+// loop() must NEVER stall on Serial. On WCB HW 3.2 the USB serial path
+// back-pressures when no host is draining it, so a plain Serial.printf() on
+// the per-action / per-flush hot path freezes the whole controller whenever
+// the config tool isn't connected — heartbeats stop and the WCBs see this
+// board go OFFLINE. It also caused the webpage Disconnect hang (firmware
+// blocked mid-write while the browser stopped reading).
+//
+// vlogf() formats into a small stack buffer and writes ONLY if the TX buffer
+// currently has room; otherwise the line is silently dropped. It therefore
+// can never block, so standalone operation — and a mid-stream disconnect —
+// can't freeze loop(). Use it for everything on the hot path; reserve plain
+// Serial.* for one-shot setup output and JSON replies to host commands (a
+// host is by definition present and draining when it sent the command).
+static void vlogf(const char* fmt, ...) {
+  char buf[192];
+  va_list ap;
+  va_start(ap, fmt);
+  int n = vsnprintf(buf, sizeof(buf), fmt, ap);
+  va_end(ap);
+  if (n <= 0) return;
+  if (n > (int)sizeof(buf)) n = sizeof(buf);
+  if (Serial.availableForWrite() >= n) Serial.write((const uint8_t*)buf, (size_t)n);
+}
+
 // Dispatch an HCR action.
 //
 // The destination is GLOBAL — pulled from rcConfig.hcrDest rather than from
@@ -431,34 +455,34 @@ static void executeHcrAction(const RcAction& a) {
 
   if (dest.transport == 1) {
     // ── WCB transport (raw forward via ESP-NOW) ────────────────────────────
-    if (!wcb) { Serial.println("[DISPATCH] HCR-WCB: wcb not ready — skipped"); return; }
+    if (!wcb) { vlogf("[DISPATCH] HCR-WCB: wcb not ready — skipped\n"); return; }
     String payload = hcrFormatCommand(a.fn, a.chan, a.track);
     if (payload.length() == 0) {
-      Serial.printf("[DISPATCH] HCR-WCB: bad fn=%u chan=%d track=%d — skipped\n",
-                    a.fn, a.chan, a.track);
+      vlogf("[DISPATCH] HCR-WCB: bad fn=%u chan=%d track=%d — skipped\n",
+            a.fn, a.chan, a.track);
       return;
     }
     uint8_t target = (uint8_t)atoi(dest.target);
-    Serial.printf("[DISPATCH] HCR→WCB%u:port%u  %s\n",
-                  target, dest.wcbPort, payload.c_str());
+    vlogf("[DISPATCH] HCR→WCB%u:port%u  %s\n",
+          target, dest.wcbPort, payload.c_str());
     if (target == 0) {
       bool ok = wcb->broadcast(payload.c_str());
-      Serial.printf("[DISPATCH] HCR-WCB broadcast %s\n", ok ? "OK" : "FAIL");
+      vlogf("[DISPATCH] HCR-WCB broadcast %s\n", ok ? "OK" : "FAIL");
     } else if (target >= 1 && target <= WCB_MAX_BOARDS) {
       // sendRaw() silently rejects a port outside 1-5 — surface that here so a
       // misconfigured HCR Destination doesn't fail invisibly.
       if (dest.wcbPort < 1 || dest.wcbPort > 5) {
-        Serial.printf("[DISPATCH] HCR-WCB: invalid port %u (must be 1-5) — "
-                      "check HCR Destination in the config tool, not sent\n",
-                      dest.wcbPort);
+        vlogf("[DISPATCH] HCR-WCB: invalid port %u (must be 1-5) — "
+              "check HCR Destination in the config tool, not sent\n",
+              dest.wcbPort);
       } else {
         bool ok = wcb->sendRaw(target, dest.wcbPort,
                                (const uint8_t*)payload.c_str(), payload.length());
-        Serial.printf("[DISPATCH] HCR-WCB sendRaw(WCB%u, port%u, %u bytes) %s\n",
-                      target, dest.wcbPort, payload.length(), ok ? "OK" : "FAIL");
+        vlogf("[DISPATCH] HCR-WCB sendRaw(WCB%u, port%u, %u bytes) %s\n",
+              target, dest.wcbPort, payload.length(), ok ? "OK" : "FAIL");
       }
     } else {
-      Serial.printf("[DISPATCH] HCR-WCB: target %u out of range — not sent\n", target);
+      vlogf("[DISPATCH] HCR-WCB: target %u out of range — not sent\n", target);
     }
     return;
   }
@@ -470,12 +494,12 @@ static void executeHcrAction(const RcAction& a) {
   // S5 is now SBUS OUT — no HCR routing available there. Legacy configs
   // that point HCR at S5 will fall through to the "unknown port" log below.
   if (!hcr) {
-    Serial.printf("[DISPATCH] HCR: unknown serial port '%s' — skipped\n", dest.target);
+    vlogf("[DISPATCH] HCR: unknown serial port '%s' — skipped\n", dest.target);
     return;
   }
 
-  Serial.printf("[DISPATCH] HCR→%s  fn=%u chan=%d track=%d\n",
-                dest.target, a.fn, a.chan, a.track);
+  vlogf("[DISPATCH] HCR→%s  fn=%u chan=%d track=%d\n",
+        dest.target, a.fn, a.chan, a.track);
   switch (a.fn) {
     case 2:  hcr->SetEmotion(a.chan, a.track); hcr->update(); break;
     case 3:  hcr->Trigger   (a.chan, a.track);                break;
@@ -488,7 +512,7 @@ static void executeHcrAction(const RcAction& a) {
     case 14: hcr->PlayWAV   (a.chan, a.track); hcr->update(); break;
     case 16: hcr->StopWAV   (a.chan);                         break;
     case 17: hcr->SetVolume (a.chan, a.track);                break;
-    default: Serial.printf("[DISPATCH] HCR: unsupported fn=%u\n", a.fn); break;
+    default: vlogf("[DISPATCH] HCR: unsupported fn=%u\n", a.fn); break;
   }
 }
 
@@ -502,7 +526,7 @@ static void scheduleAction(const RcAction& action, unsigned long delayMs) {
       return;
     }
   }
-  Serial.println("WARN: pendingActions full — executing immediately");
+  vlogf("WARN: pendingActions full — executing immediately\n");
 }
 
 void rcExecuteAction(const RcAction& a) {
@@ -512,13 +536,13 @@ void rcExecuteAction(const RcAction& a) {
     case RA_WCB_UNICAST: {
       uint8_t boardId = (uint8_t)atoi(a.target);
       if (boardId >= 1 && boardId <= WCB_MAX_BOARDS) {
-        Serial.printf("[DISPATCH] WCB→%d  %s\n", boardId, a.cmd);
+        vlogf("[DISPATCH] WCB→%d  %s\n", boardId, a.cmd);
         wcb->send(boardId, a.cmd);
       }
       break;
     }
     case RA_WCB_BROADCAST:
-      Serial.printf("[DISPATCH] WCB broadcast  %s\n", a.cmd);
+      vlogf("[DISPATCH] WCB broadcast  %s\n", a.cmd);
       wcb->broadcast(a.cmd);
       break;
 
@@ -526,7 +550,7 @@ void rcExecuteAction(const RcAction& a) {
       // Legacy "local Maestro" — treat as Maestro ID 1 for backward compat
       // with old configs.  The location of Maestro 1 (and whether it's
       // actually wired locally) is now defined in the Maestro Locations panel.
-      Serial.printf("[DISPATCH] Maestro (legacy local → ID 1)  %s\n", a.cmd);
+      vlogf("[DISPATCH] Maestro (legacy local → ID 1)  %s\n", a.cmd);
       executeMaestroCmd(1, a.cmd);
       break;
 
@@ -535,16 +559,16 @@ void rcExecuteAction(const RcAction& a) {
       // the Maestro slot ID (1-8). Wiring per ID is in rcConfig.maestros[].
       int id = atoi(a.target);
       if (id < 1 || id > RC_NUM_MAESTROS) {
-        Serial.printf("WARN: Maestro action with invalid ID %d (target='%s')\n", id, a.target);
+        vlogf("WARN: Maestro action with invalid ID %d (target='%s')\n", id, a.target);
         break;
       }
-      Serial.printf("[DISPATCH] Maestro %d  %s\n", id, a.cmd);
+      vlogf("[DISPATCH] Maestro %d  %s\n", id, a.cmd);
       executeMaestroCmd((uint8_t)id, a.cmd);
       break;
     }
     case RA_SERIAL: {
       String s(a.cmd);
-      Serial.printf("[DISPATCH] Serial %s  %s\n", a.target, a.cmd);
+      vlogf("[DISPATCH] Serial %s  %s\n", a.target, a.cmd);
       if      (!strcmp(a.target, "S3")) writeS3(s);
       else if (!strcmp(a.target, "S4")) writeS4(s);
       // S5 is reserved for SBUS OUT — actions targeting S5 are silently
@@ -593,22 +617,20 @@ void rcDispatch(int buttonId, uint8_t tapCount) {
 // =============================================================================
 //  Matrix button tap detection
 // =============================================================================
+// Called exactly ONCE per discrete, debounced button press by processSbus()
+// (the matrixArmed / neutral-frame logic there guarantees one invocation per
+// press and a release between presses). So every call here is a genuine new
+// press — there is no need to suppress "held" frames internally, and doing so
+// (the old prevPollBtn edge check) wrongly dropped a second press of the SAME
+// button when no other button was pressed in between.
 void RCRadio_Matrix_Buttons(int val) {
   int btn = pwmToButton(val);
+  if (btn == 0) return;                 // caller only calls for a real button; defensive
   unsigned long now = millis();
-  int prev = tapState.prevPollBtn;
-  tapState.prevPollBtn = btn;
 
-  // Only act on transitions. A continuous hold (prev == btn) is not a new tap,
-  // and a release edge (btn == 0) is handled by checkDeferredTap() — we don't
-  // count "release" as a tap event.
-  if (btn == prev) return;
-  if (btn == 0)    return;
-
-  // Press edge: prev was 0 or a different button, now btn is non-zero.
   if (btn != tapState.lastBtn) {
-    // Different button — commit any pending fire for the previous button now
-    // before we start counting taps on the new one.
+    // Different button than the last gesture — commit any pending fire for the
+    // previous button now, then start a fresh single tap on this one.
     if (tapState.deferredPending) {
       tapState.deferredPending = false;
       rcDispatch(tapState.deferredBtn, tapState.deferredTaps);
@@ -617,7 +639,8 @@ void RCRadio_Matrix_Buttons(int val) {
     tapState.tapCount  = 1;
     tapState.lastTapMs = now;
   } else {
-    // Same button as the last tap — within window counts as another tap.
+    // Same button as the last gesture — within the tap window it's another tap
+    // of a multi-tap; past the window it's a brand-new single tap.
     if ((now - tapState.lastTapMs) < (unsigned long)rcConfig.tapWindowMs) {
       tapState.tapCount++;
       if (tapState.tapCount > 3) tapState.tapCount = 3;
@@ -1028,6 +1051,10 @@ void setup() {
   // (e.g. a 3-4 KB SET_CONFIG payload arriving in one shot) without dropping
   // bytes that would otherwise corrupt the JSON. Must be set BEFORE begin().
   Serial.setRxBufferSize(4096);
+  // TX ring buffer so vlogf() has headroom to write into when a host is
+  // draining the port. When no host is attached this fills once and then
+  // vlogf() simply drops further lines — it never blocks the loop.
+  Serial.setTxBufferSize(1024);
   Serial.begin(115200);
   delay(1500);
   Serial.println("\n\n=== RC-Controller (WCB HW 3.2) ===");

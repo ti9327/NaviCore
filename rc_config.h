@@ -34,6 +34,25 @@ enum RcActionType : uint8_t {
                                //   fn/chan/track describe the HCR call.
                                //   Destination (serial port OR WCB ID+port) is
                                //   a GLOBAL setting in RcConfig::hcrDest.
+  RA_MP3               = 7,   // SparkFun MP3 Trigger (v2.x) on a WCB. fn = MP3
+                               //   function (see RcMp3Fn); track = numeric arg
+                               //   (track #, file index, or volume). Sent as a
+                               //   ";A,..." WCB command (normal command path,
+                               //   unicast) to RcConfig::mp3Dest — the WCB owns
+                               //   the MP3 serial wiring (?MP3,S<port>).
+};
+
+// MP3 Trigger function codes, stored in RcAction::fn for RA_MP3 actions.
+// Map 1:1 to the WCB ";A,<CMD>" command set (WCB_MP3.cpp processMP3AudioCommand).
+enum RcMp3Fn : uint8_t {
+  MP3_PLAY   = 1,   // ;A,PLAY,<track>     track 1-255
+  MP3_PLAYFS = 2,   // ;A,PLAYFS,<index>   index 0-255
+  MP3_STOP   = 3,   // ;A,STOP             start/stop toggle
+  MP3_NEXT   = 4,   // ;A,NEXT
+  MP3_PREV   = 5,   // ;A,PREV
+  MP3_VOL    = 6,   // ;A,VOL,<n>          0=loudest .. 64=inaudible
+  MP3_VOLUP  = 7,   // ;A,VOLUP
+  MP3_VOLDN  = 8,   // ;A,VOLDN
 };
 
 // Serial port labels for RA_SERIAL dispatch.
@@ -63,11 +82,17 @@ struct RcAction {
   // RA_HCR-specific fields (zero for other action types). The HCR destination
   // (transport, serial port or WCB ID/port) is a GLOBAL setting stored in
   // RcConfig::hcrDest — every HCR action shares it.  See RcHcrDest.
+  // RA_HCR: HCR function/params.  RA_MP3 reuses fn + track (see RcMp3Fn):
+  //   fn = MP3 function code, track = numeric arg (track #, index, or volume),
+  //   chan unused.  Zero for all non-HCR/MP3 action types.
   uint8_t fn;             // HCR function number (2=SetEmotion, 3=Trigger, 4=Stimulate,
                           //   5=Overload, 6=Muse, 8=Stop, 9=StopEmote, 11=ResetEmotions,
                           //   14=PlayWAV, 16=StopWAV, 17=SetVolume)
+                          //   — OR, for RA_MP3, an RcMp3Fn code (1-8).
   int8_t  chan;           // emotion (0=H,1=S,2=M,3=C,4=Overload) or audio chan (0=V,1=A,2=B)
+                          //   — unused for RA_MP3.
   int16_t track;          // PlayWAV track number, SetVolume value, Trigger level, etc.
+                          //   — for RA_MP3: track #, file index, or volume value.
 };
 
 #define RC_ACTIONS_PER_TIER  5   // max simultaneous actions per tap tier
@@ -204,6 +229,24 @@ struct RcHcrDest {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+//  Global MP3 Trigger destination — every RA_MP3 action shares this.
+//  Mirrors RcHcrDest's dual-transport model:
+//    transport = 0 : LOCAL serial — MP3 Trigger wired to this board's S3/S4.
+//                    target = "S3"/"S4"; the RC firmware speaks the MP3
+//                    Trigger v2 serial protocol directly at `baud`.
+//    transport = 1 : WCB unicast — target = WCB ID "1".."20". Sends a
+//                    ";A,..." WCB command; that WCB's own MP3 driver
+//                    (configured there via ?MP3,S<port>) does the serial work.
+//  Broadcast is intentionally not offered (one MP3 Trigger, known location).
+// ─────────────────────────────────────────────────────────────────────────────
+struct RcMp3Dest {
+  uint8_t  transport;     // 0 = local serial (S3/S4), 1 = WCB unicast
+  char     target[6];     // serial: "S3"/"S4"  ·  wcb: WCB ID "1"-"20"
+  // (baud is NOT here — it belongs to the port, see RcConfig::auxBaud. A local
+  //  MP3 Trigger runs at whatever its S3/S4 port is configured to.)
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 //  WCB network credentials — formerly compile-time #defines in wcb_config.h.
 //  Now NVS-backed and runtime-editable via the GUI. The values in wcb_config.h
 //  are used only as factory defaults on a fresh device with no stored NVS data.
@@ -266,6 +309,11 @@ struct RcConfig {
   RcHcrDest      hcrDest;
   RcMaestroSlot  maestros[RC_NUM_MAESTROS];  // ID 1-8 → maestros[0..7]
   RcWcbNetwork   wcbNetwork;
+  RcMp3Dest      mp3Dest;
+  // Aux SoftwareSerial port baud — [0]=S3, [1]=S4. One source of truth for
+  // the port line rate; HCR / MP3-local / Serial actions all just use the
+  // port at this baud (the firmware opens S3/S4 with these in setup()).
+  uint32_t       auxBaud[2];
 };
 
 extern RcConfig rcConfig;
@@ -394,6 +442,16 @@ void rcConfigLoadDefaults() {
   strlcpy(rcConfig.hcrDest.target, "S3", sizeof(rcConfig.hcrDest.target));
   rcConfig.hcrDest.wcbPort   = 1;
 
+  // Default global MP3 Trigger destination — WCB unicast to WCB 2 (no effect
+  // until the user adds RA_MP3 actions and points this at the right place).
+  rcConfig.mp3Dest.transport = 1;
+  strlcpy(rcConfig.mp3Dest.target, "2", sizeof(rcConfig.mp3Dest.target));
+
+  // Aux serial port baud — S3, S4. 9600 default (HCR's rate). Raise per port
+  // for faster peripherals (e.g. an MP3 Trigger v2 on that port wants 38400).
+  rcConfig.auxBaud[0] = 9600;   // S3
+  rcConfig.auxBaud[1] = 9600;   // S4
+
   // Default Maestro slots — all 8 disabled until user enables them in the
   // GUI Maestro Locations panel.  Device numbers default to match the slot
   // ID (slot 1 → device 1, ..., slot 8 → device 8) so they're easy to
@@ -461,6 +519,14 @@ static void actionToJson(const RcAction& a, JsonObject obj) {
       obj["track"] = a.track;
       if (a.delayMs) obj["delay"] = a.delayMs;
       break;
+    case RA_MP3:
+      // Destination (target WCB) is GLOBAL — see RcConfig::mp3Dest. The action
+      // only carries the MP3 function code (fn) and its numeric arg (track).
+      obj["type"]  = "mp3";
+      obj["fn"]    = a.fn;
+      obj["track"] = a.track;
+      if (a.delayMs) obj["delay"] = a.delayMs;
+      break;
     default: break;
   }
   if (a.note[0]) obj["note"] = a.note;
@@ -508,6 +574,14 @@ static bool actionFromJson(const JsonObject& obj, RcAction& a) {
     a.type    = RA_HCR;
     a.fn      = (uint8_t)(obj["fn"]    | 0);
     a.chan    = (int8_t) (obj["chan"]  | 0);
+    a.track   = (int16_t)(obj["track"] | 0);
+    a.delayMs = obj["delay"] | 0;
+    ok = true;
+  } else if (strcmp(type, "mp3") == 0) {
+    // MP3 destination is a global config (RcMp3Dest). The action only carries
+    // the MP3 function code (fn) and numeric arg (track).
+    a.type    = RA_MP3;
+    a.fn      = (uint8_t)(obj["fn"]    | 0);
     a.track   = (int16_t)(obj["track"] | 0);
     a.delayMs = obj["delay"] | 0;
     ok = true;
@@ -617,6 +691,20 @@ String rcConfigToJSON() {
   wcbObj["password"] = rcConfig.wcbNetwork.password;
   wcbObj["quantity"] = rcConfig.wcbNetwork.quantity;
   wcbObj["deviceId"] = rcConfig.wcbNetwork.deviceId;
+
+  // Global MP3 Trigger destination — every RA_MP3 action reads from here.
+  JsonObject mp3Obj = doc.createNestedObject("mp3Dest");
+  mp3Obj["transport"] = (rcConfig.mp3Dest.transport == 1) ? "wcb" : "serial";
+  if (rcConfig.mp3Dest.transport == 1) {
+    mp3Obj["target"] = rcConfig.mp3Dest.target;        // WCB ID string
+  } else {
+    mp3Obj["port"]   = rcConfig.mp3Dest.target;        // "S3"/"S4"
+  }
+
+  // Aux serial port baud rates — one source of truth for S3/S4 line rate.
+  JsonObject auxObj = doc.createNestedObject("auxBaud");
+  auxObj["S3"] = rcConfig.auxBaud[0];
+  auxObj["S4"] = rcConfig.auxBaud[1];
 
   String out;
   serializeJson(doc, out);
@@ -743,7 +831,9 @@ bool rcConfigFromJSON(const JsonObject& doc) {
     const char* tp = hcrObj["transport"] | "serial";
     rcConfig.hcrDest.transport = (strcmp(tp, "wcb") == 0) ? 1 : 0;
     if (rcConfig.hcrDest.transport == 1) {
-      strlcpy(rcConfig.hcrDest.target, hcrObj["target"] | "0", sizeof(rcConfig.hcrDest.target));
+      // HCR over WCB is unicast-only; default to WCB 2 (not 0/broadcast) when
+      // the key is missing so a partial config doesn't produce an invalid target.
+      strlcpy(rcConfig.hcrDest.target, hcrObj["target"] | "2", sizeof(rcConfig.hcrDest.target));
       rcConfig.hcrDest.wcbPort = (uint8_t)(hcrObj["wcbPort"] | 1);
     } else {
       strlcpy(rcConfig.hcrDest.target, hcrObj["port"]   | "S3", sizeof(rcConfig.hcrDest.target));
@@ -760,6 +850,25 @@ bool rcConfigFromJSON(const JsonObject& doc) {
             sizeof(rcConfig.wcbNetwork.password));
     rcConfig.wcbNetwork.quantity = (uint8_t)(wcbObj["quantity"] | rcConfig.wcbNetwork.quantity);
     rcConfig.wcbNetwork.deviceId = (uint8_t)(wcbObj["deviceId"] | rcConfig.wcbNetwork.deviceId);
+  }
+
+  if (doc.containsKey("mp3Dest")) {
+    JsonObject mp3Obj = doc["mp3Dest"];
+    const char* tp = mp3Obj["transport"] | "wcb";
+    rcConfig.mp3Dest.transport = (strcmp(tp, "wcb") == 0) ? 1 : 0;
+    if (rcConfig.mp3Dest.transport == 1) {
+      strlcpy(rcConfig.mp3Dest.target, mp3Obj["target"] | "2",
+              sizeof(rcConfig.mp3Dest.target));
+    } else {
+      strlcpy(rcConfig.mp3Dest.target, mp3Obj["port"] | "S3",
+              sizeof(rcConfig.mp3Dest.target));
+    }
+  }
+
+  if (doc.containsKey("auxBaud")) {
+    JsonObject auxObj = doc["auxBaud"];
+    rcConfig.auxBaud[0] = (uint32_t)(auxObj["S3"] | rcConfig.auxBaud[0]);
+    rcConfig.auxBaud[1] = (uint32_t)(auxObj["S4"] | rcConfig.auxBaud[1]);
   }
   return true;
 }
@@ -915,6 +1024,26 @@ void rcConfigSaveNVS() {
     prefs.putString("wcb", s);
   }
 
+  // MP3 Trigger destination (transport + target)
+  {
+    DynamicJsonDocument doc(128);
+    JsonObject root = doc.to<JsonObject>();
+    root["transport"] = rcConfig.mp3Dest.transport;
+    root["target"]    = rcConfig.mp3Dest.target;
+    String s; serializeJson(doc, s);
+    prefs.putString("mp3", s);
+  }
+
+  // Aux serial port baud (S3/S4)
+  {
+    DynamicJsonDocument doc(64);
+    JsonObject root = doc.to<JsonObject>();
+    root["S3"] = rcConfig.auxBaud[0];
+    root["S4"] = rcConfig.auxBaud[1];
+    String s; serializeJson(doc, s);
+    prefs.putString("aux", s);
+  }
+
   prefs.end();
   Serial.println("RC config saved to NVS.");
 }
@@ -1056,7 +1185,8 @@ void rcConfigLoadNVS() {
       const char* tp = root["transport"] | "serial";
       rcConfig.hcrDest.transport = (strcmp(tp, "wcb") == 0) ? 1 : 0;
       if (rcConfig.hcrDest.transport == 1) {
-        strlcpy(rcConfig.hcrDest.target, root["target"] | "0", sizeof(rcConfig.hcrDest.target));
+        // HCR over WCB is unicast-only; default to WCB 2 (not 0/broadcast).
+        strlcpy(rcConfig.hcrDest.target, root["target"] | "2", sizeof(rcConfig.hcrDest.target));
         rcConfig.hcrDest.wcbPort = (uint8_t)(root["wcbPort"] | 1);
       } else {
         strlcpy(rcConfig.hcrDest.target, root["port"]   | "S3", sizeof(rcConfig.hcrDest.target));
@@ -1077,6 +1207,28 @@ void rcConfigLoadNVS() {
               sizeof(rcConfig.wcbNetwork.password));
       rcConfig.wcbNetwork.quantity = (uint8_t)(root["quantity"] | rcConfig.wcbNetwork.quantity);
       rcConfig.wcbNetwork.deviceId = (uint8_t)(root["deviceId"] | rcConfig.wcbNetwork.deviceId);
+    }
+  }
+
+  if (prefs.isKey("mp3")) {
+    String s = prefs.getString("mp3", "");
+    DynamicJsonDocument doc(128);
+    if (deserializeJson(doc, s) == DeserializationError::Ok) {
+      JsonObject root = doc.as<JsonObject>();
+      rcConfig.mp3Dest.transport = (uint8_t)(root["transport"] | rcConfig.mp3Dest.transport);
+      strlcpy(rcConfig.mp3Dest.target,
+              root["target"] | rcConfig.mp3Dest.target,
+              sizeof(rcConfig.mp3Dest.target));
+    }
+  }
+
+  if (prefs.isKey("aux")) {
+    String s = prefs.getString("aux", "");
+    DynamicJsonDocument doc(64);
+    if (deserializeJson(doc, s) == DeserializationError::Ok) {
+      JsonObject root = doc.as<JsonObject>();
+      rcConfig.auxBaud[0] = (uint32_t)(root["S3"] | rcConfig.auxBaud[0]);
+      rcConfig.auxBaud[1] = (uint32_t)(root["S4"] | rcConfig.auxBaud[1]);
     }
   }
 

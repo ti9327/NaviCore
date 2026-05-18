@@ -126,6 +126,12 @@ SoftwareSerial sbusOut;    // SBUS OUT passthrough, bound in setup()
 //
 //  S5 is no longer available for HCR (it's reserved for SBUS OUT).
 // =============================================================================
+// NOTE: HCR_BAUD_RATE is effectively a DEAD parameter on ESP32. HCRVocalizer
+// only applies this baud inside its begin() — which this sketch never calls,
+// and whose SoftwareSerial path is #ifdef AVR/PIC32 anyway (no-op on ESP32).
+// The HCR port's real line rate is set by Serial3/4.begin() in setup() from
+// rcConfig.auxBaud (the single source of truth for S3/S4 baud). Keep this 9600
+// only so the constructor signature is satisfied — change aux baud in the GUI.
 #define HCR_BAUD_RATE 9600
 HCRVocalizer hcrS3(&Serial3, HCR_BAUD_RATE);
 HCRVocalizer hcrS4(&Serial4, HCR_BAUD_RATE);
@@ -462,28 +468,35 @@ static void executeHcrAction(const RcAction& a) {
             a.fn, a.chan, a.track);
       return;
     }
+    // HCR over WCB is UNICAST ONLY. It must go through sendRaw() (targetID 97,
+    // raw-serial forward) so the receiving WCB pipes the bytes verbatim to the
+    // HCR device's serial port. Broadcast is intentionally unsupported: the
+    // only broadcast primitives are the command path (which would parse the
+    // HCR string as a WCB command and discard it) and Kyber (Maestro ports
+    // only) — neither delivers to an arbitrary HCR serial port. An HCR
+    // vocalizer is a single device at a known location, so unicast is correct.
     uint8_t target = (uint8_t)atoi(dest.target);
+    if (target < 1 || target > WCB_MAX_BOARDS) {
+      vlogf("[DISPATCH] HCR-WCB: target '%s' invalid — HCR over WCB must be a "
+            "unicast WCB ID 1-%d (broadcast is not supported). Fix the HCR "
+            "Destination in the config tool. Not sent.\n",
+            dest.target, WCB_MAX_BOARDS);
+      return;
+    }
+    if (dest.wcbPort < 1 || dest.wcbPort > 5) {
+      // sendRaw() silently rejects a port outside 1-5 — surface it so a
+      // misconfigured HCR Destination doesn't fail invisibly.
+      vlogf("[DISPATCH] HCR-WCB: invalid port %u (must be 1-5) — "
+            "check HCR Destination in the config tool, not sent\n",
+            dest.wcbPort);
+      return;
+    }
     vlogf("[DISPATCH] HCR→WCB%u:port%u  %s\n",
           target, dest.wcbPort, payload.c_str());
-    if (target == 0) {
-      bool ok = wcb->broadcast(payload.c_str());
-      vlogf("[DISPATCH] HCR-WCB broadcast %s\n", ok ? "OK" : "FAIL");
-    } else if (target >= 1 && target <= WCB_MAX_BOARDS) {
-      // sendRaw() silently rejects a port outside 1-5 — surface that here so a
-      // misconfigured HCR Destination doesn't fail invisibly.
-      if (dest.wcbPort < 1 || dest.wcbPort > 5) {
-        vlogf("[DISPATCH] HCR-WCB: invalid port %u (must be 1-5) — "
-              "check HCR Destination in the config tool, not sent\n",
-              dest.wcbPort);
-      } else {
-        bool ok = wcb->sendRaw(target, dest.wcbPort,
-                               (const uint8_t*)payload.c_str(), payload.length());
-        vlogf("[DISPATCH] HCR-WCB sendRaw(WCB%u, port%u, %u bytes) %s\n",
-              target, dest.wcbPort, payload.length(), ok ? "OK" : "FAIL");
-      }
-    } else {
-      vlogf("[DISPATCH] HCR-WCB: target %u out of range — not sent\n", target);
-    }
+    bool ok = wcb->sendRaw(target, dest.wcbPort,
+                           (const uint8_t*)payload.c_str(), payload.length());
+    vlogf("[DISPATCH] HCR-WCB sendRaw(WCB%u, port%u, %u bytes) %s\n",
+          target, dest.wcbPort, payload.length(), ok ? "OK" : "FAIL");
     return;
   }
 
@@ -514,6 +527,105 @@ static void executeHcrAction(const RcAction& a) {
     case 17: hcr->SetVolume (a.chan, a.track);                break;
     default: vlogf("[DISPATCH] HCR: unsupported fn=%u\n", a.fn); break;
   }
+}
+
+// Build the WCB MP3 command string for an RA_MP3 action. Mirrors the WCB's
+// ";A,<CMD>" set (WCB_MP3.cpp). Returns "" for an unknown function code.
+// No trailing newline: this travels as a WCB command (the WCB strips the ';'
+// and routes 'A...' to its MP3 driver) — not a raw serial forward.
+static String mp3FormatCommand(uint8_t fn, int16_t arg) {
+  switch (fn) {
+    case MP3_PLAY:   return String(";A,PLAY,")   + arg;   // track 1-255
+    case MP3_PLAYFS: return String(";A,PLAYFS,") + arg;   // index 0-255
+    case MP3_STOP:   return ";A,STOP";
+    case MP3_NEXT:   return ";A,NEXT";
+    case MP3_PREV:   return ";A,PREV";
+    case MP3_VOL:    return String(";A,VOL,")    + arg;   // 0=loudest..64=inaudible
+    case MP3_VOLUP:  return ";A,VOLUP";
+    case MP3_VOLDN:  return ";A,VOLDN";
+    default:         return "";
+  }
+}
+
+// ── Local MP3 Trigger (v2.x) serial driver ──────────────────────────────────
+// Used when rcConfig.mp3Dest.transport == 0 (MP3 Trigger wired to this board's
+// S3/S4). Mirrors the WCB's WCB_MP3.cpp byte protocol exactly:
+//   play track   : 'v' <vol>  then 't' <track>
+//   play file idx : 'v' <vol>  then 'p' <idx>
+//   stop toggle  : 'O'        next: 'F'   prev: 'R'
+//   set volume   : 'v' <vol>  (0=loudest .. 64=inaudible)
+// The pre-play volume byte is why we keep a local volume shadow, just like the
+// WCB driver (mp3Volume there).
+static uint8_t mp3LocalVolume = 20;
+
+static inline void mp3Raw(Stream* p, uint8_t b1, int16_t b2 = -1) {
+  p->write(b1);
+  if (b2 >= 0) p->write((uint8_t)b2);
+  p->flush();
+}
+
+static void mp3SendLocal(Stream* p, const char* portName, uint8_t fn, int16_t arg) {
+  switch (fn) {
+    case MP3_PLAY:
+      if (arg < 1 || arg > 255) { vlogf("[DISPATCH] MP3-local: track %d out of 1-255 — skipped\n", arg); return; }
+      mp3Raw(p, 'v', mp3LocalVolume); mp3Raw(p, 't', arg); break;
+    case MP3_PLAYFS:
+      if (arg < 0 || arg > 255) { vlogf("[DISPATCH] MP3-local: index %d out of 0-255 — skipped\n", arg); return; }
+      mp3Raw(p, 'v', mp3LocalVolume); mp3Raw(p, 'p', arg); break;
+    case MP3_STOP:  mp3Raw(p, 'O'); break;
+    case MP3_NEXT:  mp3Raw(p, 'F'); break;
+    case MP3_PREV:  mp3Raw(p, 'R'); break;
+    case MP3_VOL:
+      if (arg < 0 || arg > 64) { vlogf("[DISPATCH] MP3-local: vol %d out of 0-64 — skipped\n", arg); return; }
+      mp3LocalVolume = (uint8_t)arg; mp3Raw(p, 'v', mp3LocalVolume); break;
+    case MP3_VOLUP:
+      mp3LocalVolume = (mp3LocalVolume <= 5) ? 0 : mp3LocalVolume - 5;
+      mp3Raw(p, 'v', mp3LocalVolume); break;
+    case MP3_VOLDN:
+      mp3LocalVolume = (mp3LocalVolume >= 59) ? 64 : mp3LocalVolume + 5;
+      mp3Raw(p, 'v', mp3LocalVolume); break;
+    default:
+      vlogf("[DISPATCH] MP3-local: bad fn=%u — skipped\n", fn); return;
+  }
+  vlogf("[DISPATCH] MP3→%s  fn=%u arg=%d vol=%u  OK\n", portName, fn, arg, mp3LocalVolume);
+}
+
+// Dispatch an RA_MP3 action. Destination is GLOBAL (rcConfig.mp3Dest).
+//   transport 0 = local serial (S3/S4) — drive the MP3 Trigger directly here.
+//   transport 1 = WCB unicast — ";A,..." command to one WCB whose own MP3
+//                 driver (configured there via ?MP3,S<port>) does the serial.
+static void executeMp3Action(const RcAction& a) {
+  const RcMp3Dest& dest = rcConfig.mp3Dest;
+
+  if (dest.transport == 0) {
+    // ── Local serial transport ───────────────────────────────────────────
+    Stream* p = nullptr;
+    if      (!strcmp(dest.target, "S3")) p = &Serial3;
+    else if (!strcmp(dest.target, "S4")) p = &Serial4;
+    if (!p) {
+      vlogf("[DISPATCH] MP3-local: unknown serial port '%s' — skipped\n", dest.target);
+      return;
+    }
+    mp3SendLocal(p, dest.target, a.fn, a.track);
+    return;
+  }
+
+  // ── WCB unicast transport ──────────────────────────────────────────────
+  if (!wcb) { vlogf("[DISPATCH] MP3: wcb not ready — skipped\n"); return; }
+  String cmd = mp3FormatCommand(a.fn, a.track);
+  if (cmd.length() == 0) {
+    vlogf("[DISPATCH] MP3: bad fn=%u — skipped\n", a.fn);
+    return;
+  }
+  uint8_t target = (uint8_t)atoi(dest.target);
+  if (target < 1 || target > WCB_MAX_BOARDS) {
+    vlogf("[DISPATCH] MP3: target '%s' invalid — set MP3 Destination to a "
+          "WCB ID 1-%d in the config tool. Not sent.\n",
+          dest.target, WCB_MAX_BOARDS);
+    return;
+  }
+  bool ok = wcb->send(target, cmd.c_str());
+  vlogf("[DISPATCH] MP3→WCB%u  %s  %s\n", target, cmd.c_str(), ok ? "OK" : "FAIL");
 }
 
 // =============================================================================
@@ -577,6 +689,9 @@ void rcExecuteAction(const RcAction& a) {
     }
     case RA_HCR:
       executeHcrAction(a);
+      break;
+    case RA_MP3:
+      executeMp3Action(a);
       break;
     default: break;
   }
@@ -1068,11 +1183,9 @@ void setup() {
   Serial.printf("[Serial2] Local Maestro @ %d baud  TX=GPIO%d\n",
                 LOCAL_MAESTRO_BAUD_RATE, MAESTRO_TX_PIN);
 
-  // Serial3-4 — general purpose, bit-banged via SoftwareSerial.
-  // 9600 8N1 by default; raise per-port baud if your peripheral needs it,
-  // but keep under ~57600 — higher rates choke on ESP32-S3.
-  Serial3.begin(9600, SWSERIAL_8N1, S3_RX_PIN, S3_TX_PIN, false, 95);
-  Serial4.begin(9600, SWSERIAL_8N1, S4_RX_PIN, S4_TX_PIN, false, 95);
+  // Serial3-4 (aux SoftwareSerial) are opened AFTER the config loads, below,
+  // at their configured per-port baud (rcConfig.auxBaud). Nothing uses S3/S4
+  // before setup() finishes, so deferring the open is safe.
 
   // SBUS OUT — TX-only SoftwareSerial mirroring the SBUS RX line speed/format.
   // RX pin set to -1 (no RX), invert=true for SBUS line polarity.  The
@@ -1093,6 +1206,16 @@ void setup() {
   // WCBClient so the network credentials come from rcConfig.wcbNetwork.
   rcConfigLoadDefaults();
   rcConfigLoadNVS();
+
+  // Open the aux SoftwareSerial ports at their configured per-port baud.
+  // Single source of truth: rcConfig.auxBaud — HCR (local), MP3 Trigger
+  // (local), and Serial actions on S3/S4 all run at whatever the port is set
+  // to here. Keep aux baud ≤ ~57600 (higher rates choke bit-banged SWSerial
+  // on ESP32-S3). One port = one device = one baud.
+  Serial3.begin(rcConfig.auxBaud[0], SWSERIAL_8N1, S3_RX_PIN, S3_TX_PIN, false, 95);
+  Serial4.begin(rcConfig.auxBaud[1], SWSERIAL_8N1, S4_RX_PIN, S4_TX_PIN, false, 95);
+  Serial.printf("[AUX] S3 @ %lu baud · S4 @ %lu baud\n",
+                (unsigned long)rcConfig.auxBaud[0], (unsigned long)rcConfig.auxBaud[1]);
 
   // WCB Client — sets STA mode + custom MAC + inits ESP-NOW.
   // No WiFi AP or web server — ESP-NOW only.  Credentials come from NVS

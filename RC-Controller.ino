@@ -223,6 +223,13 @@ PendingAction pendingActions[PENDING_ACTION_SLOTS];
 // =============================================================================
 bool          wsMonitorActive   = false;
 unsigned long wsMonitorLastSent = 0;
+// While the config tool's calibration wizard is open the operator deliberately
+// wiggles every stick/knob/switch/button. Suppress ALL action dispatch while
+// this is set so nothing (HCR/Maestro/MP3/WCB/Serial) fires during cal.
+// Set/cleared via {"type":"CALIB","on":bool}; also force-cleared by
+// STOP_MONITOR and a fresh PING so a crashed/closed page can never leave the
+// board permanently muted.
+bool          calibrationActive = false;
 #define WS_MONITOR_INTERVAL_MS  50
 
 // =============================================================================
@@ -647,6 +654,10 @@ static void scheduleAction(const RcAction& action, unsigned long delayMs) {
 }
 
 void rcExecuteAction(const RcAction& a) {
+  // Calibration mode: the operator is intentionally moving every control to
+  // set thresholds — drop every action (including delayed/scheduled ones, so
+  // nothing queues up to fire the instant calibration ends).
+  if (calibrationActive) return;
   if (a.delayMs > 0) { scheduleAction(a, a.delayMs); return; }
 
   switch (a.type) {
@@ -1035,6 +1046,42 @@ void sendPWMUpdate() {
 }
 
 // =============================================================================
+//  Serial-port baud (re)application
+//  Serial2 (Maestro) and Serial3/4 (aux SWSerial) are opened from rcConfig.
+//  Called once at boot AND again after every SET_CONFIG save, so a baud
+//  change in the config tool takes effect immediately — no reboot needed.
+//  Only a port whose baud actually changed is re-opened: re-begin() briefly
+//  drops the line, so unrelated saves must not disturb live ports.
+// =============================================================================
+static uint32_t appliedMaestroBaud = 0;
+static uint32_t appliedAuxBaud[2]  = { 0, 0 };
+
+static void applySerialBauds(bool initial) {
+  if (initial || rcConfig.maestroBaud != appliedMaestroBaud) {
+    if (!initial) Serial2.end();
+    Serial2.begin(rcConfig.maestroBaud, SERIAL_8N1, MAESTRO_RX_PIN, MAESTRO_TX_PIN);
+    appliedMaestroBaud = rcConfig.maestroBaud;
+    Serial.printf("[Serial2] Local Maestro %s @ %lu baud  TX=GPIO%d\n",
+                  initial ? "open" : "re-open",
+                  (unsigned long)rcConfig.maestroBaud, MAESTRO_TX_PIN);
+  }
+  if (initial || rcConfig.auxBaud[0] != appliedAuxBaud[0]) {
+    if (!initial) Serial3.end();
+    Serial3.begin(rcConfig.auxBaud[0], SWSERIAL_8N1, S3_RX_PIN, S3_TX_PIN, false, 95);
+    appliedAuxBaud[0] = rcConfig.auxBaud[0];
+    Serial.printf("[AUX] S3 %s @ %lu baud\n",
+                  initial ? "open" : "re-open", (unsigned long)rcConfig.auxBaud[0]);
+  }
+  if (initial || rcConfig.auxBaud[1] != appliedAuxBaud[1]) {
+    if (!initial) Serial4.end();
+    Serial4.begin(rcConfig.auxBaud[1], SWSERIAL_8N1, S4_RX_PIN, S4_TX_PIN, false, 95);
+    appliedAuxBaud[1] = rcConfig.auxBaud[1];
+    Serial.printf("[AUX] S4 %s @ %lu baud\n",
+                  initial ? "open" : "re-open", (unsigned long)rcConfig.auxBaud[1]);
+  }
+}
+
+// =============================================================================
 //  USB Serial WebSerial protocol handler
 //  Same JSON protocol as Body Controller so the config_tool HTML is compatible.
 // =============================================================================
@@ -1070,6 +1117,9 @@ void handleSerialInput() {
         const char* type = hdr["type"] | "";
 
         if (strcmp(type,"PING")==0 || strcmp(type,"ping")==0) {
+          // A fresh page connect pings first — clear any stale calibration
+          // mute left behind by a previously crashed/closed calibration page.
+          calibrationActive = false;
           Serial.println("{\"type\":\"PONG\"}");
 
         } else if (strcmp(type,"GET_CONFIG")==0) {
@@ -1087,6 +1137,9 @@ void handleSerialInput() {
             bool ok = rcConfigFromJSON(bigDoc["data"].as<JsonObject>());
             if (ok) {
               rcConfigSaveNVS();
+              // Apply baud changes live (Serial2/3/4) so HCR / MP3 / Maestro
+              // pick up a new rate immediately — no reboot required.
+              applySerialBauds(false);
               Serial.println("{\"type\":\"ACK\",\"ok\":true}");
             } else {
               Serial.println("{\"type\":\"ACK\",\"ok\":false,\"msg\":\"config apply failed\"}");
@@ -1100,6 +1153,15 @@ void handleSerialInput() {
 
         } else if (strcmp(type,"STOP_MONITOR")==0) {
           wsMonitorActive = false;
+          // Calibration always runs with the monitor on; stopping it is a
+          // reliable "calibration is over" signal even if CALIB-off is lost.
+          calibrationActive = false;
+          Serial.println("{\"type\":\"ACK\",\"ok\":true}");
+
+        } else if (strcmp(type,"CALIB")==0) {
+          calibrationActive = hdr["on"] | false;
+          Serial.printf("[CALIB] action dispatch %s\n",
+                        calibrationActive ? "SUPPRESSED (calibrating)" : "resumed");
           Serial.println("{\"type\":\"ACK\",\"ok\":true}");
 
         } else if (strcmp(type,"RESET_DEFAULTS")==0) {
@@ -1163,6 +1225,31 @@ void handleSerialInput() {
             }
             case 12: Serial.printf("Mode=%d  matrixBtn=%d  matrixVal=%d\n",
                                    FunctionSwState, pwmToButton(oldValueMatrix), oldValueMatrix); break;
+            // ── HCR local-serial TX diagnostics ──────────────────────────────
+            // These bypass rcConfig.hcrDest AND button mapping entirely. They
+            // drive hcrS3/hcrS4 directly so a "nothing on the HCR" report can
+            // be split into:  firmware-TX-path/wiring  vs  config/dispatch.
+            //   #L20 → HCR on S3 (GPIO15 TX): SetEmotion(HAPPY,80) + raw marker
+            //   #L21 → HCR on S4 (GPIO17 TX): same
+            // If the HCR reacts to #L20 but not to a mapped button, the bug is
+            // in config (hcrDest transport/target not saved) or button mapping,
+            // NOT the serial wiring. If #L20 also does nothing, it's wiring
+            // (TX/RX swap, ground, 3V3 vs 5V) or the EspSoftwareSerial port.
+            case 20:
+            case 21: {
+              HCRVocalizer* h = (fn == 20) ? &hcrS3 : &hcrS4;
+              const char* pn  = (fn == 20) ? "S3 (GPIO15)" : "S4 (GPIO17)";
+              Serial.printf("[HCR TEST] -> %s : SetEmotion(HAPPY,80) then raw <OH80,QEH>\n", pn);
+              h->SetEmotion(0 /*HAPPY*/, 80);
+              h->update();
+              // Also push a raw, fully-framed line straight at the port in case
+              // a library/marker mismatch is the issue — this is exactly the
+              // bytes a working HCR expects, with no library logic in between.
+              if (fn == 20) Serial3.print("<OH80,QEH>\n");
+              else          Serial4.print("<OH80,QEH>\n");
+              Serial.println("[HCR TEST] sent — watch the HCR; check TX wiring to HCR RX, common ground");
+              break;
+            }
           }
         }
       }
@@ -1221,21 +1308,13 @@ void setup() {
   rcConfigLoadDefaults();
   rcConfigLoadNVS();
 
-  // Serial2 — local Maestro bus, at the configured baud. Must match each
-  // wired Maestro's Serial Settings (or its auto-detect mode).
-  Serial2.begin(rcConfig.maestroBaud, SERIAL_8N1, MAESTRO_RX_PIN, MAESTRO_TX_PIN);
-  Serial.printf("[Serial2] Local Maestro @ %lu baud  TX=GPIO%d\n",
-                (unsigned long)rcConfig.maestroBaud, MAESTRO_TX_PIN);
-
-  // Open the aux SoftwareSerial ports at their configured per-port baud.
-  // Single source of truth: rcConfig.auxBaud — HCR (local), MP3 Trigger
-  // (local), and Serial actions on S3/S4 all run at whatever the port is set
-  // to here. Keep aux baud ≤ ~57600 (higher rates choke bit-banged SWSerial
-  // on ESP32-S3). One port = one device = one baud.
-  Serial3.begin(rcConfig.auxBaud[0], SWSERIAL_8N1, S3_RX_PIN, S3_TX_PIN, false, 95);
-  Serial4.begin(rcConfig.auxBaud[1], SWSERIAL_8N1, S4_RX_PIN, S4_TX_PIN, false, 95);
-  Serial.printf("[AUX] S3 @ %lu baud · S4 @ %lu baud\n",
-                (unsigned long)rcConfig.auxBaud[0], (unsigned long)rcConfig.auxBaud[1]);
+  // Open Serial2 (local Maestro) + Serial3/4 (aux SWSerial) at their
+  // configured baud. Single source of truth: rcConfig (maestroBaud /
+  // auxBaud[]). Same helper runs again after every SET_CONFIG save so a
+  // baud change in the config tool applies live — no reboot needed.
+  // Keep aux baud ≤ ~57600 (higher rates choke bit-banged SWSerial on
+  // ESP32-S3). One port = one device = one baud.
+  applySerialBauds(true);
 
   // WCB Client — sets STA mode + custom MAC + inits ESP-NOW.
   // No WiFi AP or web server — ESP-NOW only.  Credentials come from NVS
@@ -1270,6 +1349,7 @@ void setup() {
   Serial.println("[RC-Controller] Setup complete.");
   Serial.println("  Connect config_tool/index.html via Web Serial for configuration.");
   Serial.println("  CLI: #L01=info  #L09=SBUS dump  #L10=live  #L11=WCB status  #L12=RC state");
+  Serial.println("  CLI: #L20=HCR S3 test  #L21=HCR S4 test  (direct, bypasses config+mapping)");
   Serial.println("  Send PING to test. Send GET_CONFIG to read mappings.");
 }
 

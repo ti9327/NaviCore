@@ -400,27 +400,32 @@ void rcConfigLoadDefaults() {
   rcConfig.matrixDebounceFrames = 1;     // digital SBUS source — fastest; bump for analog matrix
   rcConfig.funcBindings.modeSwitch = SW_SE;  // SE (CH12) drives mode 1/2/3
 
-  // Default PWM threshold bands (matches Body Controller layout for compatibility)
+  // Default PWM threshold bands — measured SBUS values from the live X18
+  // (matrix channel), center ±12 (~17-count neutral deadband between buttons;
+  // SBUS noise is only ±1-2). T3/T2 are vertical trim buttons → Up/Down.
+  // Slot 19 ("Unassigned") is INERT (0/0 can never match) and hidden in the
+  // config tool; it is kept only so the 19-slot mapping/NVS index math
+  // (RC_NUM_THRESHOLDS / RC_NUM_MAPPINGS / rcMapIndex) is unchanged.
   struct { const char* label; int mn; int mx; } bands[19] = {
-    { "B1",          1800, 1850 },
-    { "B2",          1750, 1799 },
-    { "B3",          1700, 1749 },
-    { "B4",          1650, 1699 },
-    { "B5",          1600, 1649 },
-    { "B6",          1550, 1599 },
-    { "T4 Left",     1500, 1549 },
-    { "T4 Right",    1450, 1499 },
-    { "T5 Left",     1400, 1449 },
-    { "T5 Right",    1350, 1399 },
-    { "T3 Left",     1300, 1349 },
-    { "T3 Right",    1250, 1299 },
-    { "T2 Left",     1200, 1249 },
-    { "T2 Right",    1150, 1199 },
-    { "T6 Left",     1100, 1149 },
-    { "T6 Right",    1050, 1099 },
-    { "T1 Left",     1023, 1049 },
-    { "T1 Right",     850,  960 },
-    { "Unassigned",   800,  849 },
+    { "B1",          1799, 1823 },
+    { "B2",          1758, 1782 },
+    { "B3",          1718, 1742 },
+    { "B4",          1676, 1700 },
+    { "B5",          1634, 1658 },
+    { "B6",          1594, 1618 },
+    { "T4 Left",     1553, 1577 },
+    { "T4 Right",    1512, 1536 },
+    { "T5 Left",     1471, 1495 },
+    { "T5 Right",    1430, 1454 },
+    { "T3 Up",         1389, 1413 },
+    { "T3 Down",         1348, 1372 },
+    { "T2 Up",         1308, 1332 },
+    { "T2 Down",         1266, 1290 },
+    { "T6 Left",     1225, 1249 },
+    { "T6 Right",    1184, 1208 },
+    { "T1 Left",     1143, 1167 },
+    { "T1 Right",    1103, 1127 },
+    { "Unassigned",     0,    0 },
   };
   for (int i = 0; i < 19; i++) {
     rcConfig.thresholds[i].id = i + 1;

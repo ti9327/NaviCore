@@ -3,7 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>RC Controller — RC Button Config</title>
+<title>HyperCore — RC Button Config</title>
+<link rel="icon" type="image/png" href="../Images/HyperCoreLogo.png">
+<link rel="apple-touch-icon" href="../Images/HyperCoreLogo.png">
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   :root {
@@ -34,8 +36,36 @@
   ::-webkit-scrollbar-corner { background: var(--bg); }
 
   /* ── Top bar ── */
-  .topbar { background: var(--surface); padding: 10px 20px; display: flex; align-items: center; gap: 16px; border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 100; }
-  .topbar h1 { font-size: 18px; color: var(--accent); flex: 1; }
+  /* Header stays SHORT always. When the sidebar is open the big logo lives in
+     a fixed brand-box that OVERHANGS this short bar (so the header is never
+     tall); the toolbar gets extra left padding to clear it. When collapsed,
+     the brand-box is hidden and the compact wordmark sits in the bar. */
+  .topbar { background: var(--surface); padding: 8px 20px; min-height: 56px; display: flex; align-items: center; gap: 16px; border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 100; }
+  body:not(.sidebar-collapsed) .topbar { padding-left: 332px; }
+  .topbar h1 { font-size: 30px; color: var(--accent); flex: 1; }
+
+  /* Big logo: fixed, top-left, overhanging the short header into the sidebar's
+     (otherwise empty) top area. Opaque + sidebar-column width so sidebar
+     content scrolling underneath stays hidden. z-index above the sticky
+     topbar (100), below modals (200). */
+  .brand-box { position: fixed; top: 0; left: 0; width: 320px; height: 210px;
+               display: flex; align-items: center; justify-content: center;
+               background: var(--surface); border-right: 1px solid var(--border);
+               border-bottom: 1px solid var(--border); z-index: 120; }
+  .brand-logo-full { height: 200px; width: auto; max-width: 100%;
+                     object-fit: contain; }
+  /* Compact wordmark — only when the sidebar is collapsed. */
+  .brand-logo { height: 38px; width: auto; flex: none; object-fit: contain;
+                display: none; }
+  body.sidebar-collapsed .brand-box  { display: none; }
+  body.sidebar-collapsed .brand-logo { display: block; }
+  /* Push open-sidebar content below the overhanging brand-box (210 − ~54). */
+  body:not(.sidebar-collapsed) #sidebar-panel { padding-top: 156px; }
+  /* All toolbar controls grouped in a compact right-aligned block. margin-left
+     auto pushes it to the right; it stays vertically centered next to the
+     logo and wraps to extra rows instead of stretching across the bar. */
+  .topbar-tools { margin-left: auto; display: flex; flex-wrap: wrap;
+                  align-items: center; justify-content: flex-end; gap: 8px 10px; }
   .btn { padding: 7px 16px; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; transition: opacity .2s; }
   .btn:hover { opacity: .8; }
   .btn:disabled { opacity: .4; cursor: not-allowed; }
@@ -50,7 +80,7 @@
   #status-text { font-size: 12px; color: var(--muted); }
 
   /* ── Layout ── */
-  .main { display: flex; gap: 0; height: calc(100vh - 53px); padding-bottom: 260px; }
+  .main { display: flex; gap: 0; height: calc(100vh - 57px); padding-bottom: 260px; }
   .sidebar { position: relative; width: 320px; background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; overflow-y: auto; flex-shrink: 0; }
   .resizable-panel { resize: none; overflow: auto; }
   .panel-header { position: relative; display:flex; align-items:center; justify-content:space-between; padding:10px 16px; border-bottom:1px solid var(--border); background: rgba(255,255,255,.02); }
@@ -320,18 +350,27 @@
 </head>
 <body class="terminal-collapsed">
 
-<!-- ── Top bar ── -->
+<!-- Big logo overhangs a SHORT header (so the header isn't tall). Shown only
+     when the sidebar is open; when collapsed it's hidden and the compact
+     wordmark in the top bar takes over (no floating square). -->
+<div class="brand-box">
+  <img class="brand-logo-full" src="../Images/HyperCoreLogo2.png" alt="HyperCore">
+</div>
+
+<!-- ── Top bar — stays SHORT. Wordmark (collapsed only) + toolbar. ── -->
 <div class="topbar">
-  <h1>RC Controller — RC Button Config</h1>
-  <div class="status-dot" id="conn-dot"></div>
-  <span id="status-text">Disconnected</span>
-  <button class="btn btn-primary" id="btn-connect">Connect</button>
-  <button class="btn btn-blue"    id="btn-refresh" disabled>Refresh</button>
-  <button class="btn btn-success" id="btn-save"    disabled>Save</button>
-  <button class="btn btn-ghost" id="btn-hwsetup" type="button">Config</button>
-  <button class="btn btn-ghost" id="btn-export-cfg" type="button">Export</button>
-  <button class="btn btn-ghost" id="btn-import-cfg" type="button">Import</button>
-  <button class="btn btn-ghost" id="btn-calibrate" type="button">Calibrate RC</button>
+  <img class="brand-logo" src="../Images/HyperCore-Wording.png" alt="HyperCore">
+  <div class="topbar-tools">
+    <div class="status-dot" id="conn-dot"></div>
+    <span id="status-text">Disconnected</span>
+    <button class="btn btn-primary" id="btn-connect">Connect</button>
+    <button class="btn btn-blue"    id="btn-refresh" disabled>Refresh</button>
+    <button class="btn btn-success" id="btn-save"    disabled>Save</button>
+    <button class="btn btn-ghost" id="btn-hwsetup" type="button">Config</button>
+    <button class="btn btn-ghost" id="btn-export-cfg" type="button">Export</button>
+    <button class="btn btn-ghost" id="btn-import-cfg" type="button">Import</button>
+    <button class="btn btn-ghost" id="btn-calibrate" type="button">Calibrate RC</button>
+  </div>
 </div>
 <input id="cfg-import-file" type="file" accept=".csv,text/csv" style="display:none">
 
@@ -911,6 +950,13 @@
           </div>
         </div>
       </div>
+      <div style="display:flex;flex-direction:column;align-items:center;gap:8px;text-align:center">
+        <img src="../Images/r2logo.png" alt="R2 logo"
+             style="width:72px;height:72px;object-fit:contain;opacity:0.9">
+        <div style="font-size:11px;color:var(--muted);font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;letter-spacing:0.3px">
+          RC Controller Config Tool &nbsp;·&nbsp; UI Version <span id="footer-ui-version">1.0</span>
+        </div>
+      </div>
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap">
         <a href="https://github.com/greghulette/RC-Controller" target="_blank" rel="noopener"
            style="display:inline-flex;align-items:center;gap:7px;padding:7px 14px;
@@ -938,10 +984,6 @@
       </div>
     </div>
 
-    <!-- ─── Page Version Footer ───────────────────────────────────────── -->
-    <div style="text-align:center;padding:12px 0 16px;font-size:11px;color:var(--muted);font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;letter-spacing:0.3px">
-      RC Controller Config Tool &nbsp;·&nbsp; UI Version <span id="footer-ui-version">1.0</span>
-    </div>
   </div>
 </div>
 
@@ -1241,8 +1283,8 @@ const NUM_MAESTRO_SLOTS = 8;
 const knobDefaults = {
   S1: { channel: 5, function: 0, outputs: [], kind: 'knob',     friendly: 'S1 knob' },
   S2: { channel: 6, function: 0, outputs: [], kind: 'knob',     friendly: 'S2 knob' },
-  LS: { channel: 0, function: 0, outputs: [], kind: 'slider',   friendly: 'LS slider' },
-  RS: { channel: 0, function: 0, outputs: [], kind: 'slider',   friendly: 'RS slider' },
+  LS: { channel: 18, function: 0, outputs: [], kind: 'slider',   friendly: 'LS slider' },
+  RS: { channel: 19, function: 0, outputs: [], kind: 'slider',   friendly: 'RS slider' },
   J1: { channel: 1, function: 0, outputs: [], kind: 'joystick', friendly: 'J1 — R-stick X (AIL)' },
   J2: { channel: 2, function: 0, outputs: [], kind: 'joystick', friendly: 'J2 — R-stick Y (ELE)' },
   J3: { channel: 3, function: 0, outputs: [], kind: 'joystick', friendly: 'J3 — L-stick Y (THR)' },
@@ -1294,8 +1336,8 @@ const switchDefaults = {
   SF: {channel: 13, positions: 2},
   SG: {channel: 14, positions: 3},
   SH: {channel: 15, positions: 2},
-  SI: {channel:  0, positions: 2},
-  SJ: {channel:  0, positions: 2},
+  SI: {channel: 16, positions: 2},
+  SJ: {channel: 17, positions: 2},
 };
 
 let config = {
@@ -1327,10 +1369,16 @@ let config = {
 };
 
 const modeLabels = ['', 'SW Down (Mode 1)', 'SW Mid (Mode 2)', 'SW Up (Mode 3)'];
+// 18 physical matrix buttons (index 1-18). Index 19 ("Unassigned") is kept
+// only so legacy 19-slot configs / firmware mapping math don't shift; it is
+// NOT shown in the threshold table or calibration (loops stop at 18).
+// T3/T2 are vertical trim buttons → Up/Down, not Left/Right.
 const btnLabels  = ['', 'B1', 'B2', 'B3', 'B4', 'B5', 'B6',
                         'T4 Left', 'T4 Right', 'T5 Left', 'T5 Right',
-                        'T3 Left', 'T3 Right', 'T2 Left', 'T2 Right',
+                        'T3 Up', 'T3 Down', 'T2 Up', 'T2 Down',
                         'T6 Left', 'T6 Right', 'T1 Left', 'T1 Right', 'Unassigned'];
+// Number of real, user-facing matrix buttons (excludes the inert slot 19).
+const RC_VISIBLE_BUTTONS = 18;
 
 // RC Controller action types. Maestros are addressed by ID 1-8 regardless of
 // wiring — the location of each is configured in the Maestro Locations panel.
@@ -1606,6 +1654,7 @@ function initTerminal() {
       if (sidebarPanel.classList.contains('collapsed')) {
         sidebarPanel.classList.remove('collapsed');
         sidebarToggle.textContent = '▾';
+        document.body.classList.remove('sidebar-collapsed');
       }
     }
     if (terminalDrag) {
@@ -1641,8 +1690,10 @@ function initTerminal() {
   if (sidebarToggle) {
     sidebarToggle.addEventListener('click', () => {
       const panel = sidebarPanel;
-      panel.classList.toggle('collapsed');
-      sidebarToggle.textContent = panel.classList.contains('collapsed') ? '▸' : '▾';
+      const collapsed = panel.classList.toggle('collapsed');
+      sidebarToggle.textContent = collapsed ? '▸' : '▾';
+      // Swap brand: full logo in the open sidebar ↔ wordmark in the top bar.
+      document.body.classList.toggle('sidebar-collapsed', collapsed);
     });
   }
   if (terminalCollapse) {
@@ -2125,7 +2176,7 @@ function updatePWMDisplay(matrixVal, modeVal, btn, mode) {
   chip.style.background = effectiveBtn > 0 ? 'var(--accent)' : 'var(--muted)';
 
   document.querySelectorAll('.btn-zone.live-active').forEach(el => el.classList.remove('live-active'));
-  if (effectiveBtn > 0 && effectiveBtn <= 19) {
+  if (effectiveBtn > 0 && effectiveBtn <= RC_VISIBLE_BUTTONS) {
     const el = document.querySelector(`.btn-zone[data-btn="${effectiveBtn}"]`);
     if (el) el.classList.add('live-active');
   }
@@ -2149,6 +2200,7 @@ function renderThresholds() {
   const tbody = document.querySelector('#thresh-table tbody');
   tbody.innerHTML = '';
   config.thresholds.forEach((t, i) => {
+    if (i >= RC_VISIBLE_BUTTONS) return;   // hide inert slot 19 ("Unassigned")
     const row = document.createElement('tr');
     const center = Math.round((t.minPwm + t.maxPwm) / 2);
     row.innerHTML = `
@@ -2217,7 +2269,7 @@ function actionSummary(a) {
 }
 
 function updateButtonHighlights() {
-  for (let btn = 1; btn <= 19; btn++) {
+  for (let btn = 1; btn <= RC_VISIBLE_BUTTONS; btn++) {
     const key   = String(currentMode * 100 + btn);
     const m     = config.mappings[key];
     const group = document.querySelector(`.btn-zone[data-btn="${btn}"]`);
@@ -3340,6 +3392,9 @@ function openCalibrationModal() {
 
   renderCalibrationStep();
   if (!isMonitoring) document.getElementById('btn-mon-start').click();
+  // Mute the board: calibration deliberately exercises every control, so no
+  // action (HCR/Maestro/MP3/WCB/Serial) should fire while the wizard is open.
+  sendJSON({ type: 'CALIB', on: true }).catch(() => {});
 }
 
 function closeCalibrationModal() {
@@ -3349,6 +3404,10 @@ function closeCalibrationModal() {
   calibrationState = null;
   document.getElementById('calibration-modal').classList.remove('open');
   clearCalibrationHighlights();
+  // Un-mute the board — calibration is over, resume normal action dispatch.
+  // (Belt-and-suspenders: the board also auto-clears this on STOP_MONITOR
+  // and on the next PING, so a crashed page can't leave it muted.)
+  sendJSON({ type: 'CALIB', on: false }).catch(() => {});
 }
 
 function setCalibrationStatus(text, warning = false) {
@@ -3361,6 +3420,7 @@ function setCalibrationStatus(text, warning = false) {
 function renderCalibrationStep() {
   if (!calibrationState) return;
   calibrationState.stepCaptured = false;
+  calibrationState.detect = null;   // fresh channel-swing baseline per step
   const step = calibrationState.steps[calibrationState.index];
   let instruction = '';
   if (step.type === 'button') {
@@ -3370,29 +3430,61 @@ function renderCalibrationStep() {
     const ch  = sw.channel || switchDefaults[step.swName].channel;
     const isMomentary = step.swName === 'SI' || step.swName === 'SJ';
     instruction = isMomentary
-      ? `Press and release ${step.label}${ch ? ` (ch${ch})` : ''} — verify the position flips to Up ▲ when pressed, then click Next.`
-      : `Toggle ${step.label}${ch ? ` (ch${ch})` : ''} through all positions — verify the position name updates below, then click Next.`;
+      ? `Press and release ${step.label} a few times (currently ${ch ? 'ch' + ch : 'unassigned'}). The channel that swings the most is auto-detected — click Capture to save it.`
+      : `Toggle ${step.label} through ALL positions (currently ${ch ? 'ch' + ch : 'unassigned'}). The channel that swings the most is auto-detected — click Capture to save it.`;
   } else if (step.type === 'knob') {
     const kn = (config.knobs && config.knobs[step.knobName]) || knobDefaults[step.knobName];
     const ch = kn.channel || knobDefaults[step.knobName].channel;
     const isSlider = step.knobName === 'LS' || step.knobName === 'RS';
     const isJoy    = step.knobName[0] === 'J';
-    if (isJoy) {
-      instruction = `Move the joystick axis ${step.label}${ch ? ` (ch${ch})` : ''} from min to max — verify the value changes below, then click Next.`;
-    } else if (isSlider) {
-      instruction = `Move ${step.label}${ch ? ` (ch${ch})` : ''} from bottom to top — verify the value changes below, then click Next.`;
-    } else {
-      instruction = `Rotate ${step.label}${ch ? ` (ch${ch})` : ''} from min to max — verify the value changes below, then click Next.`;
-    }
+    const verb = isJoy ? 'Move the joystick axis' : isSlider ? 'Slide' : 'Rotate';
+    instruction = `${verb} ${step.label} fully min↔max a couple of times `
+      + `(currently ${ch ? 'ch' + ch : 'unassigned'}). The channel that swings `
+      + `the most is auto-detected — click Capture to save it.`;
   }
   document.getElementById('calibration-instruction').textContent = instruction;
   document.getElementById('calibration-live-value').textContent = 'Waiting for live SBUS data...';
   setCalibrationStatus('');
-  document.getElementById('btn-calibration-capture').style.display =
-    step.type === 'button' ? '' : 'none';
+  // Capture is available for every step type now: buttons capture a PWM
+  // threshold; knobs/sliders/joysticks/switches capture their SBUS channel.
+  const capBtn = document.getElementById('btn-calibration-capture');
+  capBtn.style.display = '';
+  capBtn.textContent = step.type === 'button' ? 'Force Capture' : 'Capture Channel';
   const prevBtn = document.getElementById('btn-calibration-prev');
   if (prevBtn) prevBtn.disabled = calibrationState.index === 0;
   highlightCalibrationTarget(step);
+}
+
+// Movement thresholds (SBUS counts) for analog/switch channel auto-detect.
+//   SWING_MIN  — minimum range before we trust a detected channel / allow
+//                manual Capture (well above SBUS line noise of ±1-2).
+//   SWING_AUTO — a near-full-travel sweep; only then do we auto-capture.
+const CALIB_SWING_MIN  = 250;
+const CALIB_SWING_AUTO = 600;
+
+// Watches EVERY SBUS channel across the current step and reports the one that
+// moved the most. Robust to any X18 channel order — the user just wiggles the
+// control and we learn which channel it is. Accumulates in calibrationState
+// .detect (reset per step in renderCalibrationStep). Returns 1-based ch.
+function calibDetectChannel(msg) {
+  const chans = msg && msg.sbus && Array.isArray(msg.sbus.channels)
+              ? msg.sbus.channels : null;
+  if (!chans || !chans.length) return null;
+  let d = calibrationState.detect;
+  if (!d) d = calibrationState.detect = { min: chans.slice(), max: chans.slice() };
+  let bestI = -1, bestSwing = -1;
+  for (let i = 0; i < chans.length; i++) {
+    const v = chans[i];
+    if (!Number.isFinite(v)) continue;
+    if (i >= d.min.length) { d.min[i] = v; d.max[i] = v; }
+    if (v < d.min[i]) d.min[i] = v;
+    if (v > d.max[i]) d.max[i] = v;
+    const sw = d.max[i] - d.min[i];
+    if (sw > bestSwing) { bestSwing = sw; bestI = i; }
+  }
+  if (bestI < 0) return null;
+  return { ch: bestI + 1, swing: bestSwing, val: chans[bestI],
+           min: d.min[bestI], max: d.max[bestI] };
 }
 
 function updateCalibrationLive(msg) {
@@ -3402,33 +3494,49 @@ function updateCalibrationLive(msg) {
 
   if (step.type === 'button') {
     liveText = `Detected: ${msg.btn ? btnLabels[msg.btn] : 'none'} — raw ${fmtVal(msg.matrixVal)}`;
-  } else if (step.type === 'switch') {
-    const sw      = (config.switches && config.switches[step.swName]) || switchDefaults[step.swName];
-    const channel = sw.channel || switchDefaults[step.swName].channel;
-    const value   = msg.sbus && Array.isArray(msg.sbus.channels) ? msg.sbus.channels[channel - 1] : null;
-    if (Number.isFinite(value)) {
-      const pos = value < 400 ? 'Down ▼' : value > 1500 ? 'Up ▲' : 'Mid ●';
-      liveText = `${step.swName}  ch${channel}: ${fmtVal(value)}  →  Position: ${pos}`;
-    } else {
-      liveText = `${step.swName} ch${channel}: awaiting SBUS data`;
+    document.getElementById('calibration-live-value').textContent = liveText;
+    // Auto-capture — buttons leave the neutral band when pressed.
+    if (calibrationState.stepCaptured) return;
+    const value = msg.matrixVal;
+    if (Number.isFinite(value) && (value < 962 || value > 1022)) {
+      calibrationState.stepCaptured = true;
+      captureCalibrationValue();
     }
-  } else if (step.type === 'knob') {
-    const kn      = (config.knobs && config.knobs[step.knobName]) || knobDefaults[step.knobName];
-    const channel = kn.channel || knobDefaults[step.knobName].channel;
-    const value   = msg.sbus && Array.isArray(msg.sbus.channels) ? msg.sbus.channels[channel - 1] : null;
-    if (Number.isFinite(value)) {
-      const pct = Math.max(0, Math.min(100, Math.round((value - 172) / (1811 - 172) * 100)));
-      liveText = `${step.knobName}  ch${channel}: ${fmtVal(value)}  (${pct}%)`;
-    } else {
-      liveText = `${step.knobName} ch${channel}: awaiting SBUS data`;
-    }
+    return;
+  }
+
+  // ── Analog axes (knob/slider/joystick) AND switches: channel auto-detect ──
+  // Same logic for both — wiggle the control, we find its channel by the
+  // largest swing and (on Capture) save it into config so it's robust to any
+  // X18 channel order. This is what fixes LS/RS/SI/SJ and mismatched sticks.
+  const isKnob = step.type === 'knob';
+  const name   = isKnob ? step.knobName : step.swName;
+  const defMap = isKnob ? knobDefaults : switchDefaults;
+  const cfgMap = isKnob ? config.knobs  : config.switches;
+  const cur    = (cfgMap && cfgMap[name]) || defMap[name] || {};
+  const assignedCh = cur.channel || (defMap[name] && defMap[name].channel) || 0;
+  const det = calibDetectChannel(msg);
+
+  if (!det) {
+    liveText = `${name}: awaiting SBUS data…`;
+  } else if (det.swing < CALIB_SWING_MIN) {
+    liveText = `${name}: move it fully through its range — `
+             + `best so far ch${det.ch} (Δ${det.swing}). `
+             + `Assigned: ${assignedCh ? 'ch' + assignedCh : '— none'}`;
+  } else {
+    const match = det.ch === assignedCh
+                ? ' ✓ matches current assignment'
+                : `  (currently ${assignedCh ? 'ch' + assignedCh : 'unassigned'})`;
+    liveText = `${name}: detected ch${det.ch}  `
+             + `range ${fmtVal(det.min)}–${fmtVal(det.max)} (Δ${det.swing})`
+             + `${match} — click Capture to save`;
   }
   document.getElementById('calibration-live-value').textContent = liveText;
 
-  // Auto-capture — buttons only
-  if (step.type !== 'button' || calibrationState.stepCaptured) return;
-  const value = msg.matrixVal;
-  if (Number.isFinite(value) && (value < 962 || value > 1022)) {
+  // Auto-capture only on a confident, near-full-travel sweep (and only if
+  // auto-advance is on — otherwise wait for an explicit Capture click).
+  if (calibrationState.stepCaptured) return;
+  if (calibrationState.autoAdvance && det && det.swing >= CALIB_SWING_AUTO) {
     calibrationState.stepCaptured = true;
     captureCalibrationValue();
   }
@@ -3490,6 +3598,42 @@ function captureCalibrationValue() {
     const note = mismatch ? ` (FW saw ${detectedLabel} — corrected)` : '';
     const advNote = calibrationState.autoAdvance ? ' Auto-advancing…' : ' Click Next → to continue.';
     setCalibrationStatus(`${step.label} captured at ${fmtVal(value)}.${advNote}${note}`, false);
+    if (calibrationState.autoAdvance) {
+      calibrationState.autoAdvanceTimer = setTimeout(() => {
+        if (calibrationState) calibrationNextStep();
+      }, 900);
+    }
+  } else {
+    // ── Knob/slider/joystick or switch: save the auto-detected channel ──────
+    const det = calibDetectChannel(msg);
+    if (!det || det.swing < CALIB_SWING_MIN) {
+      calibrationState.stepCaptured = false;   // let auto-capture retry
+      setCalibrationStatus(
+        `Not enough movement yet${det ? ` (best ch${det.ch}, Δ${det.swing})` : ''}. `
+        + `Move ${step.label} fully through its range, then click Capture.`, true);
+      return;
+    }
+    const isKnob = step.type === 'knob';
+    const name   = isKnob ? step.knobName : step.swName;
+    if (isKnob) {
+      if (!config.knobs) config.knobs = {};
+      const prev = config.knobs[name] || knobDefaults[name] || {};
+      config.knobs[name] = { ...prev, channel: det.ch };
+      if (typeof renderKnobHighlights === 'function') renderKnobHighlights();
+    } else {
+      if (!config.switches) config.switches = {};
+      const dflt = switchDefaults[name] || { positions: 3 };
+      const prev = config.switches[name] || dflt;
+      config.switches[name] = { ...prev, channel: det.ch,
+        positions: prev.positions || dflt.positions || 3 };
+      if (typeof renderSwitchHighlights === 'function') renderSwitchHighlights();
+    }
+    calibrationState.captured += 1;
+    const advNote = calibrationState.autoAdvance
+      ? ' Auto-advancing…' : ' Click Next → to continue.';
+    setCalibrationStatus(
+      `${name} → ch${det.ch} saved  (range ${fmtVal(det.min)}–${fmtVal(det.max)}, `
+      + `Δ${det.swing}).${advNote}`, false);
     if (calibrationState.autoAdvance) {
       calibrationState.autoAdvanceTimer = setTimeout(() => {
         if (calibrationState) calibrationNextStep();
@@ -4131,22 +4275,23 @@ document.getElementById('btn-thresh-rebuild').addEventListener('click', () => {
 function escH(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
 function defaultThresholds() {
-  const labels = ['B1','B2','B3','B4','B5','B6',
-                  'T4 Left','T4 Right','T5 Left','T5 Right',
-                  'T3 Left','T3 Right','T2 Left','T2 Right',
-                  'T6 Left','T6 Right',
-                  'T1 Left','T1 Right','Unassigned'];
-  return labels.map((label, i) => ({
+  // Measured SBUS values from the live X18 (matrix channel). Window = center
+  // ±12 → ~17-count neutral deadband between adjacent buttons (SBUS noise is
+  // only ±1-2). Slot 19 is inert (0/0 never matches) and hidden from the UI;
+  // it stays only so the 19-slot firmware mapping/NVS math is unaffected.
+  const bands = [
+    ['B1',       1811], ['B2',       1770], ['B3',      1730], ['B4', 1688],
+    ['B5',       1646], ['B6',       1606], ['T4 Left', 1565], ['T4 Right', 1524],
+    ['T5 Left',  1483], ['T5 Right', 1442], ['T3 Up',     1401], ['T3 Down', 1360],
+    ['T2 Up',      1320], ['T2 Down',      1278], ['T6 Left', 1237], ['T6 Right', 1196],
+    ['T1 Left',  1155], ['T1 Right', 1115], ['Unassigned', 0],
+  ];
+  return bands.map(([label, c], i) => ({
     id:     i + 1,
     label,
-    minPwm: 1850 - (i + 1) * 50,
-    maxPwm: 1850 - i * 50 - 1,
-  })).map((t, i) => {
-    if (i === 16) return { ...t, minPwm: 1023, maxPwm: 1049 };  // T1 Left
-    if (i === 17) return { ...t, minPwm: 850,  maxPwm: 960  };  // T1 Right
-    if (i === 18) return { ...t, minPwm: 800,  maxPwm: 849  };  // Unassigned
-    return t;
-  });
+    minPwm: c ? c - 12 : 0,
+    maxPwm: c ? c + 12 : 0,
+  }));
 }
 
 // ── WebSerial availability check ──────────────────────────────────────────

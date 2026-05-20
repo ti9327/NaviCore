@@ -1,0 +1,75 @@
+#!/bin/sh
+# ─────────────────────────────────────────────────────────────────────────
+# Pre-commit hook: stamp the current Date-Time-Group into the config tool
+# footer (<span id="footer-dtg">…</span>) so every committed/deployed
+# version of config_tool/index.html reflects when it was committed.
+#
+# Format:  DDHHMM<TZ>MMMYY   (matches firmware version style, e.g. 201500RMAY26)
+#   DD      day of month, local time, zero-padded
+#   HHMM    24-hour local time
+#   TZ      military timezone letter derived from UTC offset
+#           (R = UTC-5 EST, Q = UTC-4 EDT, etc.; falls back to 'R')
+#   MMM     three-letter month, uppercase
+#   YY      two-digit year
+#
+# Uses /bin/sh (POSIX) instead of bash so GitHub Desktop on Windows can
+# run it via the Git-for-Windows MSYS shell without invoking WSL.
+#
+# Activation (one-time, per clone):
+#     git config core.hooksPath tools/git-hooks
+#     git update-index --chmod=+x tools/git-hooks/pre-commit
+#
+# Non-blocking: if anything fails, the commit still proceeds without the
+# stamp — better a missing DTG than a blocked workflow.
+# ─────────────────────────────────────────────────────────────────────────
+
+HTML_FILE="config_tool/index.html"
+
+# Bail silently if the target file isn't present (e.g. running in a
+# worktree where it was removed).
+[ -f "$HTML_FILE" ] || exit 0
+
+# ── Build the DTG ────────────────────────────────────────────────────────
+DAY=$(date +%d)
+HHMM=$(date +%H%M)
+MONTH=$(date +%b | tr '[:lower:]' '[:upper:]')
+YEAR=$(date +%y)
+
+# Map common UTC offsets → military TZ letter. Falls back to 'R' for any
+# offset not listed (matches user's firmware-version convention).
+OFFSET=$(date +%z)
+case "$OFFSET" in
+  +0000) TZ_LETTER="Z" ;;
+  -0500) TZ_LETTER="R" ;;   # EST
+  -0400) TZ_LETTER="Q" ;;   # EDT
+  -0600) TZ_LETTER="S" ;;   # CST
+  -0500) TZ_LETTER="R" ;;   # CDT — same letter as EST (handled above)
+  -0700) TZ_LETTER="T" ;;   # MST / PDT
+  -0800) TZ_LETTER="U" ;;   # PST
+  +0100) TZ_LETTER="A" ;;
+  +0200) TZ_LETTER="B" ;;
+  +0900) TZ_LETTER="I" ;;
+  +1000) TZ_LETTER="K" ;;
+  *)     TZ_LETTER="R" ;;   # fallback
+esac
+
+DTG="${DAY}${HHMM}${TZ_LETTER}${MONTH}${YEAR}"
+
+# ── Patch the footer-dtg span ────────────────────────────────────────────
+# Use sed for portability — no python dependency. The substitution looks
+# for any text between the opening and closing tags of the dtg span and
+# replaces it with the freshly-computed DTG.
+TMP=$(mktemp 2>/dev/null || mktemp -t dtg)
+sed -E "s|(<span id=\"footer-dtg\">)[^<]*(</span>)|\\1${DTG}\\2|" "$HTML_FILE" > "$TMP" 2>/dev/null
+
+# Only stage if the file actually changed — avoids leaving the working
+# tree dirty when the DTG happens to match (re-commit within same minute).
+if [ -s "$TMP" ] && ! cmp -s "$HTML_FILE" "$TMP"; then
+  mv "$TMP" "$HTML_FILE"
+  git add "$HTML_FILE"
+  echo "[pre-commit] DTG stamped: ${DTG}"
+else
+  rm -f "$TMP"
+fi
+
+exit 0

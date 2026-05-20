@@ -14,6 +14,7 @@
     --card:     #152f49;
     --accent:   #0b91eb;
     --accent2:  #1495c0;
+    --accent3:  #ff6b35;   /* contrast color for live activity (orange) */
     --text:     #e0e0e0;
     --muted:    #888;
     --border:   #2a3a5a;
@@ -21,7 +22,7 @@
     --yellow:   #ffc107;
     --red:      #f44336;
     --mode1:    #069e85;
-    --mode2:    #0f7a9d;
+    --mode2:    #bc59d8;
     --mode3:    #4caf50;
   }
   body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', sans-serif; font-size: 14px; min-height: 100vh; }
@@ -131,6 +132,33 @@
 
   /* Live PWM indicator */
   .live-pwm-box { background: var(--card); border-radius: 8px; padding: 12px; margin-top: 8px; }
+
+  /* All-channels live grid — one row per detected SBUS channel.
+     Compact label + horizontal level bar + numeric value. */
+  .ch-grid { margin-top: 10px; display: flex; flex-direction: column; gap: 3px; }
+  .ch-row {
+    display: grid; grid-template-columns: 30px 1fr 42px;
+    align-items: center; gap: 8px;
+    padding: 2px 4px; border-radius: 3px;
+    font-size: 11px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    transition: background .12s;
+  }
+  .ch-row:hover { background: rgba(255,255,255,.04); }
+  .ch-row .ch-label { color: var(--muted); font-weight: 600; }
+  .ch-row .ch-val   { text-align: right; color: var(--text); font-variant-numeric: tabular-nums; }
+  .ch-bar-wrap {
+    height: 14px; border-radius: 3px;
+    background: rgba(255,255,255,.04);
+    overflow: hidden;
+  }
+  .ch-bar {
+    height: 100%; width: 0%;
+    background: var(--accent);
+    transition: width .12s ease-out;
+  }
+  /* Highlight the matrix channel row (buttons live here). */
+  .ch-row.is-matrix .ch-label { color: var(--accent); }
+  .ch-row.is-matrix .ch-bar   { background: #ff9f43; }
   .live-pwm-big { font-size: 28px; font-weight: 700; color: var(--accent); font-variant-numeric: tabular-nums; }
   .live-pwm-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
   .live-btn-indicator { margin-top: 8px; }
@@ -190,36 +218,88 @@
   .tx-wrap { max-width: 850px; margin: 0 auto; }
   .tx-wrap svg { width: 100%; height: auto; }
 
-  /* Clickable button zones */
+  /* Clickable button zones — base styling (hover + "configured" indicator) */
   .btn-zone { cursor: pointer; transition: opacity .15s; }
   .btn-zone:hover rect, .btn-zone:hover circle, .btn-zone:hover path { opacity: .7; }
   .btn-zone rect.configured  { fill: var(--accent2) !important; }
   .btn-zone circle.configured { fill: var(--accent2) !important; }
 
-  /* Live-pressed highlight — fires from PWM_UPDATE stream */
-  .btn-zone.live-active > rect:first-of-type,
-  .btn-zone.live-active > circle:first-of-type {
-    fill: var(--accent) !important;
-    stroke: #fff !important;
-    stroke-width: 2 !important;
-    filter: drop-shadow(0 0 8px var(--accent));
-  }
-  .btn-zone.live-active > polygon { fill: #fff !important; }
-
-  /* Switch zones (configurable like buttons) */
+  /* Switch zones — base styling */
   .switch-zone { cursor: pointer; transition: opacity .15s; }
   .switch-zone:hover { opacity: .75; }
   .switch-zone.configured circle:first-of-type { stroke: var(--accent2); stroke-width: 2; }
-  .switch-zone.live-active circle:first-of-type {
-    stroke: var(--accent) !important; stroke-width: 3 !important;
-    filter: drop-shadow(0 0 6px var(--accent));
-  }
-  /* Knob zones (S1, S2) */
+
+  /* Knob/slider/joystick zones — base styling. Some zones use <circle>
+     (knobs + joystick pickers); LS/RS sliders use <rect> for the track. */
   .knob-zone { cursor: pointer; transition: opacity .15s; }
   .knob-zone:hover { opacity: .82; }
-  .knob-zone.configured circle:first-of-type {
+  .knob-zone.configured circle:first-of-type,
+  .knob-zone.configured rect:first-of-type {
     stroke: var(--accent2); stroke-width: 2;
     filter: drop-shadow(0 0 3px var(--accent2));
+  }
+
+  /* ════════════════════════════════════════════════════════════════════
+     LIVE-ACTIVITY HIGHLIGHT — single source of truth
+     ════════════════════════════════════════════════════════════════════
+     Applied by JS to .btn-zone / .switch-zone / .knob-zone whose mapped
+     SBUS channel just changed (or matrix button just fired). JS only
+     toggles the .live-active class — every visual detail lives here.
+
+     Approach: NO added rings/strokes. Buttons get a fill swap to the
+     live color. Outlined shapes (switches/knobs/sliders/joystick
+     pickers) get their EXISTING outline recolored to the live color
+     (no thickness change — not adding a new ring). All zones get a
+     drop-shadow glow on top, in the live color. Color contrast against
+     the dark body comes from --accent3 (orange) by default.
+
+        --live-color   live highlight color (used everywhere)
+        --live-glow    drop-shadow expression (offset blur color)
+     ════════════════════════════════════════════════════════════════════ */
+  :root {
+    --live-color: var(--accent3);
+    --live-glow:  0 0 14px var(--accent3);
+  }
+
+  /* Drop-shadow glow on the whole zone group. Stacked so it's punchy
+     against the dark transmitter body — single drop-shadow looked weak
+     on small zones like joystick pickers. */
+  .btn-zone.live-active,
+  .switch-zone.live-active,
+  .knob-zone.live-active {
+    filter: drop-shadow(var(--live-glow)) drop-shadow(0 0 6px var(--live-color));
+  }
+
+  /* Matrix buttons — fill swap so the press lights up. */
+  .btn-zone.live-active > rect:first-of-type,
+  .btn-zone.live-active > circle:first-of-type {
+    fill: var(--live-color) !important;
+  }
+  .btn-zone.live-active > polygon { fill: var(--live-color) !important; }
+
+  /* Outlined shapes — recolor the EXISTING outline (no thickness change,
+     so we're not adding a new circle on top — just changing the hue of
+     what's already drawn). Combined with the group glow above, this gives
+     a clear visible cue for sliders/knobs/joystick pickers/switches. */
+  .switch-zone.live-active circle:first-of-type,
+  .knob-zone.live-active   circle:first-of-type,
+  .knob-zone.live-active   rect:first-of-type {
+    stroke: var(--live-color) !important;
+  }
+
+  /* SI/SJ momentary push buttons — driven by JS toggling .pressed on the
+     zone whenever the channel is held above the press threshold. The
+     button cap is small (r=7), so we light up BOTH the backing rect AND
+     the cap circle so the press is impossible to miss. */
+  .switch-zone.pressed rect:first-of-type {
+    fill: var(--live-color) !important;
+    stroke: var(--live-color) !important;
+    filter: drop-shadow(var(--live-glow));
+  }
+  .switch-zone.pressed circle:first-of-type {
+    fill: #fff !important;
+    stroke: var(--live-color) !important;
+    stroke-width: 2 !important;
   }
 
   /* ── Modal ── */
@@ -389,6 +469,47 @@
     color: var(--accent);
     background: rgba(11,145,235,.08);
   }
+  /* Debug filter bar — WCB-style chip row beneath the header. */
+  .terminal-debug-bar {
+    display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
+    padding: 5px 14px;
+    background: #14171c;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .debug-bar-label {
+    font-size: 9px; font-weight: 700; letter-spacing: 0.8px;
+    text-transform: uppercase; color: var(--muted);
+    /* auto right margin pushes the chips to the right of the bar. */
+    margin-right: auto;
+  }
+  /* Clickable text-only toggles. INACTIVE = plain grey on transparent.
+     ACTIVE = solid accent fill, white bold, soft glow (unmistakable). */
+  .dbg-chip {
+    display: inline-flex; align-items: center;
+    padding: 3px 10px; border-radius: 4px;
+    border: 1px solid var(--border);
+    background: transparent; color: var(--muted);
+    cursor: pointer; user-select: none;
+    font-size: 10px; font-weight: 600; letter-spacing: 0.4px;
+    text-transform: uppercase;
+    font-family: inherit;
+    transition: border-color .15s, color .15s, background .15s, box-shadow .15s;
+    white-space: nowrap;
+  }
+  .dbg-chip:hover { border-color: var(--accent); color: var(--text); }
+  .dbg-chip[aria-pressed="true"] {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+    font-weight: 700;
+    box-shadow: 0 0 8px rgba(11,145,235,.55);
+  }
+  .dbg-chip[aria-pressed="true"]:hover {
+    background: var(--accent2);
+    border-color: var(--accent2);
+  }
+
   .terminal-output {
     flex: 1;
     overflow-y: auto;
@@ -521,22 +642,11 @@
           <span class="live-btn-chip" id="live-btn-name">—</span>
         </div>
       </div>
-      <div style="margin-top:10px">
-        <div class="pwm-row">
-          <span class="pwm-label" id="lbl-matrix-ch" title="Matrix channel (configurable)">CH7</span>
-          <div class="pwm-bar-wrap"><div class="pwm-bar" id="bar-ch6" style="width:0%"></div></div>
-          <span class="pwm-value" id="val-ch6">0</span>
-        </div>
-        <div class="pwm-row">
-          <span class="pwm-label" id="lbl-mode-ch" title="Mode/function switch channel (follows bound switch)">CH12</span>
-          <div class="pwm-bar-wrap"><div class="pwm-bar" id="bar-ch16" style="width:0%"></div></div>
-          <span class="pwm-value" id="val-ch16">0</span>
-        </div>
-      </div>
-      <div class="noconn" id="monitor-note">Connect board to enable live monitor</div>
-      <div class="btn-row" style="margin-top:8px">
-        <button class="btn btn-ghost" id="btn-mon-start" disabled>▶ Start</button>
-        <button class="btn btn-ghost" id="btn-mon-stop"  disabled>■ Stop</button>
+      <!-- All channels — live sparkline per channel populated from
+           msg.sbus.channels[]. Rows are built on demand based on the
+           detected channel count, so SBUS-16 shows 16 and SBUS-24 shows 24. -->
+      <div class="ch-grid" id="channels-grid">
+        <div class="noconn" id="monitor-note">Connect board to enable live monitor</div>
       </div>
     </div>
 
@@ -770,7 +880,7 @@
           <text x="81" y="570" text-anchor="middle" fill="#cdd6e8" font-size="11" font-weight="700">LS</text>
         </g>
 
-        <g class="knob-zone" data-knob="RS" onclick="openKnobModal('RL')">
+        <g class="knob-zone" data-knob="RS" onclick="openKnobModal('RS')">
           <rect x="914" y="430" width="10" height="120" rx="5" fill="#0a0a0a" stroke="#1a2a4a"/>
           <line x1="911" y1="490" x2="927" y2="490" stroke="#2a3a5a" stroke-width="1.5"/>
           <rect x="908" y="482" width="22" height="16" rx="4" fill="url(#knob-grad)" stroke="#ffffff" stroke-width="0.6"/>
@@ -809,8 +919,8 @@
         <line x1="166" y1="485" x2="180" y2="485" stroke="#5a5a5a" stroke-width="1.5"/>
         <line x1="300" y1="485" x2="314" y2="485" stroke="#5a5a5a" stroke-width="1.5"/>
         <rect x="208" y="453" width="64" height="64" rx="8" fill="#000" stroke="#252525"/>
-        <circle cx="240" cy="485" r="15" fill="url(#cap-grad)" stroke="#1a1a1a"/>
-        <circle cx="240" cy="485" r="6"  fill="#0a0a0a"/>
+        <circle id="leftGimbalCap" cx="240" cy="485" r="15" fill="url(#cap-grad)" stroke="#1a1a1a"/>
+        <circle id="leftGimbalDot" cx="240" cy="485" r="6"  fill="#0a0a0a"/>
 
         <!-- Joystick axis pickers — left gimbal: J3 (Y/THR) above cap, J4 (X/RUD) left of cap -->
         <g class="knob-zone" data-knob="J3" onclick="openKnobModal('J3')">
@@ -830,8 +940,8 @@
         <line x1="686" y1="485" x2="700" y2="485" stroke="#5a5a5a" stroke-width="1.5"/>
         <line x1="820" y1="485" x2="834" y2="485" stroke="#5a5a5a" stroke-width="1.5"/>
         <rect x="728" y="453" width="64" height="64" rx="8" fill="#000" stroke="#252525"/>
-        <circle cx="760" cy="485" r="15" fill="url(#cap-grad)" stroke="#1a1a1a"/>
-        <circle cx="760" cy="485" r="6"  fill="#0a0a0a"/>
+        <circle id="rightGimbalCap" cx="760" cy="485" r="15" fill="url(#cap-grad)" stroke="#1a1a1a"/>
+        <circle id="rightGimbalDot" cx="760" cy="485" r="6"  fill="#0a0a0a"/>
 
         <!-- Joystick axis pickers — right gimbal: J2 (Y/ELE) above cap, J1 (X/AIL) right of cap -->
         <g class="knob-zone" data-knob="J2" onclick="openKnobModal('J2')">
@@ -1065,6 +1175,16 @@
       <button class="btn btn-ghost btn-term" id="terminal-collapse" type="button" title="Close terminal" aria-label="Close terminal">▼ Close</button>
     </div>
   </div>
+  <!-- Debug filter bar — toggle which board-emitted lines show in the terminal.
+       Filters apply to RX lines only; user-typed commands and acks always show. -->
+  <div class="terminal-debug-bar" id="terminal-debug-bar">
+    <span class="debug-bar-label">DEBUG:</span>
+    <button class="dbg-chip" type="button" data-cat="maestro" aria-pressed="false">Maestro</button>
+    <button class="dbg-chip" type="button" data-cat="wcb"     aria-pressed="false">WCB</button>
+    <button class="dbg-chip" type="button" data-cat="hcr"     aria-pressed="false">HCR</button>
+    <button class="dbg-chip" type="button" data-cat="mp3"     aria-pressed="false">MP3</button>
+    <button class="dbg-chip" type="button" data-cat="serial"  aria-pressed="false">Serial</button>
+  </div>
   <div class="terminal-output" id="terminal-output"></div>
   <div class="terminal-input-row">
     <input id="terminal-input" class="terminal-input" type="text" placeholder="Type CLI command and press Enter" autocomplete="off">
@@ -1253,7 +1373,7 @@
           <div style="margin-bottom:6px">
             <label>Button matrix channel:
               <input type="number" id="cfg-matrix-ch" min="1" max="24" value="7" style="width:50px; margin-left:4px"
-                     onchange="config.matrixChannel = +this.value; document.getElementById('lbl-matrix-ch').textContent='CH'+this.value;">
+                     onchange="config.matrixChannel = +this.value;">
             </label>
             <small style="color:var(--muted); margin-left:6px">(multiplexed buttons live here — Kyber default is 7)</small>
           </div>
@@ -1633,8 +1753,9 @@ document.getElementById('btn-connect').addEventListener('click', async () => {
     await new Promise(r => setTimeout(r, 400));
     await sendJSON({ type: 'START_MONITOR' });
     isMonitoring = true;
-    document.getElementById('btn-mon-start').disabled = true;
-    document.getElementById('btn-mon-stop').disabled  = false;
+    // Push current debug-chip state to the firmware so it knows which
+    // categories to emit. Default = all off → firmware stays quiet.
+    sendDebugFlagsToBoard();
   } catch(e) {
     console.error(e);
     alert('Could not open serial port:\n' + e.message);
@@ -1673,10 +1794,6 @@ async function disconnect() {
     port = null;
     disconnecting = false;
     setConnected(false);
-    const ms = document.getElementById('btn-mon-start');
-    const mx = document.getElementById('btn-mon-stop');
-    if (ms) ms.disabled = true;
-    if (mx) mx.disabled = true;
   }
 }
 
@@ -1684,12 +1801,15 @@ function setConnected(v) {
   document.getElementById('conn-dot').className = 'status-dot' + (v ? ' connected' : '');
   document.getElementById('status-text').textContent = v ? 'Connected' : 'Disconnected';
   document.getElementById('btn-connect').textContent = v ? 'Disconnect' : 'Connect';
-  ['btn-refresh','btn-save','btn-hwsetup-save','btn-defaults','btn-mon-start','btn-qs-send','btn-wcb-reboot'].forEach(id => {
+  ['btn-refresh','btn-save','btn-hwsetup-save','btn-defaults','btn-qs-send','btn-wcb-reboot'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.disabled = !v;
   });
   setTerminalEnabled(v);
-  document.getElementById('monitor-note').style.display = v ? 'none' : 'block';
+  // monitor-note may have been removed once the channel grid populated;
+  // guard so we don't TypeError on null after a reconnect.
+  const mn = document.getElementById('monitor-note');
+  if (mn) mn.style.display = v ? 'none' : 'block';
   // Drive the WCB Status poll alongside the connection state.
   if (v) startWcbStatusPoll(); else stopWcbStatusPoll();
 }
@@ -1726,12 +1846,12 @@ function startWcbStatusPoll() {
   // the user saves a non-default WCB network config (no reconnect needed).
   wcbStatusTimer = setInterval(() => {
     if (isWcbConfigured()) {
-      sendJSON({ type: 'GET_WCB_STATUS' }).catch(() => {});
+      sendJSON({ type: 'GET_WCB_STATUS' }, /*silent=*/true).catch(() => {});
     } else {
       renderWcbStatus(null);        // keep the placeholder live
     }
   }, 3000);
-  if (isWcbConfigured()) sendJSON({ type: 'GET_WCB_STATUS' }).catch(() => {});
+  if (isWcbConfigured()) sendJSON({ type: 'GET_WCB_STATUS' }, /*silent=*/true).catch(() => {});
 }
 function stopWcbStatusPoll() {
   if (wcbStatusTimer) { clearInterval(wcbStatusTimer); wcbStatusTimer = null; }
@@ -1777,20 +1897,102 @@ function renderWcbStatus(online) {
   list.innerHTML = html;
 }
 
-async function sendLine(msg) {
+// silent=true skips the terminal echo — used for background polls like the
+// WCB-status poll that fires every 3s and would otherwise spam the log.
+async function sendLine(msg, silent = false) {
   if (!writer) return;
-  appendTerminalLine('> ' + msg, 'tx');
+  if (!silent) appendTerminalLine('> ' + msg, 'tx');
   const encoded = new TextEncoder().encode(msg + '\n');
   await writer.write(encoded);
 }
 
-async function sendJSON(obj) {
-  await sendLine(JSON.stringify(obj));
+async function sendJSON(obj, silent = false) {
+  await sendLine(JSON.stringify(obj), silent);
+}
+
+// ── Terminal debug filter ────────────────────────────────────────────────
+// Categories applied to RX-only lines from the board. Each entry has a
+// match() that inspects the raw line text (after stripping the "< " RX
+// prefix). The catch-all "system" matches anything not matched above —
+// keep it last. localStorage persists toggle state across reloads.
+// Each firmware-gated category has a `bit` matching the DBG_* constants in
+// RC-Controller.ino. The GUI computes a bitmask from enabled chips and
+// sends {type:"SET_DEBUG_FLAGS",flags:N} so the firmware skips formatting
+// and printing for disabled streams (real wire savings, not just hiding).
+// SBUS/SYSTEM have bit=0 — they're rare/essential lines emitted ungated;
+// their chips remain pure GUI-side display filters.
+// Each entry has `bit` matching the DBG_* constants in RC-Controller.ino.
+// The GUI computes a bitmask from enabled chips and sends SET_DEBUG_FLAGS
+// so the firmware skips formatting + printing for disabled streams (real
+// wire savings, not just hiding). Lines that don't match ANY category
+// always show — only known debug streams are gateable.
+const DEBUG_CATEGORIES = [
+  // Local [DISPATCH] lines AND library-emitted [WCBStream] Kyber broadcasts
+  // (Kyber is the Maestro-over-WCB pass-through path, so a "Maestro" chip
+  // toggling local-only would feel inconsistent — group them together).
+  { key: 'maestro', bit: 1 << 0, match: t => /^\[DISPATCH\]\s*Maestro/i.test(t)
+                                            || /^\[WCBStream\].*Kyber/i.test(t) },
+  // Generic WCB chip catches [DISPATCH] WCB→/broadcast AND [WCBStream]
+  // entries that aren't Kyber/sendRaw (general stream chatter).
+  { key: 'wcb',     bit: 1 << 1, match: t => /^\[DISPATCH\]\s*WCB/i.test(t)
+                                            || (/^\[WCBStream\]/i.test(t)
+                                                 && !/Kyber|sendRaw|\(Raw\)/i.test(t)) },
+  // HCR-over-WCB uses sendRaw (targetID 97 raw-serial forward), so group
+  // those [WCBStream] sendRaw/Raw lines under HCR.
+  { key: 'hcr',     bit: 1 << 3, match: t => /^\[(DISPATCH\]\s*HCR|HCR-DBG\]|HCR\s+TEST\])/i.test(t)
+                                            || /^\[DISPATCH\]\s*HCR-/i.test(t)
+                                            || /^\[WCBStream\].*(sendRaw|\(Raw\))/i.test(t) },
+  { key: 'mp3',     bit: 1 << 4, match: t => /^\[DISPATCH\]\s*MP3/i.test(t) },
+  { key: 'serial',  bit: 1 << 5, match: t => /^\[DISPATCH\]\s*Serial\s/i.test(t) },
+];
+
+// All chips OFF on every page load. Debug streams are an explicit per-
+// session opt-in (firmware default g_dbgFlags=0); we intentionally don't
+// persist toggle state — otherwise stale localStorage from earlier
+// schemas can leave chips out of sync with what the firmware actually has.
+let debugFilters = {};
+DEBUG_CATEGORIES.forEach(c => { debugFilters[c.key] = false; });
+
+// Compute the firmware bitmask from current chip state and ship it
+// (silent — this is config-style, not user CLI). Called on connect and on
+// every chip toggle.
+function sendDebugFlagsToBoard() {
+  let flags = 0;
+  for (const c of DEBUG_CATEGORIES) {
+    if (c.bit && debugFilters[c.key]) flags |= c.bit;
+  }
+  if (typeof writer !== 'undefined' && writer) {
+    sendJSON({ type: 'SET_DEBUG_FLAGS', flags }, /*silent=*/true).catch(() => {});
+  }
+}
+
+// Returns the category key if the line matches a known debug stream, or
+// null when it doesn't (those lines always show — they're status/error
+// messages, not opt-in debug noise).
+function classifyDebugLine(text) {
+  const t = text.startsWith('< ') ? text.slice(2) : text;
+  for (const c of DEBUG_CATEGORIES) { if (c.match(t)) return c.key; }
+  return null;
+}
+
+function setDebugFilter(key, on) {
+  debugFilters[key] = !!on;
+  // Push to firmware so it actually gates emission (not just GUI display).
+  sendDebugFlagsToBoard();
 }
 
 function appendTerminalLine(text, type = 'info') {
   const output = document.getElementById('terminal-output');
   if (!output) return;
+  // RX lines (from board) get classified and filtered. TX (user-typed),
+  // info, and other types always show.
+  if (type === 'rx') {
+    const cat = classifyDebugLine(text);
+    // Only filter if the line matches a known debug category AND the chip
+    // is off. Unknown lines (status, errors, ACKs, [CALIB]/[AUX]/etc.)
+    // always show.
+    if (cat && debugFilters[cat] === false) return;
+  }
   const line = document.createElement('div');
   line.className = 'terminal-line ' + type;
   line.textContent = (terminalShowTimestamps ? `[${new Date().toLocaleTimeString()}] ` : '') + text;
@@ -1846,6 +2048,19 @@ function initTerminal() {
     autoScroll.classList.toggle('active', terminalAutoScroll);
     timestamps.classList.toggle('active', terminalShowTimestamps);
   }
+
+  // Debug filter chips: sync DOM with persisted state, wire click toggles.
+  document.querySelectorAll('#terminal-debug-bar .dbg-chip')
+    .forEach(btn => {
+      const key = btn.dataset.cat;
+      const on  = (debugFilters[key] !== false);
+      btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+      btn.addEventListener('click', () => {
+        const next = btn.getAttribute('aria-pressed') !== 'true';
+        btn.setAttribute('aria-pressed', next ? 'true' : 'false');
+        setDebugFilter(key, next);
+      });
+    });
 
   const sidebarToggle = document.getElementById('sidebar-toggle');
   const terminalCollapse = document.getElementById('terminal-collapse');
@@ -1990,9 +2205,26 @@ function handleBoardMessage(line) {
         updateCalibrationLive(msg);
       }
       updatePWMDisplay(matrixVal, modeVal, msg.btn, msg.mode);
+      // Live channel bar grid + on-SVG glow + animated transmitter
+      // controls (switch levers rotate, knob indicators rotate, slider
+      // handles slide, gimbal caps translate) — all driven from the
+      // incoming SBUS channels[] array.
+      if (msg.sbus && Array.isArray(msg.sbus.channels)) {
+        updateChannelsGrid(msg.sbus.channels);
+        markActiveChannels(msg.sbus.channels);
+        updateTransmitterAnimation(msg.sbus.channels);
+      }
     } catch (e) {
       console.error('PWM_UPDATE handler threw:', e, msg);
     }
+    return;
+  }
+
+  // Silenced: WCB_STATUS replies arrive every 3s from the background poll.
+  // Handle (and return) BEFORE the terminal echo so they don't spam the log.
+  if (msg.type === 'WCB_STATUS') {
+    if (typeof msg.self === 'number') wcbSelfId = msg.self;
+    renderWcbStatus(Array.isArray(msg.online) ? msg.online : []);
     return;
   }
 
@@ -2009,13 +2241,6 @@ function handleBoardMessage(line) {
   }
   if (msg.type === 'ACK') {
     if (!msg.ok) console.warn('NACK:', msg.msg);
-    return;
-  }
-  if (msg.type === 'WCB_STATUS') {
-    // online[] is 0-indexed (slot i = board i+1). msg.self is our own
-    // device ID — we tag that chip "(self)" so it's clear it's us.
-    if (typeof msg.self === 'number') wcbSelfId = msg.self;
-    renderWcbStatus(Array.isArray(msg.online) ? msg.online : []);
     return;
   }
 }
@@ -2380,25 +2605,228 @@ let _liveCh6 = 0, _liveCh16 = 0, _liveBtn = 0, _liveMode = 1;
 let _liveMatrixCh = 7;
 let _liveModeCh   = 12;
 
+// ── Live transmitter animation ─────────────────────────────────────────
+// Drive the SVG controls from incoming SBUS channel values so the user
+// can SEE their physical control moving — switch levers rotate, knob
+// indicators rotate, slider handles slide, gimbal caps translate.
+// This is the primary "I touched something" feedback (the glow below is
+// secondary). All channel lookups go through config.{switches,knobs} →
+// {switch,knob}Defaults, so calibrated channel assignments are honored.
+
+function updateTransmitterAnimation(channels) {
+  if (!Array.isArray(channels) || !channels.length) return;
+
+  // Per-FIELD fallback — saved config may have a partial entry like
+  // {channel:0, positions:2} from an older schema where the channel was
+  // never set. Falling back at the whole-object level (config || defaults)
+  // would still leave us with channel=0; we need to merge per field.
+  const swChan = name => {
+    const c = (config.switches && config.switches[name] && +config.switches[name].channel) | 0;
+    return c || ((switchDefaults[name] && +switchDefaults[name].channel) | 0);
+  };
+  const swPositions = name => {
+    const p = (config.switches && config.switches[name] && +config.switches[name].positions) | 0;
+    return p || ((switchDefaults[name] && +switchDefaults[name].positions) | 0) || 3;
+  };
+  const knChan = name => {
+    const c = (config.knobs && config.knobs[name] && +config.knobs[name].channel) | 0;
+    return c || ((knobDefaults[name] && +knobDefaults[name].channel) | 0);
+  };
+
+  // ── SWITCHES SA-SH — rotate lever ±25° around the bushing centre ─────
+  // SI/SJ are momentary push buttons (no lever) — handled separately
+  // below by toggling a "pressed" class that fills their cap circle.
+  // Thresholds are midpoints of the SBUS 172/992/1811 cluster for a
+  // 3-pos toggle: <582 = down, 582-1401 = mid, >1401 = up. (My earlier
+  // 340/680 thresholds were for a 0-1023 range and mis-decoded the
+  // middle position as "up".)
+  document.querySelectorAll('.switch-zone').forEach(el => {
+    const name = el.dataset.sw;
+    const isMomentary = (name === 'SI' || name === 'SJ');
+    const ch = swChan(name);
+    if (!ch) return;
+    const v = channels[ch - 1];
+    if (!Number.isFinite(v)) return;
+
+    if (isMomentary) {
+      // Momentary button: value rests ~172, jumps ~1811 while pressed.
+      // Toggle a class so CSS can light up the cap circle for as long as
+      // the button is held.
+      el.classList.toggle('pressed', v > 900);
+      return;
+    }
+
+    const positions = swPositions(name);
+    let pos;
+    if      (positions === 2) pos = (v > 900) ? 2 : 0;
+    else if (v < 582)         pos = 0;
+    else if (v > 1401)        pos = 2;
+    else                       pos = 1;
+    const deg = (pos === 0) ? -25 : (pos === 2) ? 25 : 0;
+    // Pivot point = centre of the first circle (the bushing).
+    const bush = el.querySelector('circle');
+    if (!bush) return;
+    const px = +bush.getAttribute('cx');
+    const py = +bush.getAttribute('cy');
+    // Rotate every rect in the zone (lever bar + lever cap) around the
+    // pivot. Both rects share the rotation so they pivot as one unit.
+    el.querySelectorAll('rect').forEach(r => {
+      r.setAttribute('transform', `rotate(${deg} ${px} ${py})`);
+    });
+  });
+
+  // ── KNOBS S1 / S2 — rotate indicator line ±135° around knob centre ───
+  ['S1', 'S2'].forEach(name => {
+    const zone = document.querySelector(`.knob-zone[data-knob="${name}"]`);
+    if (!zone) return;
+    const ch = knChan(name);
+    if (!ch) return;
+    const v = channels[ch - 1];
+    if (!Number.isFinite(v)) return;
+    const norm = Math.max(0, Math.min(1, (v - 172) / (1811 - 172)));
+    const deg = norm * 270 - 135;     // -135° (full CCW) … +135° (full CW)
+    const outer = zone.querySelector('circle');
+    const line  = zone.querySelector('line');
+    if (!outer || !line) return;
+    const cx = +outer.getAttribute('cx');
+    const cy = +outer.getAttribute('cy');
+    line.setAttribute('transform', `rotate(${deg} ${cx} ${cy})`);
+  });
+
+  // ── SLIDERS LS / RS — translate handle rect vertically along track ───
+  // Track y range 430..550 (120 tall). Handle is 16 tall, baseline y=482.
+  // SBUS 172 → bottom (y=534), 1811 → top (y=430).
+  ['LS', 'RS'].forEach(name => {
+    const zone = document.querySelector(`.knob-zone[data-knob="${name}"]`);
+    if (!zone) return;
+    const ch = knChan(name);
+    if (!ch) return;
+    const v = channels[ch - 1];
+    if (!Number.isFinite(v)) return;
+    const norm = Math.max(0, Math.min(1, (v - 172) / (1811 - 172)));
+    const handle = zone.querySelectorAll('rect')[1];   // [0]=track, [1]=handle
+    if (handle) handle.setAttribute('y', 534 - norm * 104);
+  });
+
+  // ── JOYSTICK GIMBALS — translate both cap circles around centre ──────
+  // Left gimbal centre (240, 485): X = J4, Y = J3
+  // Right gimbal centre (760, 485): X = J1, Y = J2
+  // SBUS 992 = centre. Map ±819 → ±50 px deflection. Y is inverted (higher
+  // SBUS = stick up = lower screen Y).
+  const moveGimbal = (capId, dotId, xName, yName, cx, cy) => {
+    const xCh = knChan(xName);
+    const yCh = knChan(yName);
+    if (!xCh || !yCh) return;
+    const vx = channels[xCh - 1];
+    const vy = channels[yCh - 1];
+    if (!Number.isFinite(vx) || !Number.isFinite(vy)) return;
+    const clamp = n => Math.max(-50, Math.min(50, n));
+    const ox =  clamp((vx - 992) / 819 * 50);
+    const oy = -clamp((vy - 992) / 819 * 50);
+    const cap = document.getElementById(capId);
+    const dot = document.getElementById(dotId);
+    if (cap) { cap.setAttribute('cx', cx + ox); cap.setAttribute('cy', cy + oy); }
+    if (dot) { dot.setAttribute('cx', cx + ox); dot.setAttribute('cy', cy + oy); }
+  };
+  moveGimbal('leftGimbalCap',  'leftGimbalDot',  'J4', 'J3', 240, 485);
+  moveGimbal('rightGimbalCap', 'rightGimbalDot', 'J1', 'J2', 760, 485);
+}
+
+// ── SVG live-activity highlight for switches / knobs / sliders / joysticks
+// On every PWM_UPDATE we compare each SBUS channel's new value to the
+// previous one; channels that moved more than CHAN_ACTIVE_DELTA counts
+// stamp their lastActive timestamp. Any switch/knob zone whose channel
+// is "active" within CHAN_ACTIVE_WINDOW ms gets a .live-active class so
+// the user gets a visible glow on the SVG while they're moving a control.
+// (Matrix-button highlight stays in updatePWMDisplay — that's edge-based.)
+const _prevChan        = new Array(24).fill(992);
+const _chanActiveTs    = new Array(24).fill(0);
+const CHAN_ACTIVE_DELTA  = 8;     // SBUS counts (well above ±1-2 noise,
+                                  // but sensitive enough to catch slow turns)
+const CHAN_ACTIVE_WINDOW = 600;   // ms — how long the glow lingers after motion stops
+
+function markActiveChannels(channels) {
+  if (!Array.isArray(channels) || !channels.length) return;
+  const now = performance.now();
+  for (let i = 0; i < channels.length; i++) {
+    const v = channels[i] | 0;
+    if (Math.abs(v - _prevChan[i]) > CHAN_ACTIVE_DELTA) _chanActiveTs[i] = now;
+    _prevChan[i] = v;
+  }
+  // Per-field channel lookup (saved config may have channel=0 from older
+  // schemas — fall back to defaults at the field level, not object level).
+  const swCh = name => (
+    (config.switches && config.switches[name] && +config.switches[name].channel) | 0
+  ) || ((switchDefaults && switchDefaults[name] && +switchDefaults[name].channel) | 0);
+  const knCh = name => (
+    (config.knobs && config.knobs[name] && +config.knobs[name].channel) | 0
+  ) || ((knobDefaults && knobDefaults[name] && +knobDefaults[name].channel) | 0);
+
+  document.querySelectorAll('.switch-zone').forEach(el => {
+    const ch = swCh(el.dataset.sw);
+    const on = ch && (now - _chanActiveTs[ch - 1] < CHAN_ACTIVE_WINDOW);
+    el.classList.toggle('live-active', !!on);
+  });
+  document.querySelectorAll('.knob-zone').forEach(el => {
+    const ch = knCh(el.dataset.knob);
+    const on = ch && (now - _chanActiveTs[ch - 1] < CHAN_ACTIVE_WINDOW);
+    el.classList.toggle('live-active', !!on);
+  });
+}
+
+// ── All-channels live bar grid ───────────────────────────────────────────
+// One horizontal level bar per SBUS channel. Bar width = normalized value
+// across the nominal SBUS range (172..1811). Matrix channel highlighted.
+let _channelsBuilt = 0;   // number of rows currently in the DOM
+let _lastChGridDraw = 0;  // render throttle timestamp
+
+function updateChannelsGrid(channels) {
+  if (!Array.isArray(channels) || !channels.length) return;
+  const grid = document.getElementById('channels-grid');
+  if (!grid) return;
+  const n = channels.length;
+
+  // Build rows on demand. If channel count grows (e.g., SBUS-16 → SBUS-24)
+  // append missing rows; existing rows are reused.
+  if (_channelsBuilt === 0) grid.innerHTML = '';   // wipe "Connect board" placeholder
+  for (let i = _channelsBuilt; i < n; i++) {
+    const isMatrix = ((i + 1) === _liveMatrixCh);
+    const row = document.createElement('div');
+    row.className = 'ch-row' + (isMatrix ? ' is-matrix' : '');
+    row.dataset.ch = i + 1;
+    row.innerHTML =
+      `<span class="ch-label">CH${i + 1}</span>` +
+      `<div class="ch-bar-wrap"><div class="ch-bar"></div></div>` +
+      `<span class="ch-val">—</span>`;
+    grid.appendChild(row);
+  }
+  _channelsBuilt = Math.max(_channelsBuilt, n);
+
+  // Throttle to ~12Hz so reflow stays cheap with 16-24 rows even if the
+  // firmware ever streams faster than its current ~10Hz monitor rate.
+  const now = performance.now();
+  if (now - _lastChGridDraw < 80) return;
+  _lastChGridDraw = now;
+
+  const lo = 172, hi = 1811;   // SBUS nominal range
+  const rows = grid.children;
+  for (let i = 0; i < n; i++) {
+    const row = rows[i];
+    if (!row) continue;
+    const v = +channels[i] || 0;
+    const norm = Math.max(0, Math.min(1, (v - lo) / (hi - lo)));
+    row.querySelector('.ch-bar').style.width = (norm * 100).toFixed(1) + '%';
+    row.querySelector('.ch-val').textContent = fmtVal(v);
+  }
+}
+
 function updatePWMDisplay(matrixVal, modeVal, btn, mode) {
   _liveCh6 = matrixVal; _liveCh16 = modeVal; _liveBtn = btn; _liveMode = mode;
-  const pwmMin = 800, pwmMax = 1850;
-  document.getElementById('live-ch6').textContent    = fmtVal(matrixVal);
-  document.getElementById('val-ch6').textContent     = fmtVal(matrixVal);
-  document.getElementById('val-ch16').textContent    = fmtVal(modeVal);
-  document.getElementById('bar-ch6').style.width     = ((matrixVal-pwmMin)/(pwmMax-pwmMin)*100).toFixed(1) + '%';
-  document.getElementById('bar-ch16').style.width    = ((modeVal-pwmMin)/(pwmMax-pwmMin)*100).toFixed(1) + '%';
-  const ch6El  = document.getElementById('val-ch6');
-  const ch16El = document.getElementById('val-ch16');
-  if (ch6El)  ch6El.title  = `${altLbl(matrixVal)}`;
-  if (ch16El) ch16El.title = `${altLbl(modeVal)}`;
+  // Big matrix-channel display + tooltip (the per-channel grid handles
+  // all other channels; CH7/CH12 pwm-row bars were removed).
   const bigCh6 = document.getElementById('live-ch6');
-  if (bigCh6) bigCh6.title = `${altLbl(matrixVal)}`;
-  const labMatrix = document.getElementById('lbl-matrix-ch');
-  if (labMatrix) labMatrix.textContent = `CH${_liveMatrixCh}`;
-  const labMode = document.getElementById('lbl-mode-ch');
-  if (labMode)   labMode.textContent   = `CH${_liveModeCh}`;
-  const sub    = document.getElementById('live-ch6-sub');
+  if (bigCh6) { bigCh6.textContent = fmtVal(matrixVal); bigCh6.title = `${altLbl(matrixVal)}`; }
+  const sub   = document.getElementById('live-ch6-sub');
   if (sub) sub.textContent = `Channel ${_liveMatrixCh} — Button Matrix (${unitLbl()})`;
 
   const isReleased = (matrixVal >= 962 && matrixVal <= 1022);
@@ -3554,24 +3982,9 @@ document.getElementById('hwsetup-modal').addEventListener('click', e => {
   if (e.target === document.getElementById('hwsetup-modal')) closeHwSetup();
 });
 
-document.getElementById('btn-mon-start').addEventListener('click', async () => {
-  await sendJSON({ type: 'START_MONITOR' });
-  isMonitoring = true;
-  document.getElementById('btn-mon-start').disabled = true;
-  document.getElementById('btn-mon-stop').disabled  = false;
-});
-
-document.getElementById('btn-mon-stop').addEventListener('click', async () => {
-  await sendJSON({ type: 'STOP_MONITOR' });
-  isMonitoring = false;
-  document.getElementById('btn-mon-start').disabled = false;
-  document.getElementById('btn-mon-stop').disabled  = true;
-});
-
-async function stopMonitor() {
-  await sendJSON({ type: 'STOP_MONITOR' }).catch(() => {});
-  isMonitoring = false;
-}
+// Monitor stays on for the life of the connection — stopping it would
+// kill the live PWM stream, channel grid, and calibration data. Start
+// once on connect (in the connect flow), never stop.
 
 // ════════════════════════════════════════════════════════════════════════════
 //  Calibration modal — step through every control on the transmitter and
@@ -3631,7 +4044,7 @@ function openCalibrationModal() {
   }
 
   renderCalibrationStep();
-  if (!isMonitoring) document.getElementById('btn-mon-start').click();
+  // Monitor is always on while connected — no need to start it here.
   // Mute the board: calibration deliberately exercises every control, so no
   // action (HCR/Maestro/MP3/WCB/Serial) should fire while the wizard is open.
   sendJSON({ type: 'CALIB', on: true }).catch(() => {});

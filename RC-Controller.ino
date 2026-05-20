@@ -230,6 +230,23 @@ unsigned long wsMonitorLastSent = 0;
 // STOP_MONITOR and a fresh PING so a crashed/closed page can never leave the
 // board permanently muted.
 bool          calibrationActive = false;
+
+// ── Debug-category bitmask ───────────────────────────────────────────────
+// Set by the GUI via {"type":"SET_DEBUG_FLAGS","flags":N}. Default 0 = all
+// [DISPATCH] logs silenced (no formatting, no USB-CDC bytes spent). Each
+// dispatch log site uses dlog(BIT, ...) which is a no-op when the bit is
+// off. Lets the config tool's terminal debug chips actually GATE the
+// firmware's output instead of just hiding it client-side.
+static uint32_t g_dbgFlags = 0;
+#define DBG_MAESTRO    (1u << 0)
+#define DBG_WCB        (1u << 1)   // covers both unicast and broadcast sends
+#define DBG_HCR        (1u << 3)
+#define DBG_MP3        (1u << 4)
+#define DBG_SERIAL     (1u << 5)
+// Category-gated log. ##__VA_ARGS__ swallows the trailing comma when only
+// a fmt is passed. Wraps vlogf so it inherits the same non-blocking USB
+// back-pressure handling (see vlogf() definition).
+#define dlog(catBit, fmt, ...) do { if (g_dbgFlags & (catBit)) vlogf(fmt, ##__VA_ARGS__); } while (0)
 #define WS_MONITOR_INTERVAL_MS  50
 
 // =============================================================================
@@ -473,10 +490,10 @@ static void executeHcrAction(const RcAction& a) {
 
   if (dest.transport == 1) {
     // ── WCB transport (raw forward via ESP-NOW) ────────────────────────────
-    if (!wcb) { vlogf("[DISPATCH] HCR-WCB: wcb not ready — skipped\n"); return; }
+    if (!wcb) { dlog(DBG_HCR, "[DISPATCH] HCR-WCB: wcb not ready — skipped\n"); return; }
     String payload = hcrFormatCommand(a.fn, a.chan, a.track);
     if (payload.length() == 0) {
-      vlogf("[DISPATCH] HCR-WCB: bad fn=%u chan=%d track=%d — skipped\n",
+      dlog(DBG_HCR, "[DISPATCH] HCR-WCB: bad fn=%u chan=%d track=%d — skipped\n",
             a.fn, a.chan, a.track);
       return;
     }
@@ -489,7 +506,7 @@ static void executeHcrAction(const RcAction& a) {
     // vocalizer is a single device at a known location, so unicast is correct.
     uint8_t target = (uint8_t)atoi(dest.target);
     if (target < 1 || target > WCB_MAX_BOARDS) {
-      vlogf("[DISPATCH] HCR-WCB: target '%s' invalid — HCR over WCB must be a "
+      dlog(DBG_HCR, "[DISPATCH] HCR-WCB: target '%s' invalid — HCR over WCB must be a "
             "unicast WCB ID 1-%d (broadcast is not supported). Fix the HCR "
             "Destination in the config tool. Not sent.\n",
             dest.target, WCB_MAX_BOARDS);
@@ -498,16 +515,16 @@ static void executeHcrAction(const RcAction& a) {
     if (dest.wcbPort < 1 || dest.wcbPort > 5) {
       // sendRaw() silently rejects a port outside 1-5 — surface it so a
       // misconfigured HCR Destination doesn't fail invisibly.
-      vlogf("[DISPATCH] HCR-WCB: invalid port %u (must be 1-5) — "
+      dlog(DBG_HCR, "[DISPATCH] HCR-WCB: invalid port %u (must be 1-5) — "
             "check HCR Destination in the config tool, not sent\n",
             dest.wcbPort);
       return;
     }
-    vlogf("[DISPATCH] HCR→WCB%u:port%u  %s\n",
+    dlog(DBG_HCR, "[DISPATCH] HCR→WCB%u:port%u  %s\n",
           target, dest.wcbPort, payload.c_str());
     bool ok = wcb->sendRaw(target, dest.wcbPort,
                            (const uint8_t*)payload.c_str(), payload.length());
-    vlogf("[DISPATCH] HCR-WCB sendRaw(WCB%u, port%u, %u bytes) %s\n",
+    dlog(DBG_HCR, "[DISPATCH] HCR-WCB sendRaw(WCB%u, port%u, %u bytes) %s\n",
           target, dest.wcbPort, payload.length(), ok ? "OK" : "FAIL");
     return;
   }
@@ -519,11 +536,11 @@ static void executeHcrAction(const RcAction& a) {
   // S5 is now SBUS OUT — no HCR routing available there. Legacy configs
   // that point HCR at S5 will fall through to the "unknown port" log below.
   if (!hcr) {
-    vlogf("[DISPATCH] HCR: unknown serial port '%s' — skipped\n", dest.target);
+    dlog(DBG_HCR, "[DISPATCH] HCR: unknown serial port '%s' — skipped\n", dest.target);
     return;
   }
 
-  vlogf("[DISPATCH] HCR→%s  fn=%u chan=%d track=%d\n",
+  dlog(DBG_HCR, "[DISPATCH] HCR→%s  fn=%u chan=%d track=%d\n",
         dest.target, a.fn, a.chan, a.track);
   switch (a.fn) {
     case 2:  hcr->SetEmotion(a.chan, a.track); hcr->update(); break;
@@ -537,7 +554,7 @@ static void executeHcrAction(const RcAction& a) {
     case 14: hcr->PlayWAV   (a.chan, a.track); hcr->update(); break;
     case 16: hcr->StopWAV   (a.chan);                         break;
     case 17: hcr->SetVolume (a.chan, a.track);                break;
-    default: vlogf("[DISPATCH] HCR: unsupported fn=%u\n", a.fn); break;
+    default: dlog(DBG_HCR, "[DISPATCH] HCR: unsupported fn=%u\n", a.fn); break;
   }
 }
 
@@ -579,16 +596,16 @@ static inline void mp3Raw(Stream* p, uint8_t b1, int16_t b2 = -1) {
 static void mp3SendLocal(Stream* p, const char* portName, uint8_t fn, int16_t arg) {
   switch (fn) {
     case MP3_PLAY:
-      if (arg < 1 || arg > 255) { vlogf("[DISPATCH] MP3-local: track %d out of 1-255 — skipped\n", arg); return; }
+      if (arg < 1 || arg > 255) { dlog(DBG_MP3, "[DISPATCH] MP3-local: track %d out of 1-255 — skipped\n", arg); return; }
       mp3Raw(p, 'v', mp3LocalVolume); mp3Raw(p, 't', arg); break;
     case MP3_PLAYFS:
-      if (arg < 0 || arg > 255) { vlogf("[DISPATCH] MP3-local: index %d out of 0-255 — skipped\n", arg); return; }
+      if (arg < 0 || arg > 255) { dlog(DBG_MP3, "[DISPATCH] MP3-local: index %d out of 0-255 — skipped\n", arg); return; }
       mp3Raw(p, 'v', mp3LocalVolume); mp3Raw(p, 'p', arg); break;
     case MP3_STOP:  mp3Raw(p, 'O'); break;
     case MP3_NEXT:  mp3Raw(p, 'F'); break;
     case MP3_PREV:  mp3Raw(p, 'R'); break;
     case MP3_VOL:
-      if (arg < 0 || arg > 64) { vlogf("[DISPATCH] MP3-local: vol %d out of 0-64 — skipped\n", arg); return; }
+      if (arg < 0 || arg > 64) { dlog(DBG_MP3, "[DISPATCH] MP3-local: vol %d out of 0-64 — skipped\n", arg); return; }
       mp3LocalVolume = (uint8_t)arg; mp3Raw(p, 'v', mp3LocalVolume); break;
     case MP3_VOLUP:
       mp3LocalVolume = (mp3LocalVolume <= 5) ? 0 : mp3LocalVolume - 5;
@@ -597,9 +614,9 @@ static void mp3SendLocal(Stream* p, const char* portName, uint8_t fn, int16_t ar
       mp3LocalVolume = (mp3LocalVolume >= 59) ? 64 : mp3LocalVolume + 5;
       mp3Raw(p, 'v', mp3LocalVolume); break;
     default:
-      vlogf("[DISPATCH] MP3-local: bad fn=%u — skipped\n", fn); return;
+      dlog(DBG_MP3, "[DISPATCH] MP3-local: bad fn=%u — skipped\n", fn); return;
   }
-  vlogf("[DISPATCH] MP3→%s  fn=%u arg=%d vol=%u  OK\n", portName, fn, arg, mp3LocalVolume);
+  dlog(DBG_MP3, "[DISPATCH] MP3→%s  fn=%u arg=%d vol=%u  OK\n", portName, fn, arg, mp3LocalVolume);
 }
 
 // Dispatch an RA_MP3 action. Destination is GLOBAL (rcConfig.mp3Dest).
@@ -615,7 +632,7 @@ static void executeMp3Action(const RcAction& a) {
     if      (!strcmp(dest.target, "S3")) p = &Serial3;
     else if (!strcmp(dest.target, "S4")) p = &Serial4;
     if (!p) {
-      vlogf("[DISPATCH] MP3-local: unknown serial port '%s' — skipped\n", dest.target);
+      dlog(DBG_MP3, "[DISPATCH] MP3-local: unknown serial port '%s' — skipped\n", dest.target);
       return;
     }
     mp3SendLocal(p, dest.target, a.fn, a.track);
@@ -623,21 +640,21 @@ static void executeMp3Action(const RcAction& a) {
   }
 
   // ── WCB unicast transport ──────────────────────────────────────────────
-  if (!wcb) { vlogf("[DISPATCH] MP3: wcb not ready — skipped\n"); return; }
+  if (!wcb) { dlog(DBG_MP3, "[DISPATCH] MP3: wcb not ready — skipped\n"); return; }
   String cmd = mp3FormatCommand(a.fn, a.track);
   if (cmd.length() == 0) {
-    vlogf("[DISPATCH] MP3: bad fn=%u — skipped\n", a.fn);
+    dlog(DBG_MP3, "[DISPATCH] MP3: bad fn=%u — skipped\n", a.fn);
     return;
   }
   uint8_t target = (uint8_t)atoi(dest.target);
   if (target < 1 || target > WCB_MAX_BOARDS) {
-    vlogf("[DISPATCH] MP3: target '%s' invalid — set MP3 Destination to a "
+    dlog(DBG_MP3, "[DISPATCH] MP3: target '%s' invalid — set MP3 Destination to a "
           "WCB ID 1-%d in the config tool. Not sent.\n",
           dest.target, WCB_MAX_BOARDS);
     return;
   }
   bool ok = wcb->send(target, cmd.c_str());
-  vlogf("[DISPATCH] MP3→WCB%u  %s  %s\n", target, cmd.c_str(), ok ? "OK" : "FAIL");
+  dlog(DBG_MP3, "[DISPATCH] MP3→WCB%u  %s  %s\n", target, cmd.c_str(), ok ? "OK" : "FAIL");
 }
 
 // =============================================================================
@@ -664,13 +681,13 @@ void rcExecuteAction(const RcAction& a) {
     case RA_WCB_UNICAST: {
       uint8_t boardId = (uint8_t)atoi(a.target);
       if (boardId >= 1 && boardId <= WCB_MAX_BOARDS) {
-        vlogf("[DISPATCH] WCB→%d  %s\n", boardId, a.cmd);
+        dlog(DBG_WCB, "[DISPATCH] WCB→%d  %s\n", boardId, a.cmd);
         wcb->send(boardId, a.cmd);
       }
       break;
     }
     case RA_WCB_BROADCAST:
-      vlogf("[DISPATCH] WCB broadcast  %s\n", a.cmd);
+      dlog(DBG_WCB, "[DISPATCH] WCB broadcast  %s\n", a.cmd);
       wcb->broadcast(a.cmd);
       break;
 
@@ -678,7 +695,7 @@ void rcExecuteAction(const RcAction& a) {
       // Legacy "local Maestro" — treat as Maestro ID 1 for backward compat
       // with old configs.  The location of Maestro 1 (and whether it's
       // actually wired locally) is now defined in the Maestro Locations panel.
-      vlogf("[DISPATCH] Maestro (legacy local → ID 1)  %s\n", a.cmd);
+      dlog(DBG_MAESTRO, "[DISPATCH] Maestro (legacy local → ID 1)  %s\n", a.cmd);
       executeMaestroCmd(1, a.cmd);
       break;
 
@@ -690,13 +707,13 @@ void rcExecuteAction(const RcAction& a) {
         vlogf("WARN: Maestro action with invalid ID %d (target='%s')\n", id, a.target);
         break;
       }
-      vlogf("[DISPATCH] Maestro %d  %s\n", id, a.cmd);
+      dlog(DBG_MAESTRO, "[DISPATCH] Maestro %d  %s\n", id, a.cmd);
       executeMaestroCmd((uint8_t)id, a.cmd);
       break;
     }
     case RA_SERIAL: {
       String s(a.cmd);
-      vlogf("[DISPATCH] Serial %s  %s\n", a.target, a.cmd);
+      dlog(DBG_SERIAL, "[DISPATCH] Serial %s  %s\n", a.target, a.cmd);
       if      (!strcmp(a.target, "S3")) writeS3(s);
       else if (!strcmp(a.target, "S4")) writeS4(s);
       // S5 is reserved for SBUS OUT — actions targeting S5 are silently
@@ -1096,14 +1113,23 @@ void handleSerialInput() {
 
       if (serialInputBuf[0] == '{') {
         // ── JSON WebSerial protocol ──────────────────────────────────────────
-        // Only extract the top-level "type" field here. SET_CONFIG payloads
-        // can be tens of KB once mappings/knobs/maestros are populated, so
-        // the header doc has to use a Filter — otherwise it tries to fit the
-        // whole payload into the small buffer and returns NoMemory, which
-        // surfaces as a generic "parse failed" error and breaks SET_CONFIG.
-        StaticJsonDocument<32> filter;
-        filter["type"] = true;
-        DynamicJsonDocument hdr(192);
+        // The header doc has to use a Filter — without one, deserializing
+        // a SET_CONFIG payload (tens of KB once mappings/knobs/maestros
+        // are populated) into the small hdr buffer returns NoMemory and
+        // breaks SET_CONFIG. The filter is a WHITELIST in ArduinoJson v6:
+        // every field used by a non-SET_CONFIG handler must be listed
+        // explicitly, otherwise it's stripped and hdr["x"] returns the
+        // default. SET_CONFIG does its own un-filtered deserialize below.
+        StaticJsonDocument<256> filter;
+        filter["type"]   = true;
+        filter["target"] = true;   // WCB_SEND
+        filter["cmd"]    = true;   // WCB_SEND
+        filter["on"]     = true;   // CALIB
+        filter["flags"]  = true;   // SET_DEBUG_FLAGS
+        filter["mode"]   = true;   // TRIGGER
+        filter["btn"]    = true;   // TRIGGER
+        filter["tap"]    = true;   // TRIGGER
+        DynamicJsonDocument hdr(256);
         DeserializationError perr = deserializeJson(
             hdr, serialInputBuf,
             DeserializationOption::Filter(filter));
@@ -1193,6 +1219,13 @@ void handleSerialInput() {
           const char* cmd = hdr["cmd"]   | "";
           if (target == 0)                               wcb->broadcast(cmd);
           else if (target >= 1 && target <= WCB_MAX_BOARDS) wcb->send((uint8_t)target, cmd);
+          Serial.println("{\"type\":\"ACK\",\"ok\":true}");
+
+        } else if (strcmp(type,"SET_DEBUG_FLAGS")==0) {
+          // GUI debug chips drive this — bitmask of DBG_* categories to
+          // enable. Default 0 silences every [DISPATCH] line.
+          g_dbgFlags = (uint32_t)(hdr["flags"] | 0);
+          Serial.printf("[DBG] flags=0x%02X\n", (unsigned)g_dbgFlags);
           Serial.println("{\"type\":\"ACK\",\"ok\":true}");
 
         } else if (strcmp(type,"GET_WCB_STATUS")==0) {

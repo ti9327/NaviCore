@@ -20,7 +20,7 @@
     --green:    #4caf50;
     --yellow:   #ffc107;
     --red:      #f44336;
-    --mode1:    #9e6106;
+    --mode1:    #069e85;
     --mode2:    #0f7a9d;
     --mode3:    #4caf50;
   }
@@ -80,7 +80,7 @@
   #status-text { font-size: 12px; color: var(--muted); }
 
   /* ── Layout ── */
-  .main { display: flex; gap: 0; height: calc(100vh - 57px); padding-bottom: 260px; }
+  .main { display: flex; gap: 0; height: calc(100vh - 57px); }
   .sidebar { position: relative; width: 320px; background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; overflow-y: auto; flex-shrink: 0; }
   .resizable-panel { resize: none; overflow: auto; }
   .panel-header { position: relative; display:flex; align-items:center; justify-content:space-between; padding:10px 16px; border-bottom:1px solid var(--border); background: rgba(255,255,255,.02); }
@@ -137,7 +137,49 @@
   .live-btn-chip { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 12px; font-weight: 600; background: var(--accent); color: #fff; min-width: 80px; text-align: center; }
 
   /* Mode tabs */
-  .mode-tabs { display: flex; gap: 0; margin-bottom: 16px; border-radius: 8px; overflow: hidden; border: 1px solid var(--border); }
+  /* WCB Status chips in the sidebar. One row per board, with a green
+     dot when online, dimmed when offline, and a small state label. */
+  .wcb-status-list { display: flex; flex-direction: column; gap: 5px; }
+  .wcb-chip {
+    display: flex; align-items: center; gap: 9px;
+    padding: 5px 10px; border-radius: 5px;
+    background: rgba(255,255,255,.03);
+    border: 1px solid var(--border);
+    font-size: 12px;
+  }
+  .wcb-chip-dot {
+    width: 9px; height: 9px; border-radius: 50%;
+    background: var(--muted); flex-shrink: 0;
+    transition: background .15s, box-shadow .15s;
+  }
+  .wcb-chip-dot.online {
+    background: #2ec27e;
+    box-shadow: 0 0 6px rgba(46,194,126,.55);
+  }
+  /* "was online, now offline" — visually distinct from never-seen grey. */
+  .wcb-chip-dot.offline {
+    background: #ff4466;
+    box-shadow: 0 0 6px rgba(255,68,102,.55);
+  }
+  .wcb-chip-name  { flex: 1; font-weight: 600; }
+  .wcb-chip-state {
+    font-size: 9px; font-weight: 700; letter-spacing: 0.6px;
+    color: var(--muted); text-transform: uppercase;
+  }
+  .wcb-chip-state.online  { color: #2ec27e; }
+  .wcb-chip-state.offline { color: #ff4466; }
+
+  /* Centered pill bar above the transmitter. Inline label + tabs, no
+     boxed background — uses the page bg, just a thin border. */
+  .mode-bar {
+    display: flex; align-items: center; justify-content: center;
+    gap: 12px; margin: 4px auto 14px; max-width: 520px;
+  }
+  .mode-bar-label {
+    font-size: 11px; font-weight: 700; letter-spacing: 1.2px;
+    color: var(--muted); text-transform: uppercase;
+  }
+  .mode-tabs { display: flex; gap: 0; margin-bottom: 0; border-radius: 8px; overflow: hidden; border: 1px solid var(--border); flex: 1; min-width: 360px; }
   .mode-tab  { flex: 1; padding: 8px; text-align: center; cursor: pointer; font-size: 12px; font-weight: 600; background: var(--surface); transition: background .2s; }
   .mode-tab:hover { background: var(--card); }
   .mode-tab.active-1 { background: var(--mode1); color: #fff; }
@@ -262,73 +304,138 @@
     color: #fff; border: none; border-radius: 3px; cursor: pointer;
   }
 
+  /* Terminal: WCB-style drawer. Fully hidden by default; the ⌨ Terminal
+     button in the top bar (or the in-panel ▼ Close button) toggles it.
+     When open, a soft accent border + drop-shadow distinguish it from the
+     page. No persistent bottom strip — the .main content gets the full
+     viewport when the terminal isn't open. */
   .terminal-panel {
     position: fixed;
     left: 0;
     right: 0;
     bottom: 0;
-    height: 240px;
+    height: 260px;
     min-height: 120px;
-    max-height: 60vh;
+    max-height: 80vh;
     background: #10121d;
-    border-top: 1px solid #233;
-    display: flex;
+    border-top: 1px solid var(--accent);
+    box-shadow: 0 -8px 24px rgba(0,0,0,.55);
+    display: none;
     flex-direction: column;
     z-index: 150;
     overflow: hidden;
   }
-  .terminal-panel.collapsed {
-    height: 40px;
-    min-height: 40px;
-    max-height: 40px;
+  .terminal-panel.open { display: flex; }
+  /* Slim WCB-style top resize bar with triple-line grip. Overrides
+     .resize-handle defaults from earlier so the drawer's top edge is the
+     drag affordance. */
+  .terminal-handle {
+    position: relative !important;
+    top: 0 !important; left: 0 !important; right: 0 !important;
+    height: 6px !important;
+    background: var(--border);
+    cursor: ns-resize;
+    flex-shrink: 0;
+    transition: background .15s;
   }
-  .terminal-panel.collapsed > :not(.terminal-header) {
-    display: none;
+  .terminal-handle:hover { background: var(--accent); }
+  .terminal-handle::after {
+    content: '';
+    position: absolute;
+    left: 50%; top: 50%;
+    transform: translate(-50%, -50%);
+    width: 32px; height: 2px;
+    border-radius: 1px;
+    background: var(--muted);
+    box-shadow: 0 -3px 0 var(--muted), 0 3px 0 var(--muted);
   }
-  .terminal-collapsed .main { padding-bottom: 46px; }
   .terminal-header {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    padding: 10px 16px;
-    border-bottom: 1px solid #233;
-    background: rgba(16,18,29,.95);
+    gap: 12px;
+    padding: 8px 16px;
+    background: #14171c;
+    border-bottom: 1px solid var(--border);
     color: var(--text);
     font-size: 13px;
+    flex-shrink: 0;
+  }
+  /* "⌨ TERMINAL" branded label — accent color, uppercase, letter-spaced. */
+  .term-title {
+    font-size: 11px; font-weight: 700; letter-spacing: 1.2px;
+    color: var(--accent); text-transform: uppercase;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .terminal-header .terminal-controls {
+    margin-left: auto; display: flex; align-items: center; gap: 6px;
+  }
+  /* Uniform WCB-style ghost-small button for ALL terminal header controls.
+     white-space:nowrap prevents "▼ Close" / "✕ Clear" from breaking across
+     two lines in a narrow button. */
+  .btn-term {
+    font-size: 11px; padding: 4px 10px;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    background: transparent;
+    color: var(--muted);
+    white-space: nowrap;
+    display: inline-flex; align-items: center; gap: 6px;
+    transition: border-color .15s, color .15s, background .15s;
+  }
+  .btn-term:hover { border-color: var(--accent); color: var(--text); }
+  /* Active toggle (Auto-scroll / Timestamps ON) → accent border + text. */
+  .terminal-toggle.active {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: rgba(11,145,235,.08);
   }
   .terminal-output {
     flex: 1;
     overflow-y: auto;
-    padding: 12px 16px;
+    padding: 10px 14px;
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-    font-size: 13px;
-    line-height: 1.4;
-    color: #d8d8d8;
-    background: rgba(16,18,29,.95);
+    font-size: 12px;
+    line-height: 1.6;
+    color: #d2d8e0;
+    background: #0a0c10;
   }
-  .terminal-line { white-space: pre-wrap; word-break: break-word; margin-bottom: 4px; }
-  .terminal-line.tx { color: #7fdfff; }
-  .terminal-line.rx { color: #d9f99d; }
-  .terminal-line.info { color: #bbb; }
+  .terminal-line { white-space: pre-wrap; word-break: break-word; margin-bottom: 2px; }
+  .terminal-line.tx { color: var(--accent); }
+  .terminal-line.tx::before { content: '> '; color: var(--muted); }
+  .terminal-line.rx { color: #b0bac9; }
+  .terminal-line.info { color: var(--muted); font-style: italic; }
   .terminal-input-row {
-    display: flex;
-    gap: 8px;
-    padding: 10px 16px;
-    background: rgba(16,18,29,.97);
+    display: flex; gap: 8px;
+    padding: 8px 14px;
+    background: #14171c;
+    border-top: 1px solid var(--border);
+    flex-shrink: 0;
   }
   .terminal-input {
-    flex: 1;
-    min-width: 0;
-    padding: 8px 10px;
-    border-radius: 8px;
-    border: 1px solid #2a2f44;
-    background: #0f1321;
+    flex: 1; min-width: 0;
+    padding: 6px 12px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: #1b1f25;
     color: var(--text);
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-    font-size: 13px;
+    font-size: 12px;
+    outline: none;
+    transition: border-color .15s;
   }
-  .terminal-input:focus { outline: 2px solid var(--accent2); }
-  .terminal-send { min-width: 100px; }
+  .terminal-input:focus { border-color: var(--accent); }
+  .terminal-send {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    padding: 6px 18px;
+    font-weight: 600;
+    font-size: 12px;
+    cursor: pointer;
+    transition: background .15s;
+  }
+  .terminal-send:hover { background: var(--accent2); }
 
   /* ── Calibration modal ── */
   .calibration-highlight rect,
@@ -348,7 +455,7 @@
   .calib-instruction  { font-size: 15px; font-weight: 600; color: var(--text); line-height: 1.4; }
 </style>
 </head>
-<body class="terminal-collapsed">
+<body>
 
 <!-- Big logo overhangs a SHORT header (so the header isn't tall). Shown only
      when the sidebar is open; when collapsed it's hidden and the compact
@@ -369,7 +476,7 @@
     <button class="btn btn-ghost" id="btn-hwsetup" type="button">Config</button>
     <button class="btn btn-ghost" id="btn-export-cfg" type="button">Export</button>
     <button class="btn btn-ghost" id="btn-import-cfg" type="button">Import</button>
-    <button class="btn btn-ghost" id="btn-calibrate" type="button">Calibrate RC</button>
+    <button class="btn btn-ghost" id="btn-terminal" type="button" title="Open terminal">⌨ Terminal</button>
   </div>
 </div>
 <input id="cfg-import-file" type="file" accept=".csv,text/csv" style="display:none">
@@ -378,7 +485,7 @@
   <!-- ── Sidebar ── -->
   <div class="sidebar resizable-panel" id="sidebar-panel">
     <div class="panel-header">
-      <span>Sidebar</span>
+      <span>Monitor</span>
       <div class="panel-actions">
         <button class="btn-icon" id="sidebar-toggle" type="button" title="Collapse sidebar" aria-label="Collapse sidebar">▾</button>
       </div>
@@ -433,91 +540,50 @@
       </div>
     </div>
 
-    <!-- Mode selector -->
+    <!-- WCB Status — populated from the firmware's GET_WCB_STATUS reply
+         while connected. One chip per board (1..wcbNetwork.quantity). -->
     <div class="sb-section">
-      <h3>Editing Mode</h3>
-      <div class="mode-tabs">
-        <div class="mode-tab active-1" data-mode="1">SW Down<br><small>Mode 1</small></div>
-        <div class="mode-tab"          data-mode="2">SW Mid<br><small>Mode 2</small></div>
-        <div class="mode-tab"          data-mode="3">SW Up<br><small>Mode 3</small></div>
+      <h3>WCB Status</h3>
+      <div id="wcb-status-list" class="wcb-status-list">
+        <div class="noconn">Connect board to see WCB status</div>
       </div>
     </div>
 
-    <!-- Tap window -->
-    <div class="sb-section">
-      <h3>Tap Window</h3>
-      <div class="tapwin-row">
-        <input type="number" id="tapwin-input" min="100" max="2000" step="50" value="500">
-        <span style="color:var(--muted);font-size:12px">ms</span>
-      </div>
-      <div class="noconn" style="margin-top:4px">Time window for multi-tap detection</div>
-    </div>
+    <!-- Editing Mode moved out of the sidebar — it's now a pill bar
+         centered above the transmitter SVG (.mode-bar) so it's always
+         visible without taking up a sidebar slot. -->
+
+    <!-- Tap Window, Channel Assignments, and Channel Thresholds now live in
+         the Config modal (#hwsetup-modal) — opened via the "Config" button.
+         The sidebar keeps only frequently-used live monitors and the
+         editing-mode tabs. -->
 
     <!-- Hardware-setup panels (WCB Network, HCR/MP3 Destination, Aux Serial,
-         Maestro Locations) live in the Hardware Setup modal — see #hwsetup-modal.
-         Opened via the "⚙ Hardware Setup" button in the top bar. -->
+         Maestro Locations, Tap Window, Channel Assignments, Channel
+         Thresholds) live in the Config modal — see #hwsetup-modal.
+         Opened via the "Config" button in the top bar. -->
 
-    <!-- WCB quick-send (uses firmware's WCB_SEND handler) -->
-    <div class="sb-section">
-      <h3>WCB Send (Test)</h3>
-      <div class="wcb-send-row">
-        <label>WCB ID:</label>
-        <input type="number" id="qs-target" min="0" max="20" value="2" style="width:60px"
-               title="1-20 = unicast to specific WCB · 0 = broadcast to all WCBs">
-        <small style="color:var(--muted);font-size:10px">(0 = broadcast)</small>
-      </div>
-      <div class="wcb-send-row">
-        <label>Cmd:</label>
-        <input type="text" id="qs-cmd" placeholder=":BL55,1" maxlength="63">
-      </div>
-      <div class="btn-row" style="margin-top:6px">
-        <button class="btn btn-blue" id="btn-qs-send" disabled style="font-size:11px;padding:5px 12px">Send</button>
-      </div>
-      <div class="noconn" style="margin-top:6px">Fires a one-off WCB command without saving. Maestro/Serial testing via terminal or Shift+Click on configured buttons.</div>
-    </div>
+    <!-- WCB Send (Test) moved to Config modal — bring-up / dev tool, not
+         needed often once buttons are mapped (use Shift+Click on a
+         configured button for normal testing). -->
 
-    <!-- Thresholds (collapsed by default) -->
-    <div class="sb-section">
-      <h3 style="cursor:pointer" id="chan-toggle">▶ Channel Assignments <small style="color:var(--muted)">(click to expand)</small></h3>
-      <div id="chan-panel" style="display:none; margin-top:8px; font-size:12px">
-        <div style="margin-bottom:6px">
-          <label>Button matrix channel:
-            <input type="number" id="cfg-matrix-ch" min="1" max="24" value="7" style="width:50px; margin-left:4px"
-                   onchange="config.matrixChannel = +this.value; document.getElementById('lbl-matrix-ch').textContent='CH'+this.value;">
-          </label>
-          <small style="color:var(--muted); margin-left:6px">(multiplexed buttons live here — Kyber default is 7)</small>
-        </div>
-        <div style="display:grid; grid-template-columns:auto auto; gap:4px 10px; max-width:380px">
-          <label>Mode/Function switch:</label>
-          <select id="bind-mode" onchange="config.funcBindings = config.funcBindings || {}; config.funcBindings.mode = +this.value;">
-            <option value="-1">— disabled (always Mode 1) —</option>
-            <option value="0">SA</option><option value="1">SB</option><option value="2">SC</option><option value="3">SD</option>
-            <option value="4" selected>SE</option><option value="5">SF</option><option value="6">SG</option><option value="7">SH</option>
-          </select>
-        </div>
-        <div style="margin-top:6px; color:var(--muted); font-size:11px">
-          The mode selector reads a switch's position and toggles between
-          matrix Mode 1 / 2 / 3. Open a switch on the SVG to edit its
-          per-position actions.
-        </div>
-      </div>
-
-      <h3 style="cursor:pointer" id="thresh-toggle">▶ Channel Thresholds <small style="color:var(--muted)">(click to expand)</small></h3>
-      <div id="thresh-panel" style="display:none; margin-top:10px; overflow-x:auto">
-        <table class="thresh-table" id="thresh-table">
-          <thead><tr><th>Btn</th><th>Label</th><th>Value <span class="unit-label">(SBUS)</span></th></tr></thead>
-          <tbody></tbody>
-        </table>
-        <div style="margin-top:8px">
-          <button class="btn btn-ghost" id="btn-thresh-rebuild" style="font-size:11px">Rebuild defaults</button>
-        </div>
-      </div>
-    </div>
+    <!-- Channel Assignments and Channel Thresholds moved to Config modal. -->
   </div>
 
   <!-- ── Main content: transmitter SVG ── -->
   <div class="content">
     <div class="tx-wrap">
+      <!-- Editing Mode pill bar — always visible, centered above the
+           transmitter. Replaces the boxed sidebar widget. -->
+      <div class="mode-bar">
+        <span class="mode-bar-label">Editing</span>
+        <div class="mode-tabs">
+          <div class="mode-tab active-1" data-mode="1">SW Down<br><small>Mode 1</small></div>
+          <div class="mode-tab"          data-mode="2">SW Mid<br><small>Mode 2</small></div>
+          <div class="mode-tab"          data-mode="3">SW Up<br><small>Mode 3</small></div>
+        </div>
+      </div>
+
       <div style="text-align:center; margin-bottom:12px; font-size:12px; color:var(--muted)">
         Click any button to configure · <b>Shift+Click</b> to fire a TRIGGER (single tap) · <b>Shift+Ctrl+Click</b> for double tap · <b>Shift+Alt+Click</b> for triple tap
       </div>
@@ -987,15 +1053,16 @@
   </div>
 </div>
 
-<div class="terminal-panel resizable-panel collapsed" id="terminal-panel">
+<div class="terminal-panel resizable-panel" id="terminal-panel">
+  <!-- Slim resize bar above the header (WCB pattern). -->
+  <div class="terminal-handle" id="terminal-handle" title="Drag to resize terminal"></div>
   <div class="terminal-header">
-    <span>Board Terminal</span>
-    <div class="resize-handle terminal-handle" id="terminal-handle" title="Drag to resize terminal"></div>
+    <h3 class="term-title">⌨ TERMINAL</h3>
     <div class="terminal-controls">
-      <button class="btn-icon" id="terminal-collapse" type="button" title="Expand terminal" aria-label="Expand terminal">▴</button>
-      <button class="btn btn-ghost terminal-toggle" id="terminal-autoscroll" type="button">Auto-scroll</button>
-      <button class="btn btn-ghost terminal-toggle" id="terminal-timestamps" type="button">Timestamps</button>
-      <button class="btn btn-ghost" id="terminal-clear" type="button">Clear</button>
+      <button class="btn btn-ghost btn-term terminal-toggle" id="terminal-autoscroll" type="button">Auto-scroll</button>
+      <button class="btn btn-ghost btn-term terminal-toggle" id="terminal-timestamps" type="button">Timestamps</button>
+      <button class="btn btn-ghost btn-term" id="terminal-clear" type="button">✕ Clear</button>
+      <button class="btn btn-ghost btn-term" id="terminal-collapse" type="button" title="Close terminal" aria-label="Close terminal">▼ Close</button>
     </div>
   </div>
   <div class="terminal-output" id="terminal-output"></div>
@@ -1009,7 +1076,7 @@
 <div class="modal-overlay" id="hwsetup-modal">
   <div class="modal" style="width:680px">
     <div class="modal-header">
-      <span class="modal-title">Hardware Setup</span>
+      <span class="modal-title">Configuration</span>
       <button class="btn btn-ghost" onclick="closeHwSetup()" style="padding:4px 10px">✕</button>
     </div>
     <div class="modal-body">
@@ -1149,8 +1216,77 @@
         </div>
       </div>
 
+
+      <!-- ── Tap Window ──────────────────────────────────────────────────── -->
+      <div class="sb-section">
+        <h3>Tap Window</h3>
+        <div class="tapwin-row">
+          <input type="number" id="tapwin-input" min="100" max="2000" step="50" value="500">
+          <span style="color:var(--muted);font-size:12px">ms</span>
+        </div>
+        <div class="noconn" style="margin-top:4px">Time window for multi-tap detection</div>
+      </div>
+
+      <!-- ── WCB Send (Test) — bring-up / one-off command sender ──────── -->
+      <div class="sb-section">
+        <h3>WCB Send (Test)</h3>
+        <div class="wcb-send-row">
+          <label>WCB ID:</label>
+          <input type="number" id="qs-target" min="0" max="20" value="2" style="width:60px"
+                 title="1-20 = unicast to specific WCB · 0 = broadcast to all WCBs">
+          <small style="color:var(--muted);font-size:10px">(0 = broadcast)</small>
+        </div>
+        <div class="wcb-send-row">
+          <label>Cmd:</label>
+          <input type="text" id="qs-cmd" placeholder=":BL55,1" maxlength="63">
+        </div>
+        <div class="btn-row" style="margin-top:6px">
+          <button class="btn btn-blue" id="btn-qs-send" disabled style="font-size:11px;padding:5px 12px">Send</button>
+        </div>
+        <div class="noconn" style="margin-top:6px">Fires a one-off WCB command without saving. Maestro/Serial testing via terminal or Shift+Click on configured buttons.</div>
+      </div>
+
+      <!-- ── Channel Assignments + Thresholds (moved from sidebar) ──────── -->
+      <div class="sb-section">
+        <h3 style="cursor:pointer" id="chan-toggle">▶ Channel Assignments <small style="color:var(--muted)">(click to expand)</small></h3>
+        <div id="chan-panel" style="display:none; margin-top:8px; font-size:12px">
+          <div style="margin-bottom:6px">
+            <label>Button matrix channel:
+              <input type="number" id="cfg-matrix-ch" min="1" max="24" value="7" style="width:50px; margin-left:4px"
+                     onchange="config.matrixChannel = +this.value; document.getElementById('lbl-matrix-ch').textContent='CH'+this.value;">
+            </label>
+            <small style="color:var(--muted); margin-left:6px">(multiplexed buttons live here — Kyber default is 7)</small>
+          </div>
+          <div style="display:grid; grid-template-columns:auto auto; gap:4px 10px; max-width:380px">
+            <label>Mode/Function switch:</label>
+            <select id="bind-mode" onchange="config.funcBindings = config.funcBindings || {}; config.funcBindings.mode = +this.value;">
+              <option value="-1">— disabled (always Mode 1) —</option>
+              <option value="0">SA</option><option value="1">SB</option><option value="2">SC</option><option value="3">SD</option>
+              <option value="4" selected>SE</option><option value="5">SF</option><option value="6">SG</option><option value="7">SH</option>
+            </select>
+          </div>
+          <div style="margin-top:6px; color:var(--muted); font-size:11px">
+            The mode selector reads a switch's position and toggles between
+            matrix Mode 1 / 2 / 3. Open a switch on the SVG to edit its
+            per-position actions.
+          </div>
+        </div>
+
+        <h3 style="cursor:pointer; margin-top:14px" id="thresh-toggle">▶ Channel Thresholds <small style="color:var(--muted)">(click to expand)</small></h3>
+        <div id="thresh-panel" style="display:none; margin-top:10px; overflow-x:auto">
+          <table class="thresh-table" id="thresh-table">
+            <thead><tr><th>Btn</th><th>Label</th><th>Value <span class="unit-label">(SBUS)</span></th></tr></thead>
+            <tbody></tbody>
+          </table>
+          <div style="margin-top:8px">
+            <button class="btn btn-ghost" id="btn-thresh-rebuild" style="font-size:11px">Rebuild defaults</button>
+          </div>
+        </div>
+      </div>
+
     </div>
     <div class="modal-footer">
+      <button class="btn btn-ghost" id="btn-calibrate" type="button">🎯 Calibrate RC</button>
       <button class="btn btn-warn" id="btn-defaults" disabled
               style="margin-right:auto" type="button">Restore Defaults</button>
       <button class="btn btn-success" id="btn-hwsetup-save" disabled type="button">Save</button>
@@ -1554,6 +1690,91 @@ function setConnected(v) {
   });
   setTerminalEnabled(v);
   document.getElementById('monitor-note').style.display = v ? 'none' : 'block';
+  // Drive the WCB Status poll alongside the connection state.
+  if (v) startWcbStatusPoll(); else stopWcbStatusPoll();
+}
+
+// ── WCB Status: poll the firmware every 3s and render online/offline chips
+// in the sidebar. Independent of the PWM monitor (doesn't require Start).
+// Three chip states:
+//   green = currently online
+//   red   = was online at least once this session, now offline (real drop)
+//   grey  = never seen online (unknown — board may not exist or never came up)
+// Gated on isWcbConfigured(): if the user has never touched the WCB Network
+// defaults (macOct2/macOct3 still 0 AND password still empty), we don't
+// poll and show a "configure first" hint instead of meaningless chips.
+let wcbStatusTimer = null;
+let wcbEverSeen    = new Set();    // board IDs that have reported online
+let wcbSelfId      = 0;             // local deviceId, from firmware reply
+// True once the user has set ANY of the identity fields away from their
+// fresh-out-of-the-box defaults. macOct2/3 default to 0; password defaults
+// to ''. Quantity/deviceId have non-zero defaults that may legitimately
+// match real configs, so they don't count as "configured" on their own.
+function isWcbConfigured() {
+  const w = config.wcbNetwork;
+  if (!w) return false;
+  return (w.macOct2 | 0) !== 0
+      || (w.macOct3 | 0) !== 0
+      || (w.password && w.password.length > 0);
+}
+function startWcbStatusPoll() {
+  stopWcbStatusPoll();
+  wcbEverSeen = new Set();          // fresh per-session memory
+  wcbSelfId   = 0;
+  renderWcbStatus(null);            // shows "configure first" or "—"
+  // Each tick re-checks isWcbConfigured() so the panel wakes up the moment
+  // the user saves a non-default WCB network config (no reconnect needed).
+  wcbStatusTimer = setInterval(() => {
+    if (isWcbConfigured()) {
+      sendJSON({ type: 'GET_WCB_STATUS' }).catch(() => {});
+    } else {
+      renderWcbStatus(null);        // keep the placeholder live
+    }
+  }, 3000);
+  if (isWcbConfigured()) sendJSON({ type: 'GET_WCB_STATUS' }).catch(() => {});
+}
+function stopWcbStatusPoll() {
+  if (wcbStatusTimer) { clearInterval(wcbStatusTimer); wcbStatusTimer = null; }
+  wcbEverSeen = new Set();
+  wcbSelfId   = 0;
+  const list = document.getElementById('wcb-status-list');
+  if (list) list.innerHTML = '<div class="noconn">Connect board to see WCB status</div>';
+}
+// `online` is the array from the firmware reply (booleans / 0|1); null
+// = "no data yet". Tracks each board's ever-seen state so a dropout
+// shows red instead of grey.
+function renderWcbStatus(online) {
+  const list = document.getElementById('wcb-status-list');
+  if (!list) return;
+  // If the WCB Network section is untouched (all-default identity fields),
+  // don't show chips at all — there's nothing meaningful to report yet.
+  if (!isWcbConfigured()) {
+    list.innerHTML = '<div class="noconn">Configure WCB Network in Config → WCB Network to enable status</div>';
+    return;
+  }
+  const quantity = (config.wcbNetwork && config.wcbNetwork.quantity) || 0;
+  if (quantity < 1) {
+    list.innerHTML = '<div class="noconn">No WCBs configured (set quantity in Config → WCB Network)</div>';
+    return;
+  }
+  let html = '';
+  for (let i = 1; i <= quantity; i++) {
+    const up = !!(online && online[i - 1]);
+    if (up) wcbEverSeen.add(i);
+    let stateCls = '', stateLabel = '—';
+    if (online) {
+      if (up)                       { stateCls = ' online';  stateLabel = 'Online';  }
+      else if (wcbEverSeen.has(i))  { stateCls = ' offline'; stateLabel = 'Offline'; }
+      else                          { stateCls = '';         stateLabel = 'Unknown'; }
+    }
+    const selfTag = (i === wcbSelfId) ? ' <small style="color:var(--muted);font-weight:400">(self)</small>' : '';
+    html += `<div class="wcb-chip">
+      <span class="wcb-chip-dot${stateCls}"></span>
+      <span class="wcb-chip-name">WCB ${i}${selfTag}</span>
+      <span class="wcb-chip-state${stateCls}">${stateLabel}</span>
+    </div>`;
+  }
+  list.innerHTML = html;
 }
 
 async function sendLine(msg) {
@@ -1628,10 +1849,18 @@ function initTerminal() {
 
   const sidebarToggle = document.getElementById('sidebar-toggle');
   const terminalCollapse = document.getElementById('terminal-collapse');
+  const terminalOpenBtn  = document.getElementById('btn-terminal');
   const sidebarHandle = document.getElementById('sidebar-handle');
   const terminalHandle = document.getElementById('terminal-handle');
   const sidebarPanel = document.getElementById('sidebar-panel');
   const terminalPanel = document.getElementById('terminal-panel');
+
+  // Drawer-style open/close — closed = fully hidden (no bottom strip).
+  function setTerminalOpen(open) {
+    if (!terminalPanel) return;
+    terminalPanel.classList.toggle('open', open);
+    if (terminalOpenBtn) terminalOpenBtn.classList.toggle('active', open);
+  }
 
   let sidebarDrag = null;
   let terminalDrag = null;
@@ -1661,9 +1890,6 @@ function initTerminal() {
       const deltaY = terminalDrag.startY - ev.clientY;
       const newHeight = Math.max(100, Math.min(window.innerHeight * 0.7, terminalDrag.startHeight + deltaY));
       terminalPanel.style.height = newHeight + 'px';
-      terminalPanel.classList.remove('collapsed');
-      terminalCollapse.textContent = '▾';
-      document.body.classList.remove('terminal-collapsed');
     }
   }
 
@@ -1696,12 +1922,14 @@ function initTerminal() {
       document.body.classList.toggle('sidebar-collapsed', collapsed);
     });
   }
+  // In-panel ▼ Close button → hide the drawer.
   if (terminalCollapse) {
-    terminalCollapse.addEventListener('click', () => {
-      const panel = terminalPanel;
-      const collapsed = panel.classList.toggle('collapsed');
-      terminalCollapse.textContent = collapsed ? '▴' : '▾';
-      document.body.classList.toggle('terminal-collapsed', collapsed);
+    terminalCollapse.addEventListener('click', () => setTerminalOpen(false));
+  }
+  // Top-bar ⌨ Terminal button → toggle the drawer.
+  if (terminalOpenBtn) {
+    terminalOpenBtn.addEventListener('click', () => {
+      setTerminalOpen(!terminalPanel.classList.contains('open'));
     });
   }
 
@@ -1781,6 +2009,13 @@ function handleBoardMessage(line) {
   }
   if (msg.type === 'ACK') {
     if (!msg.ok) console.warn('NACK:', msg.msg);
+    return;
+  }
+  if (msg.type === 'WCB_STATUS') {
+    // online[] is 0-indexed (slot i = board i+1). msg.self is our own
+    // device ID — we tag that chip "(self)" so it's clear it's us.
+    if (typeof msg.self === 'number') wcbSelfId = msg.self;
+    renderWcbStatus(Array.isArray(msg.online) ? msg.online : []);
     return;
   }
 }
@@ -2609,7 +2844,7 @@ function appendActionFields(container, action) {
     cmdInput.type = 'text'; cmdInput.id = fid + '-cmd';
     cmdInput.placeholder = ':BL55,1';
     cmdInput.style.width = '180px';
-    cmdInput.maxLength = 31;
+    cmdInput.maxLength = 95;
     cmdInput.value = action.cmd || '';
 
     container.appendChild(makeFieldGroup('WCB #', targetInput));
@@ -2619,7 +2854,7 @@ function appendActionFields(container, action) {
     cmdInput.type = 'text'; cmdInput.id = fid + '-cmd';
     cmdInput.placeholder = ':BLALL,1';
     cmdInput.style.width = '220px';
-    cmdInput.maxLength = 31;
+    cmdInput.maxLength = 95;
     cmdInput.value = action.cmd || '';
     container.appendChild(makeFieldGroup('Broadcast cmd', cmdInput));
   } else if (type === 'maestro' || type === 'maestro_local' || type === 'maestro_remote') {
@@ -2638,7 +2873,7 @@ function appendActionFields(container, action) {
     cmdInput.type = 'text'; cmdInput.id = fid + '-cmd';
     cmdInput.placeholder = 'setTarget,0,6000';
     cmdInput.style.width = '220px';
-    cmdInput.maxLength = 31;
+    cmdInput.maxLength = 95;
     cmdInput.value = action.cmd || '';
 
     container.appendChild(makeFieldGroup('Target Maestro', slotSel));
@@ -2657,7 +2892,7 @@ function appendActionFields(container, action) {
     cmdInput.type = 'text'; cmdInput.id = fid + '-cmd';
     cmdInput.placeholder = 'string to send';
     cmdInput.style.width = '180px';
-    cmdInput.maxLength = 31;
+    cmdInput.maxLength = 95;
     cmdInput.value = action.cmd || '';
     container.appendChild(makeFieldGroup('Port',    portSel));
     container.appendChild(makeFieldGroup('Command', cmdInput));
@@ -3291,7 +3526,12 @@ document.getElementById('btn-defaults').addEventListener('click', async () => {
 
 document.getElementById('btn-export-cfg').addEventListener('click', exportConfigCsv);
 document.getElementById('btn-import-cfg').addEventListener('click', () => document.getElementById('cfg-import-file').click());
-document.getElementById('btn-calibrate').addEventListener('click', openCalibrationModal);
+// Launching from inside Config: close the Config modal first so calibration
+// gets the foreground cleanly instead of stacking modal on top of modal.
+document.getElementById('btn-calibrate').addEventListener('click', () => {
+  closeHwSetup();
+  openCalibrationModal();
+});
 document.getElementById('cfg-import-file').addEventListener('change', handleConfigImportFile);
 
 // ── Hardware Setup modal ────────────────────────────────────────────────────

@@ -1195,6 +1195,25 @@ void handleSerialInput() {
           else if (target >= 1 && target <= WCB_MAX_BOARDS) wcb->send((uint8_t)target, cmd);
           Serial.println("{\"type\":\"ACK\",\"ok\":true}");
 
+        } else if (strcmp(type,"GET_WCB_STATUS")==0) {
+          // Lightweight liveness poll for the GUI's sidebar WCB Status
+          // panel. Reads wcb->isOnline(i) for boards 1..quantity. The
+          // sketch's CLI #L11 prints the same info as human-readable text.
+          int q = rcConfig.wcbNetwork.quantity;
+          if (q < 0) q = 0;
+          if (q > WCB_MAX_BOARDS) q = WCB_MAX_BOARDS;
+          // Self is by definition online — wcb->isOnline() tracks REMOTE
+          // peer heartbeats via ETM and never returns true for our own
+          // deviceId, so we force "1" for the local board.
+          int selfId = rcConfig.wcbNetwork.deviceId;
+          Serial.printf("{\"type\":\"WCB_STATUS\",\"quantity\":%d,\"self\":%d,\"online\":[",
+                        q, selfId);
+          for (int i = 1; i <= q; i++) {
+            bool up = (i == selfId) ? true : (wcb && wcb->isOnline(i));
+            Serial.printf("%s%s", (i > 1) ? "," : "", up ? "1" : "0");
+          }
+          Serial.println("]}");
+
         } else {
           Serial.println("{\"type\":\"ERROR\",\"msg\":\"unknown type\"}");
         }

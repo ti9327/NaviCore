@@ -75,7 +75,11 @@ struct RcAction {
   //   RA_MAESTRO_LOCAL/REMOTE  = "setTarget,ch,pos" | "goHome" | "stopScript" | "restartScript,n"
   //   RA_SERIAL                = command string (terminated with \r by dispatcher)
   //   RA_HCR                   = unused (use fn/chan/track instead)
-  char    cmd[32];
+  // 96 bytes (95 chars + null) accommodates chained WCB commands like
+  // ";h,play,a,1,fadein,4^;t6000^;h,fadeout,a,4" (44+ chars) plus headroom
+  // for 3-4 ;-separated segments. Increase carefully — every byte here is
+  // multiplied by RC_NUM_MAPPINGS × 3 tiers × RC_ACTIONS_PER_TIER = 855.
+  char    cmd[96];
   uint16_t delayMs;       // optional pre-fire delay (ms)
   char    note[20];       // human-readable label shown in GUI (19 chars + null)
 

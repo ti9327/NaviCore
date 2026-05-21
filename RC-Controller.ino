@@ -30,7 +30,7 @@
 //    • Adafruit NeoPixel
 //
 //  Local libraries (in libraries/ folder):
-//    • WCBClient + WCBStream
+//    • WCB_Client + WCBStream  (from the greghulette/WCBClient repo)
 //    • PololuMaestro
 // =============================================================================
 
@@ -92,15 +92,15 @@
 // rcConfig.wcbNetwork (GUI-editable) instead of the wcb_config.h #defines.
 // The #defines are still the factory defaults on a fresh device — see
 // rcConfigLoadDefaults() in rc_config.h.
-WCBClient* wcb = nullptr;
+WCB_Client* wcb = nullptr;
 
 // One stream, broadcast to all WCBs.  target_port is ignored for broadcast.
 //
 // MUST be constructed AFTER `wcb` (in setup()): WCBStream's constructor
-// self-registers with the WCBClient singleton via WCBClient::instance(), and
+// self-registers with the WCB_Client singleton via WCB_Client::instance(), and
 // that registration is what makes wcb->update() drive this stream's flush.
 // If it were a global it would construct at static-init time — before the
-// heap-allocated WCBClient exists — and silently fail to register, so no
+// heap-allocated WCB_Client exists — and silently fail to register, so no
 // Maestro bytes would ever leave the board over ESP-NOW.
 WCBStream* maestroBroadcast = nullptr;
 
@@ -1369,7 +1369,7 @@ void setup() {
                 SBUS_OUT_PIN);
 
   // RC Config: defaults then NVS overrides. Must run BEFORE constructing
-  // WCBClient so the network credentials come from rcConfig.wcbNetwork.
+  // WCB_Client so the network credentials come from rcConfig.wcbNetwork.
   rcConfigLoadDefaults();
   rcConfigLoadNVS();
 
@@ -1385,7 +1385,7 @@ void setup() {
   // No WiFi AP or web server — ESP-NOW only.  Credentials come from NVS
   // (editable via the GUI's "WCB Network" sidebar); a reboot is required
   // for credential changes to take effect.
-  wcb = new WCBClient(rcConfig.wcbNetwork.macOct2,
+  wcb = new WCB_Client(rcConfig.wcbNetwork.macOct2,
                       rcConfig.wcbNetwork.macOct3,
                       rcConfig.wcbNetwork.password,
                       rcConfig.wcbNetwork.quantity,
@@ -1400,7 +1400,7 @@ void setup() {
   }
 
   // Construct the broadcast Maestro stream AFTER wcb exists. WCBStream's
-  // constructor self-registers with the WCBClient singleton; doing this here
+  // constructor self-registers with the WCB_Client singleton; doing this here
   // (rather than at global scope) is what guarantees wcb->update() actually
   // drives the stream's flush so remote Maestro bytes go out over ESP-NOW.
   maestroBroadcast = new WCBStream(/*target_wcb=*/0, /*target_port=*/0);

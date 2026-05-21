@@ -1,10 +1,15 @@
 #!/bin/sh
 # ─────────────────────────────────────────────────────────────────────────
-# Pre-commit hook: stamp the current Date-Time-Group into the config tool
-# footer (<span id="footer-dtg">…</span>) so every committed/deployed
-# version of config_tool/index.html reflects when it was committed.
+# Pre-commit hook: stamp the current Date-Time-Group into TWO places:
 #
-# Format:  DDHHMM<TZ>MMMYY   (matches firmware version style, e.g. 201500RMAY26)
+#   1. config_tool/index.html — UI footer span (#footer-dtg)
+#   2. fw_version.h            — FW_VERSION_DTG #define (firmware version)
+#
+# This keeps the GUI's footer and the firmware's reported version in
+# lock-step: both reflect the moment the commit was made, in the same
+# format used everywhere else in the project.
+#
+# Format:  DDHHMM<TZ>MMMYY   (e.g. 211520QMAY26)
 #   DD      day of month, local time, zero-padded
 #   HHMM    24-hour local time
 #   TZ      military timezone letter derived from UTC offset
@@ -24,10 +29,14 @@
 # ─────────────────────────────────────────────────────────────────────────
 
 HTML_FILE="config_tool/index.html"
+FWVER_FILE="fw_version.h"
 
-# Bail silently if the target file isn't present (e.g. running in a
-# worktree where it was removed).
-[ -f "$HTML_FILE" ] || exit 0
+# Bail silently if BOTH target files are absent (e.g. running in an
+# unrelated worktree). Individual missing files are handled per-target
+# below so the hook still partially works if only one is present.
+if [ ! -f "$HTML_FILE" ] && [ ! -f "$FWVER_FILE" ]; then
+  exit 0
+fi
 
 # ── Build the DTG ────────────────────────────────────────────────────────
 DAY=$(date +%d)
@@ -55,21 +64,33 @@ esac
 
 DTG="${DAY}${HHMM}${TZ_LETTER}${MONTH}${YEAR}"
 
-# ── Patch the footer-dtg span ────────────────────────────────────────────
-# Use sed for portability — no python dependency. The substitution looks
-# for any text between the opening and closing tags of the dtg span and
-# replaces it with the freshly-computed DTG.
-TMP=$(mktemp 2>/dev/null || mktemp -t dtg)
-sed -E "s|(<span id=\"footer-dtg\">)[^<]*(</span>)|\\1${DTG}\\2|" "$HTML_FILE" > "$TMP" 2>/dev/null
+# Helper: patch FILE in place by running sed-script EXPR; stage the file
+# only if it actually changed. Avoids leaving the working tree dirty when
+# the DTG happens to match (re-commit within the same minute).
+stamp_file() {
+  FILE="$1"; EXPR="$2"; LABEL="$3"
+  [ -f "$FILE" ] || return 0
+  TMP=$(mktemp 2>/dev/null || mktemp -t dtg)
+  sed -E "$EXPR" "$FILE" > "$TMP" 2>/dev/null
+  if [ -s "$TMP" ] && ! cmp -s "$FILE" "$TMP"; then
+    mv "$TMP" "$FILE"
+    git add "$FILE"
+    echo "[pre-commit] ${LABEL} DTG stamped: ${DTG}"
+  else
+    rm -f "$TMP"
+  fi
+}
 
-# Only stage if the file actually changed — avoids leaving the working
-# tree dirty when the DTG happens to match (re-commit within same minute).
-if [ -s "$TMP" ] && ! cmp -s "$HTML_FILE" "$TMP"; then
-  mv "$TMP" "$HTML_FILE"
-  git add "$HTML_FILE"
-  echo "[pre-commit] DTG stamped: ${DTG}"
-else
-  rm -f "$TMP"
-fi
+# ── Patch the UI footer (<span id="footer-dtg">…</span>) ────────────────
+stamp_file "$HTML_FILE" \
+  "s|(<span id=\"footer-dtg\">)[^<]*(</span>)|\\1${DTG}\\2|" \
+  "UI footer"
+
+# ── Patch the firmware version (#define FW_VERSION_DTG  "…") ────────────
+# Match any whitespace between the macro name and the opening quote so the
+# format can be re-aligned without breaking the hook.
+stamp_file "$FWVER_FILE" \
+  "s|(#define[[:space:]]+FW_VERSION_DTG[[:space:]]+\")[^\"]*(\")|\\1${DTG}\\2|" \
+  "FW version"
 
 exit 0

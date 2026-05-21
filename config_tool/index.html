@@ -1242,7 +1242,8 @@
              style="width:72px;height:72px;object-fit:contain;opacity:0.9">
         <div style="font-size:11px;color:var(--muted);font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;letter-spacing:0.3px">
           RC Controller Config Tool &nbsp;·&nbsp; UI Version <span id="footer-ui-version">1.0</span>
-          &nbsp;·&nbsp; <span id="footer-dtg">211520QMAY26</span>
+          &nbsp;·&nbsp; <span id="footer-dtg">211602QMAY26</span>
+          &nbsp;·&nbsp; FW <span id="footer-fw-version">—</span>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap">
@@ -1320,6 +1321,7 @@
         <button class="cfg-tab"        type="button" data-tab="maestro">Maestro</button>
         <button class="cfg-tab"        type="button" data-tab="serial">Aux Serial</button>
         <button class="cfg-tab"        type="button" data-tab="general">General</button>
+        <button class="cfg-tab"        type="button" data-tab="firmware">Firmware</button>
       </nav>
       <div class="cfg-content">
 
@@ -1579,6 +1581,68 @@
           </div>
         </section>
 
+        <!-- ════════════════════════════════════════════════════════════
+             Firmware tab — over-the-USB flashing of the WCB v3.2 board.
+             Pulls the latest .bin from GitHub (greghulette/RC-Controller
+             on branch main, under /firmware/) and writes it via
+             esptool-js + WebSerial.  NVS (saved config) is preserved
+             on any normal update; only blank or partition-mismatched
+             boards get a full flash.
+             ════════════════════════════════════════════════════════════ -->
+        <section class="cfg-pane" id="cfg-pane-firmware">
+          <h2 class="cfg-pane-title">Firmware</h2>
+          <div class="sb-section">
+            <h3>Flash WCB v3.2 <small>over USB</small></h3>
+            <!-- Currently-on-board version, populated from the PONG reply.
+                 Stays "—" until the board has answered a PING. -->
+            <div class="wcb-send-row" style="margin-top:0">
+              <label style="min-width:170px">Currently on board:</label>
+              <code id="fw-current-version" style="font-size:12px">—</code>
+            </div>
+            <div class="noconn" style="margin-top:6px">
+              Flashes the latest RC-Controller firmware to a WCB v3.2 (ESP32-S3)
+              board. Pulls the binary from
+              <code>github.com/greghulette/RC-Controller/firmware</code>.
+              Your saved configuration (NVS) is preserved unless the partition
+              layout changed.
+            </div>
+            <div class="noconn" style="margin-top:4px">
+              <b>To enter bootloader mode:</b> hold <b>BOOT</b>, tap <b>RST</b>,
+              release <b>BOOT</b>. Then click one of the buttons below. Chrome
+              will ask which USB port to use.
+            </div>
+            <div class="wcb-send-row" style="margin-top:10px; gap:8px; flex-wrap:wrap">
+              <button class="btn btn-blue" id="btn-fw-flash" type="button"
+                      title="Normal update: writes the new firmware while preserving your saved configuration (NVS).">
+                ⬆ Update Firmware
+              </button>
+              <button class="btn btn-danger" id="btn-fw-wipe" type="button"
+                      title="Full wipe: erases EVERYTHING — bootloader, partitions, app, AND saved configuration (NVS). Use for first-time programming or recovery.">
+                ⚠ Full Wipe &amp; Flash
+              </button>
+              <span id="fw-status" style="color:var(--muted);font-size:12px">Idle.</span>
+            </div>
+            <div class="noconn" style="margin-top:6px">
+              <b>Update Firmware</b> — keeps your saved config intact. Use this
+              for routine firmware updates.<br>
+              <b>Full Wipe &amp; Flash</b> — factory-fresh push. Erases NVS and
+              OTA data along with the firmware. Use for the very first flash on
+              a new board, or to recover from corruption / bad config. <b>You
+              will lose all saved settings.</b>
+            </div>
+            <div id="fw-progress-wrap" style="display:none; margin-top:10px">
+              <div style="height:8px; background:var(--border); border-radius:4px; overflow:hidden">
+                <div id="fw-progress-bar" style="height:100%; width:0%; background:var(--accent); transition:width 120ms linear"></div>
+              </div>
+              <div id="fw-progress-pct" style="font-size:11px; color:var(--muted); margin-top:4px">0%</div>
+            </div>
+            <div id="fw-log" style="display:none; margin-top:10px; max-height:220px; overflow:auto;
+                                    background:#0b0d10; color:#cfd2d6; font:11px/1.45 ui-monospace,Consolas,monospace;
+                                    padding:8px 10px; border:1px solid var(--border); border-radius:4px;
+                                    white-space:pre-wrap"></div>
+          </div>
+        </section>
+
       </div><!-- /cfg-content -->
     </div><!-- /cfg-body -->
     <div class="modal-footer">
@@ -1646,6 +1710,9 @@
     </div>
   </div>
 </div>
+
+<!-- Firmware flasher (esptool-js wrapper) — loads CDN deps on first use. -->
+<script src="flasher.js"></script>
 
 <script>
 // ════════════════════════════════════════════════════════════════════════════
@@ -1980,6 +2047,14 @@ function setConnected(v) {
   document.getElementById('conn-dot').className = 'status-dot' + (v ? ' connected' : '');
   document.getElementById('status-text').textContent = v ? 'Connected' : 'Disconnected';
   document.getElementById('btn-connect').textContent = v ? 'Disconnect' : 'Connect';
+  // Clear the firmware-version readouts on disconnect — they're stale until
+  // the next PONG.  (When v=true we leave them alone; PONG will populate them.)
+  if (!v) {
+    const fwFooter = document.getElementById('footer-fw-version');
+    const fwTab    = document.getElementById('fw-current-version');
+    if (fwFooter) fwFooter.textContent = '—';
+    if (fwTab)    fwTab.textContent    = '—';
+  }
   ['btn-refresh','btn-save','btn-hwsetup-save','btn-defaults','btn-qs-send','btn-wcb-reboot'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.disabled = !v;
@@ -2452,6 +2527,15 @@ function handleBoardMessage(line) {
 
   if (msg.type === 'PONG') {
     document.getElementById('status-text').textContent = 'Connected ✓';
+    // The board reports its firmware version (FW_VERSION = base_DTG)
+    // in the PONG reply; show it in the footer and on the Firmware tab
+    // so the user knows what's currently flashed before deciding to update.
+    if (typeof msg.version === 'string' && msg.version.length) {
+      const fwFooter = document.getElementById('footer-fw-version');
+      const fwTab    = document.getElementById('fw-current-version');
+      if (fwFooter) fwFooter.textContent = msg.version;
+      if (fwTab)    fwTab.textContent    = msg.version;
+    }
     return;
   }
   if (msg.type === 'CONFIG') {
@@ -4454,6 +4538,142 @@ document.querySelectorAll('#cfg-tabs .cfg-tab').forEach(t => {
 document.getElementById('btn-hwsetup').addEventListener('click', openHwSetup);
 document.getElementById('hwsetup-modal').addEventListener('click', e => {
   if (e.target === document.getElementById('hwsetup-modal')) closeHwSetup();
+});
+
+// ── Firmware flasher (Config → Firmware tab) ───────────────────────────────
+// Wraps flashFirmware() from flasher.js. Walks the user through:
+//   1. Cleanly disconnect any active config session (esptool-js needs the port closed)
+//   2. Request a USB serial port (Chrome remembers the last one)
+//   3. Stream progress / log into the panel
+//   4. Leave the board running new firmware; user clicks Connect to resume.
+//
+// Two entry points share one flow:
+//   • btn-fw-flash → eraseNvs=false (update, NVS preserved)
+//   • btn-fw-wipe  → eraseNvs=true  (full wipe / initial push, NVS erased)
+let _fwFlashing = false;
+async function runFirmwareFlash({ eraseNvs, sourceBtn, label, defaultLabel }) {
+  if (_fwFlashing) return;
+  _fwFlashing = true;
+
+  const btnFlash   = document.getElementById('btn-fw-flash');
+  const btnWipe    = document.getElementById('btn-fw-wipe');
+  const statusEl   = document.getElementById('fw-status');
+  const wrap       = document.getElementById('fw-progress-wrap');
+  const bar        = document.getElementById('fw-progress-bar');
+  const pct        = document.getElementById('fw-progress-pct');
+  const logEl      = document.getElementById('fw-log');
+
+  const setStatus  = msg => { statusEl.textContent = msg; };
+  const setBar     = (w, t) => {
+    const p = t > 0 ? Math.min(100, Math.round(w * 100 / t)) : 0;
+    bar.style.width = p + '%';
+    pct.textContent = p + '%';
+  };
+  const appendLog  = msg => {
+    logEl.textContent += msg + '\n';
+    logEl.scrollTop = logEl.scrollHeight;
+  };
+
+  // Reset / show the UI.
+  logEl.textContent = '';
+  logEl.style.display = 'block';
+  wrap.style.display  = 'block';
+  setBar(0, 1);
+  // Disable BOTH buttons while a flash is in progress so the user can't
+  // accidentally trigger the other mode mid-flash.
+  btnFlash.disabled = true;
+  btnWipe.disabled  = true;
+  sourceBtn.textContent = label;
+
+  if (eraseNvs) {
+    appendLog('⚠ Full wipe mode — NVS and OTA data will be erased.');
+  } else {
+    appendLog('Update mode — NVS preserved.');
+  }
+
+  let flashPort = null;
+  try {
+    // Tear down the JSON config session so the port is free for esptool-js.
+    if (port) {
+      appendLog('Disconnecting active config session…');
+      await disconnect();
+    }
+
+    // Always re-request the port — even if the same physical board, the previous
+    // SerialPort instance may be in a stale state after our close(). The browser
+    // will silently re-grant a previously-authorized device.
+    setStatus('Selecting USB port…');
+    appendLog('Requesting USB serial port (pick the WCB v3.2)…');
+    try {
+      flashPort = await navigator.serial.requestPort();
+    } catch (e) {
+      throw new Error('No port selected — flashing cancelled.');
+    }
+
+    // esptool-js needs the port closed when it constructs its Transport, but
+    // the browser also requires it to have been opened at least once in the
+    // user gesture chain. Open+close so future open() inside esptool succeeds.
+    try {
+      await flashPort.open({ baudRate: 115200 });
+      await flashPort.close();
+    } catch (_) { /* esptool-js will try its own open() — non-fatal here */ }
+
+    await flashFirmware(flashPort, {
+      onProgress: setBar,
+      onLog:      appendLog,
+      onStatus:   setStatus,
+      eraseNvs,
+    });
+
+    setBar(1, 1);
+    sourceBtn.textContent = '✓ Done';
+    appendLog('');
+    if (eraseNvs) {
+      appendLog('Full wipe complete. Board is factory-fresh — saved config has been erased.');
+    } else {
+      appendLog('Update complete. Your saved config was preserved.');
+    }
+    appendLog('Click Connect on the top bar to resume the config session.');
+  } catch (e) {
+    console.error(e);
+    setStatus('Flash failed.');
+    appendLog('');
+    appendLog('✖ ' + (e?.message || String(e)));
+    sourceBtn.textContent = defaultLabel;
+  } finally {
+    if (flashPort) { try { await flashPort.close(); } catch (_) {} }
+    btnFlash.disabled = false;
+    btnWipe.disabled  = false;
+    _fwFlashing  = false;
+    if (sourceBtn.textContent === label) sourceBtn.textContent = defaultLabel;
+  }
+}
+
+document.getElementById('btn-fw-flash').addEventListener('click', e => {
+  runFirmwareFlash({
+    eraseNvs:     false,
+    sourceBtn:    e.currentTarget,
+    label:        'Updating…',
+    defaultLabel: '⬆ Update Firmware',
+  });
+});
+
+document.getElementById('btn-fw-wipe').addEventListener('click', e => {
+  // Destructive — confirm before proceeding. confirm() is intentional: it
+  // blocks the user gesture only briefly and keeps the call inside the
+  // user-activation window so navigator.serial.requestPort() still works.
+  const ok = window.confirm(
+    'Full Wipe & Flash will ERASE all saved settings on the board (NVS) ' +
+    'and write a factory-fresh firmware image.\n\n' +
+    'Continue?'
+  );
+  if (!ok) return;
+  runFirmwareFlash({
+    eraseNvs:     true,
+    sourceBtn:    e.currentTarget,
+    label:        'Wiping…',
+    defaultLabel: '⚠ Full Wipe & Flash',
+  });
 });
 
 // Monitor stays on for the life of the connection — stopping it would

@@ -46,6 +46,7 @@
 #include "sbus_reader.h"
 #include "rc_config.h"
 #include "wcb_config.h"
+#include "fw_version.h"     // FW_VERSION_BASE / FW_VERSION_DTG / FW_VERSION
 
 // =============================================================================
 //  WCB HW 3.2 — Pin Definitions
@@ -1154,7 +1155,11 @@ void handleSerialInput() {
           // A fresh page connect pings first — clear any stale calibration
           // mute left behind by a previously crashed/closed calibration page.
           calibrationActive = false;
-          Serial.println("{\"type\":\"PONG\"}");
+          // Report firmware version so the GUI can display it (footer +
+          // Firmware tab "currently on board").
+          Serial.print("{\"type\":\"PONG\",\"version\":\"");
+          Serial.print(FW_VERSION);
+          Serial.println("\"}");
 
         } else if (strcmp(type,"GET_CONFIG")==0) {
           Serial.print("{\"type\":\"CONFIG\",\"data\":");
@@ -1406,7 +1411,9 @@ void setup() {
   serialInputBuf.reserve(256);
 
   setStatusLed(C_BLUE, 10);
-  Serial.println("[RC-Controller] Setup complete.");
+  Serial.print  ("[RC-Controller] Firmware ");
+  Serial.print  (FW_VERSION);
+  Serial.println(" — setup complete.");
   Serial.println("  Connect config_tool/index.html via Web Serial for configuration.");
   Serial.println("  CLI: #L01=info  #L09=SBUS dump  #L10=live  #L11=WCB status  #L12=RC state");
   Serial.println("  CLI: #L20=HCR S3 test  #L21=HCR S4 test  (direct, bypasses config+mapping)");

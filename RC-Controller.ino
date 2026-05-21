@@ -40,7 +40,7 @@
 #include <Preferences.h>
 #include <SoftwareSerial.h>
 #include <Adafruit_NeoPixel.h>
-#include <WCBClient.h>
+#include <WCB_Client.h>   // header in greghulette/WCBClient is WCB_Client.h
 #include <WCBStream.h>
 #include <hcr.h>
 #include "sbus_reader.h"

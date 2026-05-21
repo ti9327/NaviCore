@@ -61,7 +61,17 @@ The Config → Firmware tab offers two buttons:
 
 ## How to update the binaries
 
-Two options — pick whichever fits your workflow that day.
+**Default: GitHub Actions does it automatically.**  Every push to any
+branch triggers `.github/workflows/build-firmware.yml`, which compiles
+`RC-Controller.ino` for ESP32-S3 with the `min_spiffs` partition scheme,
+reads `FW_VERSION_BASE` + `FW_VERSION_DTG` out of `fw_version.h`, and
+commits the three resulting bins back to `firmware/` (overwriting older
+versioned files) under an auto-commit tagged `[skip ci]`.  Once that
+commit lands on `main`, the Config → Firmware tab can flash any
+connected board.
+
+The two manual options below remain available for offline work or for
+producing a one-off bin without going through CI.
 
 ### Option A — Arduino IDE (zero scripting)
 
@@ -84,21 +94,28 @@ Two options — pick whichever fits your workflow that day.
    looks at suffixes, so it always picks one of each.)
 7. Commit to `main`. The Config → Firmware tab will pick them up automatically.
 
-### Option B — `tools/build-firmware.ps1` (one command)
+### Option B — `tools/build-firmware.ps1` (Windows) or `build-firmware.sh` (Linux/macOS/WSL)
 
-Wraps `arduino-cli` so steps 2–6 above happen in one go.
+Wraps `arduino-cli` so steps 2–6 above happen in one command.  Same
+logic the CI workflow uses, just running locally.
 
 ```powershell
-# from the repo root, with the WCB v3.2 plugged in (or not — it just compiles):
+# Windows:
 pwsh tools/build-firmware.ps1
 ```
+```bash
+# Linux / macOS / WSL:
+tools/build-firmware.sh
+```
 
-The script compiles with the right FQBN + partition scheme, copies the three
-outputs into `firmware/` with a DTG-stamped prefix, and prints the result.
-You still commit + push manually (no auto-CI on this repo).
+Both read `FW_VERSION_BASE` + `FW_VERSION_DTG` from `fw_version.h`,
+compile with the right FQBN + partition scheme, prune older bins, and
+drop the new ones into `firmware/` with the matching version prefix.
+You commit + push manually after a local build.
 
-Prereqs: `arduino-cli` on `PATH`, and the `esp32` core installed
-(`arduino-cli core install esp32:esp32`).
+Prereqs: `arduino-cli` on `PATH`, the `esp32` core installed
+(`arduino-cli core install esp32:esp32@3.3.4`), and the same library set
+the CI workflow installs (see `.github/workflows/build-firmware.yml`).
 
 ## Notes
 

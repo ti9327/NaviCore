@@ -1,0 +1,81 @@
+# ─────────────────────────────────────────────────────────────────────────
+#  Build RC-Controller firmware (WCB v3.2 / ESP32-S3) and commit the
+#  resulting .bin files back to firmware/.  The browser-based flasher in
+#  config_tool/index.html (Config → Firmware tab) reads from firmware/ on
+#  main via the GitHub Contents API, so a fresh build is immediately
+#  available to any connected user the moment this workflow finishes.
+#
+#  Pattern mirrors the WCB Wizard's build.yml (greghulette/Wireless_
+#  Communication_Board-WCB) but trimmed to the single ESP32-S3 variant
+#  that RC-Controller targets.
+#
+#  Trigger: any push (except the workflow's own auto-commits, which carry
+#  "[skip ci]" in their message and are ignored by GitHub Actions).
+#  Manual re-run also available via workflow_dispatch.
+# ─────────────────────────────────────────────────────────────────────────
+name: Build RC-Controller firmware
+
+on:
+  push:
+    branches: ['**']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Arduino CLI
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | BINDIR=/usr/local/bin sh
+          arduino-cli version
+
+      - name: Install ESP32 platform
+        # Pinned to 3.3.4 to match the WCB repo's known-good baseline.
+        # Bump in lock-step with the WCB workflow when one of them moves.
+        run: |
+          arduino-cli core update-index \
+            --additional-urls https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+          arduino-cli core install esp32:esp32@3.3.4 \
+            --additional-urls https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+
+      - name: Install libraries
+        # Library list mirrors the #include set in RC-Controller.ino:
+        #   ArduinoJson, Adafruit NeoPixel, EspSoftwareSerial — Library Manager
+        #   PololuMaestro                                    — Library Manager
+        #   HumanCyborgRelationsAPI (hcr.h)                  — roy86 GitHub
+        #   WCBClient + WCBStream (single repo)              — greghulette GitHub
+        # WiFi and Preferences come bundled with the ESP32 core.
+        # Versions pinned where the WCB workflow pins; floats elsewhere
+        # so a fresh checkout always works.
+        run: |
+          arduino-cli config set library.enable_unsafe_install true
+          arduino-cli lib install "ArduinoJson@6.21.5"
+          arduino-cli lib install "EspSoftwareSerial@8.1.0"
+          arduino-cli lib install "Adafruit NeoPixel@1.12.5"
+          arduino-cli lib install "PololuMaestro"
+          arduino-cli lib install --git-url https://github.com/roy86/HumanCyborgRelationsAPI.git
+          arduino-cli lib install --git-url https://github.com/greghulette/WCBClient.git
+
+      - name: Build firmware
+        run: |
+          chmod +x tools/build-firmware.sh
+          tools/build-firmware.sh
+
+      - name: Commit binaries
+        # The "[skip ci]" tag is GitHub's standard token to prevent this
+        # auto-commit from re-triggering the workflow into an infinite loop.
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "Auto-build: update firmware binaries [skip ci]"
+          file_pattern: "firmware/*.bin"
+          commit_user_name:  "github-actions[bot]"
+          commit_user_email: "41898282+github-actions[bot]@users.noreply.github.com"

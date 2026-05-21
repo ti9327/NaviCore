@@ -37,18 +37,20 @@
   ::-webkit-scrollbar-corner { background: var(--bg); }
 
   /* ── Top bar ── */
-  /* Header stays SHORT always. When the sidebar is open the big logo lives in
-     a fixed brand-box that OVERHANGS this short bar (so the header is never
-     tall); the toolbar gets extra left padding to clear it. When collapsed,
-     the brand-box is hidden and the compact wordmark sits in the bar. */
+  /* Header stays SHORT always. The big logo lives in a FIXED-position
+     brand-box at the top-left corner — overhangs this short bar (so the
+     header isn't tall) AND overhangs the top of the sidebar's content
+     area. JS keeps the brand-box width and the topbar's left padding in
+     sync with the sidebar's current width so the box widens/narrows
+     with the sidebar; logo size never changes.  When the sidebar
+     collapses, the brand-box hides and the compact wordmark in the
+     top bar takes over. */
   .topbar { background: var(--surface); padding: 8px 20px; min-height: 56px; display: flex; align-items: center; gap: 16px; border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 100; }
-  body:not(.sidebar-collapsed) .topbar { padding-left: 332px; }
   .topbar h1 { font-size: 30px; color: var(--accent); flex: 1; }
 
-  /* Big logo: fixed, top-left, overhanging the short header into the sidebar's
-     (otherwise empty) top area. Opaque + sidebar-column width so sidebar
-     content scrolling underneath stays hidden. z-index above the sticky
-     topbar (100), below modals (200). */
+  /* Default width matches the default sidebar width (320). JS overrides
+     this on load + on every sidebar resize. Height is fixed — the logo
+     INSIDE keeps its size unchanged no matter what the box width is. */
   .brand-box { position: fixed; top: 0; left: 0; width: 320px; height: 210px;
                display: flex; align-items: center; justify-content: center;
                background: var(--surface); border-right: 1px solid var(--border);
@@ -60,7 +62,7 @@
                 display: none; }
   body.sidebar-collapsed .brand-box  { display: none; }
   body.sidebar-collapsed .brand-logo { display: block; }
-  /* Push open-sidebar content below the overhanging brand-box (210 − ~54). */
+  /* Push sidebar content below the overhanging brand-box (210 − ~54). */
   body:not(.sidebar-collapsed) #sidebar-panel { padding-top: 156px; }
   /* All toolbar controls grouped in a compact right-aligned block. margin-left
      auto pushes it to the right; it stays vertically centered next to the
@@ -137,14 +139,18 @@
      Compact label + horizontal level bar + numeric value. */
   .ch-grid { margin-top: 10px; display: flex; flex-direction: column; gap: 3px; }
   .ch-row {
-    display: grid; grid-template-columns: 30px 1fr 42px;
+    display: grid; grid-template-columns: 84px 1fr 42px;
     align-items: center; gap: 8px;
     padding: 2px 4px; border-radius: 3px;
     font-size: 11px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
     transition: background .12s;
   }
   .ch-row:hover { background: rgba(255,255,255,.04); }
-  .ch-row .ch-label { color: var(--muted); font-weight: 600; }
+  .ch-row .ch-label { color: var(--muted); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* Friendly control name next to the channel number — Matrix / SA / S1 /
+     LS / J1 / etc. Looked up via controlNameForChannel() every render. */
+  .ch-row .ch-ctrl { color: var(--text); font-weight: 500; margin-left: 4px; }
+  .ch-row.is-matrix .ch-ctrl { color: var(--accent); }
   .ch-row .ch-val   { text-align: right; color: var(--text); font-variant-numeric: tabular-nums; }
   .ch-bar-wrap {
     height: 14px; border-radius: 3px;
@@ -213,6 +219,12 @@
   .mode-tab.active-1 { background: var(--mode1); color: #fff; }
   .mode-tab.active-2 { background: var(--mode2); color: #fff; }
   .mode-tab.active-3 { background: var(--mode3); color: #000; }
+  /* Manual override is active — auto-follow paused until the physical
+     switch moves. Dashed inner outline cues that the tab is "pinned". */
+  .mode-tab-override {
+    outline: 2px dashed #fff;
+    outline-offset: -4px;
+  }
 
   /* ── Transmitter SVG area ── */
   .tx-wrap { max-width: 850px; margin: 0 auto; }
@@ -310,6 +322,98 @@
   .modal-title  { font-size: 16px; font-weight: 700; flex: 1; }
   .modal-body   { padding: 20px; }
   .modal-footer { padding: 12px 20px; border-top: 1px solid var(--border); display: flex; gap: 8px; justify-content: flex-end; }
+
+  /* ─── Configuration modal — tabbed layout with visual contrast ───────
+     The default .modal background (--surface = #161616) matches the page
+     bg exactly and blends in. The cfg-modal variant uses a slightly
+     lighter background plus stronger border + accent bottom-line in the
+     header so the modal feels "raised" off the page. */
+  .cfg-modal {
+    width: 900px; max-width: 96vw;
+    height: 80vh; max-height: 80vh;
+    display: flex; flex-direction: column;
+    background: #1a2030;             /* lighter than --bg (#161616) */
+    border: 1px solid #2f4170;
+    box-shadow: 0 12px 48px rgba(0,0,0,.6);
+    overflow: hidden;                /* let inner panes scroll, not modal */
+  }
+  .cfg-header {
+    background: linear-gradient(180deg, #1f2640 0%, #1a2030 100%);
+    border-bottom: 2px solid var(--accent);
+  }
+  .cfg-body {
+    flex: 1; min-height: 0;
+    display: flex; gap: 0;
+  }
+  /* Left vertical tab nav — darker than content for separation. */
+  .cfg-tabs {
+    width: 180px; flex-shrink: 0;
+    background: #14182a;
+    border-right: 1px solid #2a334a;
+    padding: 12px 0; overflow-y: auto;
+    display: flex; flex-direction: column; gap: 2px;
+  }
+  .cfg-tab {
+    appearance: none; background: transparent; border: none;
+    color: var(--muted); cursor: pointer; user-select: none;
+    padding: 9px 16px; text-align: left;
+    font-size: 13px; font-weight: 600; letter-spacing: 0.3px;
+    border-left: 3px solid transparent;
+    transition: background .15s, color .15s, border-color .15s;
+    font-family: inherit;
+  }
+  .cfg-tab:hover { background: rgba(255,255,255,.04); color: var(--text); }
+  .cfg-tab.active {
+    background: rgba(11,145,235,.12);
+    color: var(--text);
+    border-left-color: var(--accent);
+  }
+  /* Right content area — scrolls independently of the tabs. */
+  .cfg-content {
+    flex: 1; min-width: 0;
+    overflow-y: auto;
+    padding: 20px 24px;
+  }
+  .cfg-pane { display: none; }
+  .cfg-pane.active { display: block; }
+  .cfg-pane-title {
+    font-size: 18px; font-weight: 700;
+    color: var(--text); margin-bottom: 14px;
+    padding-bottom: 10px; border-bottom: 1px solid var(--border);
+    letter-spacing: 0.3px;
+  }
+  /* Section cards inside a pane stand out a touch from the cfg-content bg. */
+  .cfg-pane .sb-section {
+    background: rgba(255,255,255,.025);
+    border: 1px solid #232d44;
+    border-radius: 8px;
+    padding: 14px 16px;
+    margin-bottom: 14px;
+  }
+  .cfg-pane .sb-section:last-child { margin-bottom: 0; }
+  .cfg-pane .sb-section h3 {
+    margin-bottom: 10px;
+    color: var(--accent);
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+  }
+  /* Subtitle next to the section heading — keep it sentence-case + muted
+     so it reads as a label, not a continuation of the uppercase title. */
+  .cfg-pane .sb-section h3 small {
+    margin-left: 8px;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--muted);
+    text-transform: none;
+    letter-spacing: 0;
+  }
+  /* The Configuration modal-footer needs its own bg so it doesn't blend
+     with the new lighter modal bg. */
+  .cfg-modal .modal-footer {
+    background: #14182a;
+    border-top: 1px solid #2a334a;
+  }
 
   /* Tap tier cards */
   .tier-card  { background: var(--card); border-radius: 8px; padding: 14px; margin-bottom: 12px; }
@@ -578,14 +682,21 @@
 </head>
 <body>
 
-<!-- Big logo overhangs a SHORT header (so the header isn't tall). Shown only
-     when the sidebar is open; when collapsed it's hidden and the compact
-     wordmark in the top bar takes over (no floating square). -->
+<!-- Brand box — fixed-position overhang anchored top-left. Lives OUTSIDE
+     the sidebar so there's no gap above the logo, but JS keeps its width
+     in sync with the sidebar's current width (and the topbar's left
+     padding pushed right by the same amount) so the box widens/narrows
+     with the sidebar resize. Logo size never changes. Hidden via CSS
+     when the sidebar collapses; the topbar wordmark takes over then. -->
 <div class="brand-box">
   <img class="brand-logo-full" src="../Images/HyperCoreLogo2.png" alt="HyperCore">
 </div>
 
-<!-- ── Top bar — stays SHORT. Wordmark (collapsed only) + toolbar. ── -->
+<!-- ── Top bar — stays SHORT. Wordmark (collapsed only) + toolbar.
+     The big logo lives in the fixed brand-box above; JS keeps the
+     topbar's left padding in sync with the sidebar width so the
+     toolbar never slides under the brand-box. When the sidebar
+     collapses, the wordmark img below appears in the top bar instead. ── -->
 <div class="topbar">
   <img class="brand-logo" src="../Images/HyperCore-Wording.png" alt="HyperCore">
   <div class="topbar-tools">
@@ -628,11 +739,11 @@
     <!-- Live PWM -->
     <div class="sb-section">
       <h3 style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px">
-        <span>Live PWM Monitor</span>
+        <span>Live Channel Monitor</span>
         <span style="font-size:11px;color:var(--muted);font-weight:400">
-          Display:
+          Display Value:
           <label style="margin-left:4px"><input type="radio" name="unit-toggle" value="sbus" checked> SBUS</label>
-          <label style="margin-left:6px"><input type="radio" name="unit-toggle" value="us"> µs</label>
+          <label style="margin-left:6px"><input type="radio" name="unit-toggle" value="us"> PWM</label>
         </span>
       </h3>
       <div class="live-pwm-box">
@@ -686,7 +797,7 @@
       <!-- Editing Mode pill bar — always visible, centered above the
            transmitter. Replaces the boxed sidebar widget. -->
       <div class="mode-bar">
-        <span class="mode-bar-label">Editing</span>
+        <span class="mode-bar-label" title="Follows the bound mode-switch (SE by default). Click a tab to override — it stays pinned until you move the physical switch on the transmitter.">Mode</span>
         <div class="mode-tabs">
           <div class="mode-tab active-1" data-mode="1">SW Down<br><small>Mode 1</small></div>
           <div class="mode-tab"          data-mode="2">SW Mid<br><small>Mode 2</small></div>
@@ -1131,7 +1242,7 @@
              style="width:72px;height:72px;object-fit:contain;opacity:0.9">
         <div style="font-size:11px;color:var(--muted);font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;letter-spacing:0.3px">
           RC Controller Config Tool &nbsp;·&nbsp; UI Version <span id="footer-ui-version">1.0</span>
-          &nbsp;·&nbsp; <span id="footer-dtg">201553QMAY26</span>
+          &nbsp;·&nbsp; <span id="footer-dtg">211520QMAY26</span>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap">
@@ -1195,217 +1306,281 @@
 
 <!-- ── Hardware Setup Modal — configure-once wiring/credentials ── -->
 <div class="modal-overlay" id="hwsetup-modal">
-  <div class="modal" style="width:680px">
-    <div class="modal-header">
+  <div class="modal cfg-modal">
+    <div class="modal-header cfg-header">
       <span class="modal-title">Configuration</span>
       <button class="btn btn-ghost" onclick="closeHwSetup()" style="padding:4px 10px">✕</button>
     </div>
-    <div class="modal-body">
+    <div class="cfg-body">
+      <nav class="cfg-tabs" id="cfg-tabs">
+        <button class="cfg-tab active" type="button" data-tab="channels">Channels</button>
+        <button class="cfg-tab"        type="button" data-tab="wcb">WCB Network</button>
+        <button class="cfg-tab"        type="button" data-tab="hcr">HCR</button>
+        <button class="cfg-tab"        type="button" data-tab="mp3">MP3 Trigger</button>
+        <button class="cfg-tab"        type="button" data-tab="maestro">Maestro</button>
+        <button class="cfg-tab"        type="button" data-tab="serial">Aux Serial</button>
+        <button class="cfg-tab"        type="button" data-tab="general">General</button>
+      </nav>
+      <div class="cfg-content">
 
-      <!-- WCB Network credentials — shared with all WCBs on this ESP-NOW system -->
-      <div class="sb-section">
-        <h3 style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-          <span>WCB Network</span>
-          <span id="wcb-network-dirty"
-                style="display:none;font-size:9px;font-weight:700;background:var(--yellow);color:#000;padding:2px 8px;border-radius:10px;letter-spacing:0.5px">
-            REBOOT PENDING
-          </span>
-        </h3>
-        <div class="wcb-send-row">
-          <label>MAC Oct2:</label>
-          <input type="text" id="wcb-oct2" maxlength="2" placeholder="00"
-                 style="width:54px;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;text-transform:uppercase"
-                 oninput="onWcbHexInput('macOct2', this); updateWcbDirtyBadge()">
-          <small style="color:var(--muted);font-size:10px">hex</small>
-        </div>
-        <div class="wcb-send-row">
-          <label>MAC Oct3:</label>
-          <input type="text" id="wcb-oct3" maxlength="2" placeholder="00"
-                 style="width:54px;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;text-transform:uppercase"
-                 oninput="onWcbHexInput('macOct3', this); updateWcbDirtyBadge()">
-          <small style="color:var(--muted);font-size:10px">hex</small>
-        </div>
-        <div class="wcb-send-row">
-          <label>Password:</label>
-          <input type="text" id="wcb-password" maxlength="39" style="flex:1;min-width:0"
-                 oninput="config.wcbNetwork.password = this.value; updateWcbDirtyBadge()">
-        </div>
-        <div class="wcb-send-row">
-          <label>Quantity:</label>
-          <input type="number" id="wcb-quantity" min="1" max="20" style="width:60px"
-                 oninput="config.wcbNetwork.quantity = Math.max(1, Math.min(20, +this.value || 1)); updateWcbDirtyBadge()">
-        </div>
-        <div class="wcb-send-row">
-          <label>Device ID:</label>
-          <input type="number" id="wcb-deviceid" min="1" max="20" style="width:60px"
-                 oninput="config.wcbNetwork.deviceId = Math.max(1, Math.min(20, +this.value || 1)); updateWcbDirtyBadge()">
-          <small style="color:var(--muted);font-size:10px">1-19 or 20</small>
-        </div>
-        <div class="btn-row" style="margin-top:8px">
-          <button class="btn btn-warn" id="btn-wcb-reboot" type="button" disabled
-                  style="font-size:11px;padding:5px 12px"
-                  onclick="rebootBoard()">⟳ Reboot Board</button>
-        </div>
-        <div class="noconn" style="margin-top:6px">
-          ESP-NOW credentials. Must match every other WCB on this system. Query a known WCB with <b>?WCBM</b> / <b>?WCBP</b> / <b>?WCBQ</b> over its USB serial port.
-          After Save to Board, hit <b>Reboot Board</b> (or power-cycle) — the running WCB client only reads these at boot.
-        </div>
-      </div>
+        <!-- ════════════════════════════════════════════════════════════
+             CHANNELS tab — everything channel/matrix related lives here.
+             Matrix channel + mode-switch binding · button thresholds ·
+             switch table · slider/pot/joystick table · matrix debounce.
+             ════════════════════════════════════════════════════════════ -->
+        <section class="cfg-pane active" id="cfg-pane-channels">
+          <h2 class="cfg-pane-title">Channels</h2>
 
-      <!-- Global HCR destination — every HCR action shares this -->
-      <div class="sb-section">
-        <h3>HCR Destination</h3>
-        <div class="wcb-send-row">
-          <label>Via:</label>
-          <select id="hcr-transport" onchange="renderHcrDestFields()" style="font-size:12px">
-            <option value="serial">Serial</option>
-            <option value="wcb">WCB</option>
-          </select>
-        </div>
-        <div class="wcb-send-row" id="hcr-dest-fields"></div>
-        <div class="noconn" style="margin-top:4px">All HCR actions route through this destination. Set once, save to board.</div>
-      </div>
-
-      <!-- Global MP3 Trigger destination — every MP3 action shares this -->
-      <div class="sb-section">
-        <h3>MP3 Destination</h3>
-        <div class="wcb-send-row">
-          <label>Via:</label>
-          <select id="mp3-transport" onchange="renderMp3DestFields()" style="font-size:12px">
-            <option value="serial">Serial (local)</option>
-            <option value="wcb">WCB</option>
-          </select>
-        </div>
-        <div class="wcb-send-row" id="mp3-dest-fields"></div>
-        <div class="noconn" style="margin-top:4px">All MP3 Trigger actions route here. <b>Serial</b> = MP3 Trigger wired to this controller's S3/S4. <b>WCB</b> = wired to a WCB (configured there with <b>?MP3,S&lt;port&gt;</b>). Set once, save to board.</div>
-      </div>
-
-      <!-- Serial port baud — single source of truth for S3/S4 + Maestro bus -->
-      <div class="sb-section">
-        <h3>Serial Port Baud</h3>
-        <div class="wcb-send-row">
-          <label>Maestro (S2):</label>
-          <input type="number" id="aux-baud-maestro" min="1200" max="115200" step="100" value="115200"
-                 style="width:80px;font-size:12px"
-                 title="Local Maestro bus (Serial2 hardware UART). Must match each wired Maestro's Serial Settings (or its Detect Baud mode). Remote/Kyber Maestros are unaffected."
-                 oninput="config.auxBaud.maestro = Math.max(1200, Math.min(115200, parseInt(this.value,10)||115200))">
-        </div>
-        <div class="wcb-send-row">
-          <label>S3 baud:</label>
-          <input type="number" id="aux-baud-s3" min="1200" max="57600" step="100" value="9600"
-                 style="width:80px;font-size:12px"
-                 title="S3 line rate. 9600 for HCR; 38400 for an MP3 Trigger v2. Keep ≤57600 (bit-banged SoftwareSerial)."
-                 oninput="config.auxBaud.S3 = Math.max(1200, Math.min(57600, parseInt(this.value,10)||9600))">
-        </div>
-        <div class="wcb-send-row">
-          <label>S4 baud:</label>
-          <input type="number" id="aux-baud-s4" min="1200" max="57600" step="100" value="9600"
-                 style="width:80px;font-size:12px"
-                 title="S4 line rate. 9600 for HCR; 38400 for an MP3 Trigger v2. Keep ≤57600 (bit-banged SoftwareSerial)."
-                 oninput="config.auxBaud.S4 = Math.max(1200, Math.min(57600, parseInt(this.value,10)||9600))">
-        </div>
-        <div class="noconn" style="margin-top:4px"><b>Maestro (S2)</b> = local Pololu Maestro bus (up to 115200). <b>S3/S4</b> = aux ports for HCR-local / MP3-local / Serial actions (one port = one device = one baud, ≤57600). Reboot (or re-save) for changes to take effect.</div>
-      </div>
-
-      <!-- Button matrix tap detection tuning -->
-      <div class="sb-section">
-        <h3>Button Matrix</h3>
-        <div class="wcb-send-row">
-          <label>Debounce (frames):</label>
-          <input type="number" id="matrix-debounce-input" min="1" max="4" step="1" value="1"
-                 style="width:60px;font-size:12px"
-                 title="Consecutive in-band SBUS frames a button must hold before a press is accepted. 1 = fastest (safe for a digital SBUS source). Raise to 2-4 only for a noisy analog transmitter matrix."
-                 oninput="config.matrixDebounceFrames = Math.max(1, Math.min(4, parseInt(this.value,10)||1))">
-          <small style="color:var(--muted);font-size:10px">1 = fastest</small>
-        </div>
-        <div class="noconn" style="margin-top:4px">
-          Frames the matrix channel must hold a button before it registers. At ~111&nbsp;fps each frame ≈ 9&nbsp;ms.
-          <b>1</b> is correct for a digital SBUS source (no analog sweep to filter) and resolves taps ~2× faster.
-          Raise to 2–4 only if driving from a physical resistor-ladder transmitter matrix. Applies on Save — no reboot.
-        </div>
-      </div>
-
-      <!-- Maestro Locations — describes where each of the 8 logical Maestros is wired -->
-      <div class="sb-section" style="border-bottom:none">
-        <h3>Maestro Locations</h3>
-        <div id="maestro-locations" style="display:flex;flex-direction:column;gap:6px"></div>
-        <div class="noconn" style="margin-top:6px">
-          Defines where each logical Maestro lives. Buttons/knobs only pick
-          "Maestro 1-8" and don't care about the wiring. Every physical Maestro
-          must have a unique Pololu device # (0-127) set in Maestro Control Center —
-          the value here must match it so only the addressed Maestro responds.
-        </div>
-      </div>
-
-
-      <!-- ── Tap Window ──────────────────────────────────────────────────── -->
-      <div class="sb-section">
-        <h3>Tap Window</h3>
-        <div class="tapwin-row">
-          <input type="number" id="tapwin-input" min="100" max="2000" step="50" value="500">
-          <span style="color:var(--muted);font-size:12px">ms</span>
-        </div>
-        <div class="noconn" style="margin-top:4px">Time window for multi-tap detection</div>
-      </div>
-
-      <!-- ── WCB Send (Test) — bring-up / one-off command sender ──────── -->
-      <div class="sb-section">
-        <h3>WCB Send (Test)</h3>
-        <div class="wcb-send-row">
-          <label>WCB ID:</label>
-          <input type="number" id="qs-target" min="0" max="20" value="2" style="width:60px"
-                 title="1-20 = unicast to specific WCB · 0 = broadcast to all WCBs">
-          <small style="color:var(--muted);font-size:10px">(0 = broadcast)</small>
-        </div>
-        <div class="wcb-send-row">
-          <label>Cmd:</label>
-          <input type="text" id="qs-cmd" placeholder=":BL55,1" maxlength="63">
-        </div>
-        <div class="btn-row" style="margin-top:6px">
-          <button class="btn btn-blue" id="btn-qs-send" disabled style="font-size:11px;padding:5px 12px">Send</button>
-        </div>
-        <div class="noconn" style="margin-top:6px">Fires a one-off WCB command without saving. Maestro/Serial testing via terminal or Shift+Click on configured buttons.</div>
-      </div>
-
-      <!-- ── Channel Assignments + Thresholds (moved from sidebar) ──────── -->
-      <div class="sb-section">
-        <h3 style="cursor:pointer" id="chan-toggle">▶ Channel Assignments <small style="color:var(--muted)">(click to expand)</small></h3>
-        <div id="chan-panel" style="display:none; margin-top:8px; font-size:12px">
-          <div style="margin-bottom:6px">
-            <label>Button matrix channel:
-              <input type="number" id="cfg-matrix-ch" min="1" max="24" value="7" style="width:50px; margin-left:4px"
+          <!-- ── Matrix & Mode ─────────────────────────────────────────
+               Controller-wide setup: which SBUS channel carries the
+               button matrix, which switch selects modes, and how many
+               frames the matrix must hold before a press registers. -->
+          <div class="sb-section">
+            <h3>Matrix &amp; Mode</h3>
+            <div class="wcb-send-row">
+              <label>Matrix channel:</label>
+              <input type="number" id="cfg-matrix-ch" min="1" max="24" value="7" style="width:60px"
                      onchange="config.matrixChannel = +this.value;">
-            </label>
-            <small style="color:var(--muted); margin-left:6px">(multiplexed buttons live here — Kyber default is 7)</small>
+              <small style="color:var(--muted);font-size:10px">SBUS channel carrying the multiplexed buttons (Kyber default 7)</small>
+            </div>
+            <div class="wcb-send-row">
+              <label>Mode selector:</label>
+              <select id="bind-mode" onchange="config.funcBindings = config.funcBindings || {}; config.funcBindings.mode = +this.value;">
+                <option value="-1">— disabled (always Mode 1) —</option>
+                <option value="0">SA</option><option value="1">SB</option><option value="2">SC</option><option value="3">SD</option>
+                <option value="4" selected>SE</option><option value="5">SF</option><option value="6">SG</option><option value="7">SH</option>
+              </select>
+              <small style="color:var(--muted);font-size:10px">Switch whose position drives Mode 1 / 2 / 3</small>
+            </div>
+            <div class="wcb-send-row">
+              <label>Debounce:</label>
+              <input type="number" id="matrix-debounce-input" min="1" max="4" step="1" value="1"
+                     style="width:60px;font-size:12px"
+                     title="Consecutive in-band SBUS frames a button must hold before a press is accepted."
+                     oninput="config.matrixDebounceFrames = Math.max(1, Math.min(4, parseInt(this.value,10)||1))">
+              <small style="color:var(--muted);font-size:10px">frames a press must hold (1 = fastest, ~9 ms each)</small>
+            </div>
+            <div class="noconn" style="margin-top:6px">
+              <b>1</b> debounce frame is right for a digital SBUS source (no analog sweep to filter) and resolves taps ~2× faster.
+              Raise to 2–4 only if driving from a physical resistor-ladder transmitter matrix. Applies on Save — no reboot.
+            </div>
           </div>
-          <div style="display:grid; grid-template-columns:auto auto; gap:4px 10px; max-width:380px">
-            <label>Mode/Function switch:</label>
-            <select id="bind-mode" onchange="config.funcBindings = config.funcBindings || {}; config.funcBindings.mode = +this.value;">
-              <option value="-1">— disabled (always Mode 1) —</option>
-              <option value="0">SA</option><option value="1">SB</option><option value="2">SC</option><option value="3">SD</option>
-              <option value="4" selected>SE</option><option value="5">SF</option><option value="6">SG</option><option value="7">SH</option>
-            </select>
-          </div>
-          <div style="margin-top:6px; color:var(--muted); font-size:11px">
-            The mode selector reads a switch's position and toggles between
-            matrix Mode 1 / 2 / 3. Open a switch on the SVG to edit its
-            per-position actions.
-          </div>
-        </div>
 
-        <h3 style="cursor:pointer; margin-top:14px" id="thresh-toggle">▶ Channel Thresholds <small style="color:var(--muted)">(click to expand)</small></h3>
-        <div id="thresh-panel" style="display:none; margin-top:10px; overflow-x:auto">
-          <table class="thresh-table" id="thresh-table">
-            <thead><tr><th>Btn</th><th>Label</th><th>Value <span class="unit-label">(SBUS)</span></th></tr></thead>
-            <tbody></tbody>
-          </table>
-          <div style="margin-top:8px">
-            <button class="btn btn-ghost" id="btn-thresh-rebuild" style="font-size:11px">Rebuild defaults</button>
+          <!-- ── Buttons ─────────────────────────────────────────────────
+               Per-button SBUS trigger value on the matrix channel. -->
+          <div class="sb-section">
+            <h3>Buttons <small>per-button PWM trigger value</small></h3>
+            <div id="thresh-panel" style="margin-top:10px; overflow-x:auto">
+              <table class="thresh-table" id="thresh-table">
+                <thead><tr><th>Btn</th><th>Label</th><th>Value <span class="unit-label">(SBUS)</span></th></tr></thead>
+                <tbody></tbody>
+              </table>
+              <div style="margin-top:8px">
+                <button class="btn btn-ghost" id="btn-thresh-rebuild" style="font-size:11px">Rebuild defaults</button>
+              </div>
+            </div>
           </div>
-        </div>
-      </div>
 
-    </div>
+          <!-- ── Switches ────────────────────────────────────────────────
+               Per-switch SBUS channel + 2/3-position type. -->
+          <div class="sb-section">
+            <h3>Switches <small>SA-SJ channel &amp; type</small></h3>
+            <div id="switches-panel" style="margin-top:10px; overflow-x:auto">
+              <table class="thresh-table" id="switches-table">
+                <thead><tr><th>Switch</th><th>Type</th><th>Channel</th></tr></thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- ── Analog Axes ─────────────────────────────────────────────
+               Per-axis SBUS channel for every continuous source: sliders
+               (LS/RS), pots/knobs (S1/S2), and joystick axes (J1-J4). -->
+          <div class="sb-section">
+            <h3>Analog Axes <small>sliders LS/RS, pots S1/S2, sticks J1-J4</small></h3>
+            <div id="axes-panel" style="margin-top:10px; overflow-x:auto">
+              <table class="thresh-table" id="axes-table">
+                <thead><tr><th>Axis</th><th>Channel</th></tr></thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- ════════════════════════════════════════════════════════════
+             WCB Network tab — credentials + bring-up send-test.
+             ════════════════════════════════════════════════════════════ -->
+        <section class="cfg-pane" id="cfg-pane-wcb">
+          <h2 class="cfg-pane-title">WCB Network</h2>
+
+          <div class="sb-section">
+            <h3 style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+              <span>Network credentials</span>
+              <span id="wcb-network-dirty"
+                    style="display:none;font-size:9px;font-weight:700;background:var(--yellow);color:#000;padding:2px 8px;border-radius:10px;letter-spacing:0.5px">
+                REBOOT PENDING
+              </span>
+            </h3>
+            <div class="wcb-send-row">
+              <label>MAC Oct2:</label>
+              <input type="text" id="wcb-oct2" maxlength="2" placeholder="00"
+                     style="width:54px;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;text-transform:uppercase"
+                     oninput="onWcbHexInput('macOct2', this); updateWcbDirtyBadge()">
+              <small style="color:var(--muted);font-size:10px">hex</small>
+            </div>
+            <div class="wcb-send-row">
+              <label>MAC Oct3:</label>
+              <input type="text" id="wcb-oct3" maxlength="2" placeholder="00"
+                     style="width:54px;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;text-transform:uppercase"
+                     oninput="onWcbHexInput('macOct3', this); updateWcbDirtyBadge()">
+              <small style="color:var(--muted);font-size:10px">hex</small>
+            </div>
+            <div class="wcb-send-row">
+              <label>Password:</label>
+              <input type="text" id="wcb-password" maxlength="39" style="flex:1;min-width:0"
+                     oninput="config.wcbNetwork.password = this.value; updateWcbDirtyBadge()">
+            </div>
+            <div class="wcb-send-row">
+              <label>Quantity:</label>
+              <input type="number" id="wcb-quantity" min="1" max="20" style="width:60px"
+                     oninput="config.wcbNetwork.quantity = Math.max(1, Math.min(20, +this.value || 1)); updateWcbDirtyBadge()">
+            </div>
+            <div class="wcb-send-row">
+              <label>Device ID:</label>
+              <input type="number" id="wcb-deviceid" min="1" max="20" style="width:60px"
+                     oninput="config.wcbNetwork.deviceId = Math.max(1, Math.min(20, +this.value || 1)); updateWcbDirtyBadge()">
+              <small style="color:var(--muted);font-size:10px">1-19 or 20</small>
+            </div>
+            <div class="btn-row" style="margin-top:8px">
+              <button class="btn btn-warn" id="btn-wcb-reboot" type="button" disabled
+                      style="font-size:11px;padding:5px 12px"
+                      onclick="rebootBoard()">⟳ Reboot Board</button>
+            </div>
+            <div class="noconn" style="margin-top:6px">
+              ESP-NOW credentials. Must match every other WCB on this system. Query a known WCB with <b>?WCBM</b> / <b>?WCBP</b> / <b>?WCBQ</b> over its USB serial port.
+              After Save to Board, hit <b>Reboot Board</b> (or power-cycle) — the running WCB client only reads these at boot.
+            </div>
+          </div>
+
+          <div class="sb-section">
+            <h3>WCB Send (Test)</h3>
+            <div class="wcb-send-row">
+              <label>WCB ID:</label>
+              <input type="number" id="qs-target" min="0" max="20" value="2" style="width:60px"
+                     title="1-20 = unicast to specific WCB · 0 = broadcast to all WCBs">
+              <small style="color:var(--muted);font-size:10px">(0 = broadcast)</small>
+            </div>
+            <div class="wcb-send-row">
+              <label>Cmd:</label>
+              <input type="text" id="qs-cmd" placeholder=":BL55,1" maxlength="63">
+            </div>
+            <div class="btn-row" style="margin-top:6px">
+              <button class="btn btn-blue" id="btn-qs-send" disabled style="font-size:11px;padding:5px 12px">Send</button>
+            </div>
+            <div class="noconn" style="margin-top:6px">Fires a one-off WCB command without saving. Maestro/Serial testing via terminal or Shift+Click on configured buttons.</div>
+          </div>
+        </section>
+
+        <!-- ════════════════════════════════════════════════════════════
+             HCR tab — global HCR destination (every HCR action shares).
+             ════════════════════════════════════════════════════════════ -->
+        <section class="cfg-pane" id="cfg-pane-hcr">
+          <h2 class="cfg-pane-title">HCR Destination</h2>
+          <div class="sb-section">
+            <div class="wcb-send-row">
+              <label>Via:</label>
+              <select id="hcr-transport" onchange="renderHcrDestFields()" style="font-size:12px">
+                <option value="serial">Serial</option>
+                <option value="wcb">WCB</option>
+              </select>
+            </div>
+            <div class="wcb-send-row" id="hcr-dest-fields"></div>
+            <div class="noconn" style="margin-top:4px">All HCR actions route through this destination. Set once, save to board.</div>
+          </div>
+        </section>
+
+        <!-- ════════════════════════════════════════════════════════════
+             MP3 Trigger tab — global MP3 destination.
+             ════════════════════════════════════════════════════════════ -->
+        <section class="cfg-pane" id="cfg-pane-mp3">
+          <h2 class="cfg-pane-title">MP3 Trigger Destination</h2>
+          <div class="sb-section">
+            <div class="wcb-send-row">
+              <label>Via:</label>
+              <select id="mp3-transport" onchange="renderMp3DestFields()" style="font-size:12px">
+                <option value="serial">Serial (local)</option>
+                <option value="wcb">WCB</option>
+              </select>
+            </div>
+            <div class="wcb-send-row" id="mp3-dest-fields"></div>
+            <div class="noconn" style="margin-top:4px">All MP3 Trigger actions route here. <b>Serial</b> = MP3 Trigger wired to this controller's S3/S4. <b>WCB</b> = wired to a WCB (configured there with <b>?MP3,S&lt;port&gt;</b>). Set once, save to board.</div>
+          </div>
+        </section>
+
+        <!-- ════════════════════════════════════════════════════════════
+             Maestro tab — physical wiring map for the 8 logical Maestros.
+             ════════════════════════════════════════════════════════════ -->
+        <section class="cfg-pane" id="cfg-pane-maestro">
+          <h2 class="cfg-pane-title">Maestro Locations</h2>
+          <div class="sb-section" style="border-bottom:none">
+            <div id="maestro-locations" style="display:flex;flex-direction:column;gap:6px"></div>
+            <div class="noconn" style="margin-top:6px">
+              Defines where each logical Maestro lives. Buttons/knobs only pick
+              "Maestro 1-8" and don't care about the wiring. Every physical Maestro
+              must have a unique Pololu device # (0-127) set in Maestro Control Center —
+              the value here must match it so only the addressed Maestro responds.
+            </div>
+          </div>
+        </section>
+
+        <!-- ════════════════════════════════════════════════════════════
+             Aux Serial tab — S2 (Maestro) + S3/S4 baud rates.
+             ════════════════════════════════════════════════════════════ -->
+        <section class="cfg-pane" id="cfg-pane-serial">
+          <h2 class="cfg-pane-title">Aux Serial Baud</h2>
+          <div class="sb-section">
+            <div class="wcb-send-row">
+              <label>Maestro (S2):</label>
+              <input type="number" id="aux-baud-maestro" min="1200" max="115200" step="100" value="115200"
+                     style="width:80px;font-size:12px"
+                     title="Local Maestro bus (Serial2 hardware UART). Must match each wired Maestro's Serial Settings (or its Detect Baud mode). Remote/Kyber Maestros are unaffected."
+                     oninput="config.auxBaud.maestro = Math.max(1200, Math.min(115200, parseInt(this.value,10)||115200))">
+            </div>
+            <div class="wcb-send-row">
+              <label>S3 baud:</label>
+              <input type="number" id="aux-baud-s3" min="1200" max="57600" step="100" value="9600"
+                     style="width:80px;font-size:12px"
+                     title="S3 line rate. 9600 for HCR; 38400 for an MP3 Trigger v2. Keep ≤57600 (bit-banged SoftwareSerial)."
+                     oninput="config.auxBaud.S3 = Math.max(1200, Math.min(57600, parseInt(this.value,10)||9600))">
+            </div>
+            <div class="wcb-send-row">
+              <label>S4 baud:</label>
+              <input type="number" id="aux-baud-s4" min="1200" max="57600" step="100" value="9600"
+                     style="width:80px;font-size:12px"
+                     title="S4 line rate. 9600 for HCR; 38400 for an MP3 Trigger v2. Keep ≤57600 (bit-banged SoftwareSerial)."
+                     oninput="config.auxBaud.S4 = Math.max(1200, Math.min(57600, parseInt(this.value,10)||9600))">
+            </div>
+            <div class="noconn" style="margin-top:4px"><b>Maestro (S2)</b> = local Pololu Maestro bus (up to 115200). <b>S3/S4</b> = aux ports for HCR-local / MP3-local / Serial actions (one port = one device = one baud, ≤57600). Reboot (or re-save) for changes to take effect.</div>
+          </div>
+        </section>
+
+        <!-- ════════════════════════════════════════════════════════════
+             General tab — misc global settings (tap window, future stuff).
+             ════════════════════════════════════════════════════════════ -->
+        <section class="cfg-pane" id="cfg-pane-general">
+          <h2 class="cfg-pane-title">General</h2>
+          <div class="sb-section">
+            <h3>Tap Window</h3>
+            <div class="tapwin-row">
+              <input type="number" id="tapwin-input" min="100" max="2000" step="50" value="500">
+              <span style="color:var(--muted);font-size:12px">ms</span>
+            </div>
+            <div class="noconn" style="margin-top:4px">Time window for multi-tap detection</div>
+          </div>
+        </section>
+
+      </div><!-- /cfg-content -->
+    </div><!-- /cfg-body -->
     <div class="modal-footer">
       <button class="btn btn-ghost" id="btn-calibrate" type="button">🎯 Calibrate RC</button>
       <button class="btn btn-warn" id="btn-defaults" disabled
@@ -1495,7 +1670,10 @@ let terminalShowTimestamps = localStorage.getItem('rcTerminalTimestamps') === '1
 
 // ────────────────────────────────────────────────────────────────────────────
 // Unit display — internal storage is always raw SBUS (172-1811 nominal range).
-// The toggle switches the DISPLAY between SBUS and PWM µs (988-2012 nominal).
+// The toggle switches the DISPLAY between SBUS and PWM (the traditional µs
+// pulse-width equivalents, 988-2012 nominal). The internal key for the µs
+// mode stays 'us' so existing localStorage preferences keep working — only
+// the user-facing label is "PWM".
 // ────────────────────────────────────────────────────────────────────────────
 const SBUS_CENTER = 992;
 const US_CENTER   = 1500;
@@ -1512,10 +1690,10 @@ const parseVal = (raw)  => {
            ? Math.round(SBUS_CENTER + (n - US_CENTER) * US_TO_SBUS)
            : n;
 };
-const unitLbl = () => displayUnit === 'us' ? 'µs' : 'SBUS';
+const unitLbl = () => displayUnit === 'us' ? 'PWM' : 'SBUS';
 const altLbl  = (sbus) => displayUnit === 'us'
                             ? `${sbus} SBUS`
-                            : `${Math.round(US_CENTER + (sbus - SBUS_CENTER) * SBUS_TO_US)} µs`;
+                            : `${Math.round(US_CENTER + (sbus - SBUS_CENTER) * SBUS_TO_US)} PWM`;
 
 // ── RC-specific lookup tables ────────────────────────────────────────────
 // Knob/joystick/slider functions — parallel choices. A given source does
@@ -2071,6 +2249,39 @@ function initTerminal() {
   const sidebarPanel = document.getElementById('sidebar-panel');
   const terminalPanel = document.getElementById('terminal-panel');
 
+  // ── Brand-box width tracking ─────────────────────────────────────────
+  // The brand-box lives OUTSIDE the sidebar (fixed-position, top-left)
+  // so the logo never has empty space above it. But we still want the
+  // box to widen/narrow with the sidebar so the right edges line up.
+  // This sync keeps:
+  //   • .brand-box width  = sidebar width
+  //   • .topbar padding-L = sidebar width + small gap (so the toolbar
+  //     doesn't slide under the fixed brand-box)
+  // Logo size never changes; CSS height stays fixed at 210px.
+  const brandBox = document.querySelector('.brand-box');
+  const topbarEl = document.querySelector('.topbar');
+  function syncBrandBoxToSidebar() {
+    if (!sidebarPanel || !brandBox || !topbarEl) return;
+    const collapsed = document.body.classList.contains('sidebar-collapsed');
+    if (collapsed) {
+      // brand-box is display:none in this state — clear inline width
+      // so the next expand starts from the CSS default. Topbar reverts
+      // to its natural padding (no left offset needed).
+      brandBox.style.width = '';
+      topbarEl.style.paddingLeft = '';
+      return;
+    }
+    const w = sidebarPanel.offsetWidth;
+    brandBox.style.width = w + 'px';
+    topbarEl.style.paddingLeft = (w + 12) + 'px';
+  }
+  if (sidebarPanel && 'ResizeObserver' in window) {
+    new ResizeObserver(syncBrandBoxToSidebar).observe(sidebarPanel);
+  }
+  window.addEventListener('resize', syncBrandBoxToSidebar);
+  // First paint — run after layout settles.
+  requestAnimationFrame(syncBrandBoxToSidebar);
+
   // Drawer-style open/close — closed = fully hidden (no bottom strip).
   function setTerminalOpen(open) {
     if (!terminalPanel) return;
@@ -2136,6 +2347,8 @@ function initTerminal() {
       sidebarToggle.textContent = collapsed ? '▸' : '▾';
       // Swap brand: full logo in the open sidebar ↔ wordmark in the top bar.
       document.body.classList.toggle('sidebar-collapsed', collapsed);
+      // Re-sync brand-box width / topbar padding for the new state.
+      syncBrandBoxToSidebar();
     });
   }
   // In-panel ▼ Close button → hide the drawer.
@@ -2206,6 +2419,11 @@ function handleBoardMessage(line) {
         updateCalibrationLive(msg);
       }
       updatePWMDisplay(matrixVal, modeVal, msg.btn, msg.mode);
+      // Follow the live mode-switch (default SE), with manual-override
+      // support — clicking a tab pins it until the physical switch
+      // position moves on the transmitter, at which point auto-follow
+      // resumes. See applyLiveMode + _modeOverride / _lastHwMode.
+      if (msg.mode) applyLiveMode(msg.mode);
       // Live channel bar grid + on-SVG glow + animated transmitter
       // controls (switch levers rotate, knob indicators rotate, slider
       // handles slide, gimbal caps translate) — all driven from the
@@ -2308,6 +2526,10 @@ function applyConfig(data) {
   updatePWMTooltips();
   renderSwitchHighlights();
   renderKnobHighlights();
+  // Keep the bulk Config-modal tables in sync with the loaded config so
+  // they reflect the saved channels/positions when first opened.
+  renderSwitchesTable();
+  renderAxesTable();
 }
 
 function applyBindingsUI() {
@@ -2775,9 +2997,37 @@ function markActiveChannels(channels) {
   });
 }
 
+// Friendly control name for a given SBUS channel — "Matrix", "SA", "S1",
+// "LS", "J1", etc. Falls back to defaults per-field so stale configs
+// (channel:0 entries) still resolve to their default channel. Returns
+// null when nothing is mapped to that channel.
+function controlNameForChannel(ch) {
+  if (!ch) return null;
+  const matrixCh = (config.matrixChannel | 0) || 7;
+  if (ch === matrixCh) return 'Matrix';
+  const swList = ['SA','SB','SC','SD','SE','SF','SG','SH','SI','SJ'];
+  for (const name of swList) {
+    const cfgEntry = (config.switches && config.switches[name]) || {};
+    const dflt     = (typeof switchDefaults !== 'undefined' && switchDefaults[name]) || {};
+    const c = (+cfgEntry.channel | 0) || (+dflt.channel | 0);
+    if (c === ch) return name;
+  }
+  const knList = ['S1','S2','LS','RS','J1','J2','J3','J4'];
+  for (const name of knList) {
+    const cfgEntry = (config.knobs && config.knobs[name]) || {};
+    const dflt     = (typeof knobDefaults !== 'undefined' && knobDefaults[name]) || {};
+    const c = (+cfgEntry.channel | 0) || (+dflt.channel | 0);
+    if (c === ch) return name;
+  }
+  return null;
+}
+
 // ── All-channels live bar grid ───────────────────────────────────────────
 // One horizontal level bar per SBUS channel. Bar width = normalized value
 // across the nominal SBUS range (172..1811). Matrix channel highlighted.
+// Each row shows "CH<n> <ctrl>" where <ctrl> is the friendly control name
+// (Matrix / SA / S1 / LS / J1 / …) so the user can see at a glance which
+// hardware control is being watched.
 let _channelsBuilt = 0;   // number of rows currently in the DOM
 let _lastChGridDraw = 0;  // render throttle timestamp
 
@@ -2795,8 +3045,10 @@ function updateChannelsGrid(channels) {
     const row = document.createElement('div');
     row.className = 'ch-row' + (isMatrix ? ' is-matrix' : '');
     row.dataset.ch = i + 1;
+    // .ch-ctrl is populated per-frame so reassigning a control's channel
+    // shows up live (no need to rebuild the row).
     row.innerHTML =
-      `<span class="ch-label">CH${i + 1}</span>` +
+      `<span class="ch-label">CH${i + 1}<span class="ch-ctrl"></span></span>` +
       `<div class="ch-bar-wrap"><div class="ch-bar"></div></div>` +
       `<span class="ch-val">—</span>`;
     grid.appendChild(row);
@@ -2818,6 +3070,14 @@ function updateChannelsGrid(channels) {
     const norm = Math.max(0, Math.min(1, (v - lo) / (hi - lo)));
     row.querySelector('.ch-bar').style.width = (norm * 100).toFixed(1) + '%';
     row.querySelector('.ch-val').textContent = fmtVal(v);
+    // Update the control-name suffix every tick so reassignments (saved
+    // via the SVG modals or Config tables) show up without a reload.
+    const ctrlEl = row.querySelector('.ch-ctrl');
+    if (ctrlEl) {
+      const name = controlNameForChannel(i + 1);
+      const next = name ? ` ${name}` : '';
+      if (ctrlEl.textContent !== next) ctrlEl.textContent = next;
+    }
   }
 }
 
@@ -2873,6 +3133,83 @@ function renderThresholds() {
       <td><input type="number" value="${fmtVal(center)}" style="width:65px" title="min ${fmtVal(t.minPwm)} / max ${fmtVal(t.maxPwm)}"
                  onchange="(function(v){ config.thresholds[${i}].minPwm=v-10; config.thresholds[${i}].maxPwm=v+10; renderThresholds(); updatePWMTooltips(); })(parseVal(this.value))"></td>`;
     tbody.appendChild(row);
+  });
+}
+
+// ── Bulk Switches table (Config modal) ───────────────────────────────────
+// Mirrors what the SVG-click Switch modal exposes per switch — channel
+// and 2/3-position type. Writes back to config.switches[name] and
+// re-renders the SVG highlights so both views stay in sync.
+function renderSwitchesTable() {
+  const tbody = document.querySelector('#switches-table tbody');
+  if (!tbody) return;
+  tbody.innerHTML = '';
+  if (!config.switches) config.switches = {};
+  ['SA','SB','SC','SD','SE','SF','SG','SH','SI','SJ'].forEach(name => {
+    const cur = config.switches[name] || {};
+    const dflt = switchDefaults[name] || { channel: 0, positions: 3 };
+    const ch   = (cur.channel  | 0) || dflt.channel;
+    const pos  = (cur.positions| 0) || dflt.positions;
+    const row = document.createElement('tr');
+    row.innerHTML = `
+      <td><b>${name}</b></td>
+      <td>
+        <select style="width:130px" data-sw="${name}" data-field="positions">
+          <option value="2"${pos===2?' selected':''}>2 (Down / Up)</option>
+          <option value="3"${pos===3?' selected':''}>3 (Down / Mid / Up)</option>
+        </select>
+      </td>
+      <td><input type="number" min="1" max="24" value="${ch}" style="width:60px"
+                 data-sw="${name}" data-field="channel"></td>`;
+    tbody.appendChild(row);
+  });
+  // Wire change handlers — single onchange/oninput pattern via delegation.
+  tbody.querySelectorAll('[data-sw]').forEach(el => {
+    el.addEventListener('change', () => {
+      const name  = el.dataset.sw;
+      const field = el.dataset.field;
+      const v     = +el.value | 0;
+      if (!config.switches[name]) {
+        const dflt = switchDefaults[name] || {};
+        config.switches[name] = { channel: dflt.channel || 0, positions: dflt.positions || 3, p0:[], p1:[], p2:[] };
+      }
+      config.switches[name][field] = v;
+      if (typeof renderSwitchHighlights === 'function') renderSwitchHighlights();
+    });
+  });
+}
+
+// ── Bulk Sliders/Pots/Joysticks table (Config modal) ─────────────────────
+// One row per knob-like source. Channel only (no positions/function — those
+// stay in the click modal because they're per-source action wiring).
+function renderAxesTable() {
+  const tbody = document.querySelector('#axes-table tbody');
+  if (!tbody) return;
+  tbody.innerHTML = '';
+  if (!config.knobs) config.knobs = {};
+  ['LS','RS','S1','S2','J1','J2','J3','J4'].forEach(name => {
+    const cur = config.knobs[name] || {};
+    const dflt = knobDefaults[name] || { channel: 0 };
+    const ch = (cur.channel | 0) || dflt.channel;
+    const friendly = (dflt.friendly || name).replace(/^[^—]+ — /, '');   // strip "S1 — " prefix
+    const row = document.createElement('tr');
+    row.innerHTML = `
+      <td><b>${name}</b>${friendly && friendly !== name ? `<small style="color:var(--muted);margin-left:6px">${escH(friendly)}</small>` : ''}</td>
+      <td><input type="number" min="1" max="24" value="${ch}" style="width:60px"
+                 data-knob="${name}"></td>`;
+    tbody.appendChild(row);
+  });
+  tbody.querySelectorAll('[data-knob]').forEach(el => {
+    el.addEventListener('change', () => {
+      const name = el.dataset.knob;
+      const v    = +el.value | 0;
+      if (!config.knobs[name]) {
+        const dflt = knobDefaults[name] || {};
+        config.knobs[name] = { channel: 0, function: 0, outputs: [], ...dflt };
+      }
+      config.knobs[name].channel = v;
+      if (typeof renderKnobHighlights === 'function') renderKnobHighlights();
+    });
   });
 }
 
@@ -2980,6 +3317,52 @@ function openModal(btn) {
 
   const container = document.getElementById('tiers-container');
   container.innerHTML = '';
+
+  // Button hardware card — parity with the switch/knob modals, which both
+  // expose their channel inline. For a matrix button the "hardware" bit
+  // unique to it is its PWM trigger value on the matrix channel. Edits
+  // here also update the bulk Buttons table in Config → Channels — both
+  // views read/write the same config.thresholds[] array.
+  const t = config.thresholds[btn - 1] || { minPwm: 0, maxPwm: 0 };
+  const center = Math.round((t.minPwm + t.maxPwm) / 2);
+  const matrixCh = config.matrixChannel || 7;
+  const hwCard = document.createElement('div');
+  hwCard.className = 'tier-card';
+  // The label uses the .unit-label class so applyUnitToggle() updates it
+  // alongside the bulk Buttons table when the user flips SBUS ↔ PWM.
+  hwCard.innerHTML = `
+    <div class="tier-title">Button hardware</div>
+    <div class="action-row">
+      <div class="field-group">
+        <label>Trigger value <span class="unit-label">(${unitLbl()})</span></label>
+        <input type="number" id="btn-pwm-center" min="0" max="2047" step="1"
+               value="${fmtVal(center)}" style="width:90px"
+               title="Per-button trigger value on the matrix channel. ±10 SBUS-count deadband around this center.">
+      </div>
+      <div class="field-group" style="flex:1;min-width:180px">
+        <label>&nbsp;</label>
+        <small style="color:var(--muted);font-size:11px;line-height:1.4">
+          Per-button trigger on matrix ch${matrixCh}. ±10 SBUS-count deadband.
+          Edits here mirror to Config → Channels → Buttons.
+        </small>
+      </div>
+    </div>
+  `;
+  container.appendChild(hwCard);
+  // Wire the input: on change, update the threshold and re-render the
+  // bulk table so both views stay in sync.
+  document.getElementById('btn-pwm-center').addEventListener('change', (e) => {
+    const v = parseVal(e.target.value);
+    if (!Number.isFinite(v)) return;
+    if (!config.thresholds[btn - 1]) {
+      config.thresholds[btn - 1] = { id: btn, label: btnLabels[btn] || '', minPwm: 0, maxPwm: 0 };
+    }
+    config.thresholds[btn - 1].minPwm = v - 10;
+    config.thresholds[btn - 1].maxPwm = v + 10;
+    renderThresholds();
+    updatePWMTooltips();
+  });
+
   for (let tier = 1; tier <= 3; tier++) {
     const acts = m['t' + tier] || [];
     container.appendChild(buildTierCard(tier, acts));
@@ -3750,6 +4133,7 @@ function saveKnobModal() {
   editingKnobDraft = null;
   closeModal();
   renderKnobHighlights();
+  renderAxesTable();   // keep the bulk Config-modal table in sync
 }
 
 function clearKnobModal() {
@@ -3758,6 +4142,7 @@ function clearKnobModal() {
   editingKnobDraft = null;
   closeModal();
   renderKnobHighlights();
+  renderAxesTable();
 }
 
 function renderKnobHighlights() {
@@ -3881,6 +4266,7 @@ function saveSwitchModal() {
   config.switches[editingSw] = out;
   closeModal();
   renderSwitchHighlights();
+  renderSwitchesTable();   // keep the bulk Config-modal table in sync
 }
 
 function clearSwitchModal() {
@@ -3888,6 +4274,7 @@ function clearSwitchModal() {
   delete config.switches[editingSw];
   closeModal();
   renderSwitchHighlights();
+  renderSwitchesTable();
 }
 
 function renderSwitchHighlights() {
@@ -3923,14 +4310,71 @@ document.getElementById('modal').addEventListener('click', e => {
 // ════════════════════════════════════════════════════════════════════════════
 //  Mode tabs
 // ════════════════════════════════════════════════════════════════════════════
+// setEditingMode is the single source of truth for which mode tab is
+// active. Idempotent — early-returns if the mode hasn't changed, to
+// avoid DOM thrash at the 10Hz monitor rate.
+function setEditingMode(mode) {
+  mode = +mode;
+  if (!(mode >= 1 && mode <= 3)) return;
+  if (mode === currentMode) return;
+  currentMode = mode;
+  document.querySelectorAll('.mode-tab').forEach(t => {
+    const isActive = (+t.dataset.mode === mode);
+    t.className = isActive ? `mode-tab active-${mode}` : 'mode-tab';
+    t.classList.toggle('mode-tab-override', isActive && _modeOverride !== null);
+  });
+  const lbl = document.getElementById('mode-label');
+  if (lbl) lbl.textContent = modeLabels[mode];
+  renderAssignmentList();
+  updateButtonHighlights();
+}
+
+// Live mode tracking with manual-override support.
+//   _lastHwMode    last mode value reported by the firmware (PWM_UPDATE)
+//   _modeOverride  user-selected mode that "pins" the tab until the
+//                  physical switch position on the transmitter changes,
+//                  at which point auto-follow resumes
+let _lastHwMode   = null;
+let _modeOverride = null;
+
+// Called from PWM_UPDATE every frame. Auto-follow the hardware mode,
+// but respect an active override until the user moves the physical
+// switch (i.e., until hwMode actually changes from what it was when the
+// override was set).
+function applyLiveMode(hwMode) {
+  hwMode = +hwMode;
+  if (!(hwMode >= 1 && hwMode <= 3)) return;
+  if (hwMode !== _lastHwMode) {
+    // Transmitter mode switch moved → drop any manual override and
+    // start following the hardware again.
+    _lastHwMode   = hwMode;
+    _modeOverride = null;
+    setEditingMode(hwMode);
+    // Re-evaluate the override styling on whichever tab is now active.
+    document.querySelectorAll('.mode-tab').forEach(t =>
+      t.classList.remove('mode-tab-override'));
+  } else if (_modeOverride === null) {
+    // No override active — passive auto-follow (no-op if unchanged).
+    setEditingMode(hwMode);
+  }
+  // Override active AND hw unchanged → leave the tab pinned where the
+  // user clicked it.
+}
+
+// Manual tab click → set an override that lasts until the transmitter
+// switch position moves. setEditingMode handles the active-class swap;
+// we also flag the active tab as "override" so CSS can style it.
 document.querySelectorAll('.mode-tab').forEach(tab => {
   tab.addEventListener('click', () => {
-    currentMode = +tab.dataset.mode;
-    document.querySelectorAll('.mode-tab').forEach(t => t.className = 'mode-tab');
-    tab.className = `mode-tab active-${currentMode}`;
-    document.getElementById('mode-label').textContent = modeLabels[currentMode];
-    renderAssignmentList();
-    updateButtonHighlights();
+    const mode = +tab.dataset.mode;
+    _modeOverride = mode;
+    setEditingMode(mode);
+    // setEditingMode early-returns if already at this mode, so flip the
+    // override styling explicitly here in case the mode didn't change.
+    document.querySelectorAll('.mode-tab').forEach(t => {
+      t.classList.toggle('mode-tab-override',
+                          +t.dataset.mode === mode && _modeOverride !== null);
+    });
   });
 });
 
@@ -3973,11 +4417,40 @@ function openHwSetup() {
   renderMaestroLocations();
   { const el = document.getElementById('matrix-debounce-input');
     if (el) el.value = config.matrixDebounceFrames ?? 1; }
+  // Channels-tab tables are always visible now (no expand) — render
+  // them eagerly on open so they're populated even pre-connect.
+  renderThresholds();
+  renderSwitchesTable();
+  renderAxesTable();
+  // Restore the last-active tab (or default to Channels).
+  const lastTab = localStorage.getItem('rcConfigLastTab') || 'channels';
+  setConfigTab(lastTab);
   document.getElementById('hwsetup-modal').classList.add('open');
 }
 function closeHwSetup() {
   document.getElementById('hwsetup-modal').classList.remove('open');
 }
+
+// Tabbed Config modal — single function flips the active tab + pane
+// and persists the choice in localStorage so reopening the modal lands
+// where the user was last working.
+function setConfigTab(name) {
+  const tabs  = document.querySelectorAll('#cfg-tabs .cfg-tab');
+  const panes = document.querySelectorAll('.cfg-content .cfg-pane');
+  let found = false;
+  tabs.forEach(t  => {
+    const on = t.dataset.tab === name;
+    t.classList.toggle('active', on);
+    if (on) found = true;
+  });
+  panes.forEach(p => p.classList.toggle('active', p.id === 'cfg-pane-' + name));
+  if (!found) setConfigTab('channels');   // fallback if stored name is stale
+  else try { localStorage.setItem('rcConfigLastTab', name); } catch {}
+}
+document.querySelectorAll('#cfg-tabs .cfg-tab').forEach(t => {
+  t.addEventListener('click', () => setConfigTab(t.dataset.tab));
+});
+
 document.getElementById('btn-hwsetup').addEventListener('click', openHwSetup);
 document.getElementById('hwsetup-modal').addEventListener('click', e => {
   if (e.target === document.getElementById('hwsetup-modal')) closeHwSetup();
@@ -4902,21 +5375,9 @@ function downloadCsv(text, filename) {
 // ════════════════════════════════════════════════════════════════════════════
 //  Threshold panel toggle
 // ════════════════════════════════════════════════════════════════════════════
-document.getElementById('thresh-toggle').addEventListener('click', () => {
-  const panel = document.getElementById('thresh-panel');
-  const open  = panel.style.display !== 'none';
-  panel.style.display = open ? 'none' : 'block';
-  document.getElementById('thresh-toggle').innerHTML =
-    (open ? '▶' : '▼') + ' Channel Thresholds <small style="color:var(--muted)">(click to ' + (open ? 'expand' : 'collapse') + ')</small>';
-});
-
-document.getElementById('chan-toggle').addEventListener('click', () => {
-  const panel = document.getElementById('chan-panel');
-  const open  = panel.style.display !== 'none';
-  panel.style.display = open ? 'none' : 'block';
-  document.getElementById('chan-toggle').innerHTML =
-    (open ? '▶' : '▼') + ' Channel Assignments <small style="color:var(--muted)">(click to ' + (open ? 'expand' : 'collapse') + ')</small>';
-});
+// (Buttons / Switches / Analog Axes tables are always visible inside the
+// Channels tab — no more collapse toggles. Initial population happens in
+// openHwSetup() + applyConfig().)
 
 document.getElementById('btn-thresh-rebuild').addEventListener('click', () => {
   config.thresholds = defaultThresholds();

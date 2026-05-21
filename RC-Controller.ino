@@ -269,10 +269,16 @@ int switchPrevPos[RC_NUM_SWITCHES];
 // =============================================================================
 //  Helpers
 // =============================================================================
+// Decode SBUS value (172..1811 for FrSky -100%..+100%) into a switch
+// position. 3-pos toggles cluster at ~172 / ~992 / ~1811, so the
+// midpoints between min↔mid and mid↔max are the right thresholds:
+//   (172+992)/2 = 582,  (992+1811)/2 = 1401.
+// (Earlier 340/680 thresholds were for a 0-1023 range and mis-decoded
+// the middle position as "up".)
 static inline int readSwitchPos(int sbusVal, uint8_t positions) {
   if (positions == 2) return (sbusVal > 900) ? 2 : 0;
-  if (sbusVal < 340)  return 0;
-  if (sbusVal > 680)  return 2;
+  if (sbusVal < 582)  return 0;
+  if (sbusVal > 1401) return 2;
   return 1;
 }
 
@@ -925,13 +931,15 @@ void processSbus() {
   lostFrameOld  = sbusRx.lostFrame;
   for (int i = 0; i < 24; i++) sbusValues[i] = sbusRx.channels[i];
 
-  // Mode selector
+  // Mode selector — same SBUS-cluster thresholds as readSwitchPos()
+  // (582/1401) so the bound mode switch decodes its three positions
+  // correctly. Earlier 340/680 incorrectly mapped middle (~992) → mode 3.
   int modeVal = readBoundSwitchSbus(rcConfig.funcBindings.modeSwitch);
   if (modeVal >= 0 && abs(modeVal - oldValueMode) > 5) {
     oldValueMode = modeVal;
-    if      (modeVal < 340) FunctionSwState = 1;
-    else if (modeVal < 680) FunctionSwState = 2;
-    else                    FunctionSwState = 3;
+    if      (modeVal < 582)  FunctionSwState = 1;
+    else if (modeVal < 1401) FunctionSwState = 2;
+    else                     FunctionSwState = 3;
   }
 
   // Button matrix — edge-detected with an asymmetric debounce (see

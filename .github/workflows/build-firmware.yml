@@ -65,18 +65,60 @@ jobs:
           arduino-cli lib install --git-url https://github.com/roy86/HumanCyborgRelationsAPI.git
           arduino-cli lib install --git-url https://github.com/greghulette/WCBClient.git
 
-          # Patch a case-sensitivity bug in upstream HCR API: hcr.h uses
-          # `#include <String.h>` (capital S) which resolves on Windows
-          # but not on Linux. The author meant <string.h> — Arduino.h
-          # higher in the file already provides the Arduino String class.
-          # WCB's CI doesn't trip on this because WCB.ino never includes
-          # hcr.h, but RC-Controller does. Sed it in place.
-          HCR_HDR="$HOME/Arduino/libraries/HumanCyborgRelations/src/hcr.h"
-          if [ -f "$HCR_HDR" ]; then
-            sed -i 's|#include <String\.h>|#include <string.h>|' "$HCR_HDR"
-            echo "Patched String.h → string.h in $HCR_HDR"
+          # ── Patch upstream HCR API for ESP32 core 3.3.4 + GCC 14 ─────────
+          # The HumanCyborgRelationsAPI library was written for older Arduino
+          # cores and stricter modern C++ exposes a handful of bugs. WCB's CI
+          # doesn't trip on these because WCB.ino never #includes <hcr.h>;
+          # RC-Controller does, so its .cpp gets compiled and surfaces them.
+          # Five surgical edits (all idempotent — re-running is a no-op):
+          #   1. hcr.h:  #include <String.h>   → <string.h>     (case)
+          #   2. hcr.cpp: _i2c->setWireTimeout(...) — comment out (not on ESP32 TwoWire)
+          #   3. hcr.cpp: (byte)_i2caddr        → (uint8_t)_i2caddr  (std::byte ambiguity)
+          #   4. hcr.cpp: byte ch = _i2c->read() → uint8_t ch         (std::byte ambiguity)
+          #   5. hcr.cpp: _i2c->write((cmd+"\n").c_str()) → _i2c->print(cmd+"\n")
+          #   6. hcr.cpp: wrap case 0x03 bodies in {} so var inits don't cross
+          #               to default: break; (jump-to-case-crosses-init)
+          HCR_DIR="$HOME/Arduino/libraries/HumanCyborgRelations/src"
+          if [ -d "$HCR_DIR" ]; then
+            python3 <<PYEOF
+          import pathlib, re
+          h = pathlib.Path("$HCR_DIR/hcr.h")
+          c = pathlib.Path("$HCR_DIR/hcr.cpp")
+
+          # 1. hcr.h — case-sensitive header lookup
+          if h.exists():
+              h.write_text(h.read_text().replace(
+                  '#include <String.h>',
+                  '#include <string.h>'))
+              print('patched hcr.h: <String.h> -> <string.h>')
+
+          if c.exists():
+              s = c.read_text()
+              # 2. setWireTimeout not on ESP32 TwoWire
+              s = s.replace(
+                  '_i2c->setWireTimeout(3000 /* us */, true /* reset_on_timeout */);',
+                  '/* setWireTimeout: AVR-only, not on ESP32 TwoWire */')
+              # 3+4. byte → uint8_t (std::byte ambiguity under C++17)
+              s = s.replace('(byte)_i2caddr',  '(uint8_t)_i2caddr')
+              s = s.replace('byte ch = _i2c->read();',
+                            'uint8_t ch = _i2c->read();')
+              # 5. write(const char*) overload doesn't exist on TwoWire; use print()
+              s = s.replace(
+                  '_i2c->write((command + "\\\\n").c_str());',
+                  '_i2c->print(command + "\\\\n");')
+              # 6. Wrap each "case 0x03:" body in { } so var declarations
+              # don't cross initialization to "default: break;". Two occurrences
+              # (transmit + receive), both with the same shape.
+              s = re.sub(
+                  r'(case 0x03:)([\\s\\S]*?break;\\n)(\\s*)(default: break;)',
+                  r'\\1 {\\2\\3}\\n\\3\\4',
+                  s)
+              c.write_text(s)
+              print('patched hcr.cpp:', len(s), 'bytes')
+          PYEOF
+            echo "HCR library patched"
           else
-            echo "WARN: $HCR_HDR not found — HCR install may have moved"
+            echo "WARN: $HCR_DIR not found — HCR install may have moved"
           fi
 
       - name: Build firmware

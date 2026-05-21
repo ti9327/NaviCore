@@ -65,6 +65,20 @@ jobs:
           arduino-cli lib install --git-url https://github.com/roy86/HumanCyborgRelationsAPI.git
           arduino-cli lib install --git-url https://github.com/greghulette/WCBClient.git
 
+          # Patch a case-sensitivity bug in upstream HCR API: hcr.h uses
+          # `#include <String.h>` (capital S) which resolves on Windows
+          # but not on Linux. The author meant <string.h> — Arduino.h
+          # higher in the file already provides the Arduino String class.
+          # WCB's CI doesn't trip on this because WCB.ino never includes
+          # hcr.h, but RC-Controller does. Sed it in place.
+          HCR_HDR="$HOME/Arduino/libraries/HumanCyborgRelations/src/hcr.h"
+          if [ -f "$HCR_HDR" ]; then
+            sed -i 's|#include <String\.h>|#include <string.h>|' "$HCR_HDR"
+            echo "Patched String.h → string.h in $HCR_HDR"
+          else
+            echo "WARN: $HCR_HDR not found — HCR install may have moved"
+          fi
+
       - name: Build firmware
         run: |
           chmod +x tools/build-firmware.sh

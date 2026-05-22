@@ -1033,14 +1033,16 @@
         <circle id="leftGimbalCap" cx="240" cy="485" r="15" fill="url(#cap-grad)" stroke="#1a1a1a"/>
         <circle id="leftGimbalDot" cx="240" cy="485" r="6"  fill="#0a0a0a"/>
 
-        <!-- Joystick axis pickers — left gimbal: J3 (Y/THR) above cap, J4 (X/RUD) left of cap -->
+        <!-- Joystick axis pickers — left gimbal: J3 (X/RUD) left of cap, J4 (Y/THR) above cap.
+             Position convention: above-cap = Y axis indicator, beside-cap = X axis indicator.
+             Matches right gimbal where J1 (X/AIL) sits beside cap and J2 (Y/ELE) above. -->
         <g class="knob-zone" data-knob="J3" onclick="openKnobModal('J3')">
-          <circle cx="240" cy="425" r="10" fill="#08101e" stroke="#1a2a4a"/>
-          <text x="240" y="429" text-anchor="middle" fill="#7acdf6" font-size="10" font-weight="700">J3</text>
+          <circle cx="180" cy="485" r="10" fill="#08101e" stroke="#1a2a4a"/>
+          <text x="180" y="489" text-anchor="middle" fill="#7acdf6" font-size="10" font-weight="700">J3</text>
         </g>
         <g class="knob-zone" data-knob="J4" onclick="openKnobModal('J4')">
-          <circle cx="180" cy="485" r="10" fill="#08101e" stroke="#1a2a4a"/>
-          <text x="180" y="489" text-anchor="middle" fill="#7acdf6" font-size="10" font-weight="700">J4</text>
+          <circle cx="240" cy="425" r="10" fill="#08101e" stroke="#1a2a4a"/>
+          <text x="240" y="429" text-anchor="middle" fill="#7acdf6" font-size="10" font-weight="700">J4</text>
         </g>
 
         <!-- Right gimbal -->
@@ -1242,7 +1244,7 @@
              style="width:72px;height:72px;object-fit:contain;opacity:0.9">
         <div style="font-size:11px;color:var(--muted);font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;letter-spacing:0.3px">
           RC Controller Config Tool &nbsp;·&nbsp; UI Version <span id="footer-ui-version">1.0</span>
-          &nbsp;·&nbsp; <span id="footer-dtg">221122QMAY26</span>
+          &nbsp;·&nbsp; <span id="footer-dtg">221138QMAY26</span>
           &nbsp;·&nbsp; FW <span id="footer-fw-version">—</span>
         </div>
       </div>
@@ -1789,8 +1791,8 @@ const knobDefaults = {
   RS: { channel: 19, function: 0, outputs: [], kind: 'slider',   friendly: 'RS slider' },
   J1: { channel: 1, function: 0, outputs: [], kind: 'joystick', friendly: 'J1 — R-stick X (AIL)' },
   J2: { channel: 2, function: 0, outputs: [], kind: 'joystick', friendly: 'J2 — R-stick Y (ELE)' },
-  J3: { channel: 3, function: 0, outputs: [], kind: 'joystick', friendly: 'J3 — L-stick Y (THR)' },
-  J4: { channel: 4, function: 0, outputs: [], kind: 'joystick', friendly: 'J4 — L-stick X (RUD)' },
+  J3: { channel: 4, function: 0, outputs: [], kind: 'joystick', friendly: 'J3 — L-stick X (RUD)' },
+  J4: { channel: 3, function: 0, outputs: [], kind: 'joystick', friendly: 'J4 — L-stick Y (THR)' },
 };
 
 // Friendly title for the modal header — picks the right noun for the source.

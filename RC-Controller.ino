@@ -1358,17 +1358,18 @@ void setup() {
   // / rcConfig.auxBaud). Nothing uses them before setup() finishes, so
   // deferring the open is safe.
 
-  // SBUS reader on Serial1 — RX = SBUS_RX_PIN, TX = SBUS_OUT_PIN.  Serial1's
-  // begin() inside SbusReader configures both directions at 100k 8E2 inverted
-  // (the SBUS line spec).  Setting the passthrough sink to &Serial1 itself
-  // routes every incoming byte right back out through the same UART's TX
-  // FIFO — no bit-banging, no SoftwareSerial, no Core 1 monopoly.  Downstream
-  // sees an identical byte-streaming SBUS waveform delayed by one byte time.
-  sbusRx.begin(&Serial1, SBUS_RX_PIN, SBUS_OUT_PIN);
-  sbusRx.setPassthroughSink(&Serial1);
+  // SBUS reader on Serial1 — RX = SBUS_RX_PIN, TX disabled (-1).
+  // The SBUS OUT passthrough is intentionally DISABLED here as a diagnostic:
+  // even after moving it from SoftwareSerial to a hardware-UART TX FIFO,
+  // the board still ran for ~a minute then panicked under sustained SBUS
+  // input.  Disabling the passthrough entirely tells us whether any SBUS-OUT
+  // write activity is involved or whether the crash is purely in the SBUS RX
+  // / dispatch path.  Re-enable by passing SBUS_OUT_PIN to begin() and
+  // pointing the sink at &Serial1 (see chat log 2026-05-22).
+  sbusRx.begin(&Serial1, SBUS_RX_PIN, /*txPin=*/-1);
+  // sbusRx.setPassthroughSink(&Serial1);   // intentionally not set — see above
   Serial.printf("[SBUS] IN  on Serial1 RX (GPIO%d)\n", SBUS_RX_PIN);
-  Serial.printf("[SBUS] OUT on Serial1 TX (GPIO%d, hardware UART) — byte-streaming passthrough\n",
-                SBUS_OUT_PIN);
+  Serial.println("[SBUS] OUT DISABLED (diagnostic — see source comment)");
 
   // RC Config: defaults then NVS overrides. Must run BEFORE constructing
   // WCB_Client so the network credentials come from rcConfig.wcbNetwork.

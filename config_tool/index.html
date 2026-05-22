@@ -1244,7 +1244,7 @@
              style="width:72px;height:72px;object-fit:contain;opacity:0.9">
         <div style="font-size:11px;color:var(--muted);font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;letter-spacing:0.3px">
           RC Controller Config Tool &nbsp;·&nbsp; UI Version <span id="footer-ui-version">1.0</span>
-          &nbsp;·&nbsp; <span id="footer-dtg">221223QMAY26</span>
+          &nbsp;·&nbsp; <span id="footer-dtg">221238QMAY26</span>
           &nbsp;·&nbsp; FW <span id="footer-fw-version">—</span>
         </div>
       </div>
@@ -3038,8 +3038,9 @@ function updateTransmitterAnimation(channels) {
   });
 
   // ── JOYSTICK GIMBALS — translate both cap circles around centre ──────
-  // Left gimbal centre (240, 485): X = J4, Y = J3
-  // Right gimbal centre (760, 485): X = J1, Y = J2
+  // Naming follows the xyxy convention: J1/J3 = X axes, J2/J4 = Y axes.
+  //   Right gimbal centre (760, 485): X = J1 (AIL), Y = J2 (ELE)
+  //   Left  gimbal centre (240, 485): X = J3 (RUD), Y = J4 (THR)
   // SBUS 992 = centre. Map ±819 → ±50 px deflection. Y is inverted (higher
   // SBUS = stick up = lower screen Y).
   const moveGimbal = (capId, dotId, xName, yName, cx, cy) => {
@@ -3057,7 +3058,7 @@ function updateTransmitterAnimation(channels) {
     if (cap) { cap.setAttribute('cx', cx + ox); cap.setAttribute('cy', cy + oy); }
     if (dot) { dot.setAttribute('cx', cx + ox); dot.setAttribute('cy', cy + oy); }
   };
-  moveGimbal('leftGimbalCap',  'leftGimbalDot',  'J4', 'J3', 240, 485);
+  moveGimbal('leftGimbalCap',  'leftGimbalDot',  'J3', 'J4', 240, 485);
   moveGimbal('rightGimbalCap', 'rightGimbalDot', 'J1', 'J2', 760, 485);
 }
 

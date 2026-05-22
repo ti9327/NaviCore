@@ -1250,22 +1250,39 @@
              ─────────────────────────────────────────────────────────── -->
         <g class="tx-model tx-twinxlite">
 
-        <!-- Compact handheld body -->
+        <!-- Gamepad-style body: narrow top section with the screen, handles
+             flaring OUTWARD at the bottom for the hand-grips, and a deep
+             U-curve between the handles where your fingers wrap.  Matches
+             the Twin X-Lite's actual silhouette. -->
         <path d="
-          M 150 220
-          Q 150 180 200 180
-          L 800 180
-          Q 850 180 850 220
-          L 850 620
-          Q 850 700 770 700
-          L 690 700
-          Q 670 700 660 685
-          Q 645 670 620 670
-          L 380 670
-          Q 355 670 340 685
-          Q 330 700 310 700
-          L 230 700
-          Q 150 700 150 620 Z" fill="url(#body-grad)" stroke="#0a1224" stroke-width="2" filter="url(#shadow)"/>
+          M 220 180
+          L 780 180
+          Q 800 180 800 200
+          L 800 420
+          Q 880 460 880 560
+          Q 880 700 780 720
+          L 600 720
+          Q 560 720 540 695
+          Q 520 685 500 685
+          Q 480 685 460 695
+          Q 440 720 400 720
+          L 220 720
+          Q 120 700 120 560
+          Q 120 460 200 420
+          L 200 200
+          Q 200 180 220 180 Z" fill="url(#body-grad)" stroke="#0a1224" stroke-width="2" filter="url(#shadow)"/>
+        <!-- Highlight gradient overlay on the upper half for 3D feel -->
+        <path d="
+          M 220 182
+          L 780 182
+          Q 798 182 798 200
+          L 798 380
+          L 202 380
+          L 202 200
+          Q 202 182 220 182 Z" fill="url(#body-highlight)" opacity="0.6"/>
+        <!-- Antenna stubs poking up from the top corners -->
+        <rect x="195" y="155" width="14" height="28" rx="4" fill="#1a1a1a" stroke="#0a0a0a"/>
+        <rect x="791" y="155" width="14" height="28" rx="4" fill="#1a1a1a" stroke="#0a0a0a"/>
 
         <!-- Screen -->
         <rect x="330" y="220" width="340" height="170" rx="14" fill="#0a0a0a" stroke="#1a2a4a" stroke-width="2"/>
@@ -1421,22 +1438,25 @@
           <text x="740" y="660" text-anchor="middle" fill="#cdd6e8" font-size="11" font-weight="700">T6</text>
         </g>
 
-        <!-- ── Face buttons B1-B4 (single SBUS matrix channel) ── -->
+        <!-- ── Face buttons B1-B4 (single SBUS matrix channel) ────────
+             Positioned high enough (y=655) to stay above the body's
+             central U-cutout (which curves up to y=685 between the
+             two handles). -->
         <g class="btn-zone" data-btn="1" onclick="openModal(1)">
-          <rect x="420" y="700" width="32" height="20" rx="3" fill="#1a1a2a" stroke="#3a3a4a" stroke-width="1.5"/>
-          <text x="436" y="715" text-anchor="middle" fill="#a0a8b8" font-size="10" font-weight="700">1</text>
+          <rect x="420" y="655" width="32" height="22" rx="3" fill="#1a1a2a" stroke="#3a3a4a" stroke-width="1.5"/>
+          <text x="436" y="671" text-anchor="middle" fill="#a0a8b8" font-size="11" font-weight="700">1</text>
         </g>
         <g class="btn-zone" data-btn="2" onclick="openModal(2)">
-          <rect x="460" y="700" width="32" height="20" rx="3" fill="#1a1a2a" stroke="#3a3a4a" stroke-width="1.5"/>
-          <text x="476" y="715" text-anchor="middle" fill="#a0a8b8" font-size="10" font-weight="700">2</text>
+          <rect x="460" y="655" width="32" height="22" rx="3" fill="#1a1a2a" stroke="#3a3a4a" stroke-width="1.5"/>
+          <text x="476" y="671" text-anchor="middle" fill="#a0a8b8" font-size="11" font-weight="700">2</text>
         </g>
         <g class="btn-zone" data-btn="3" onclick="openModal(3)">
-          <rect x="500" y="700" width="32" height="20" rx="3" fill="#1a1a2a" stroke="#3a3a4a" stroke-width="1.5"/>
-          <text x="516" y="715" text-anchor="middle" fill="#a0a8b8" font-size="10" font-weight="700">3</text>
+          <rect x="500" y="655" width="32" height="22" rx="3" fill="#1a1a2a" stroke="#3a3a4a" stroke-width="1.5"/>
+          <text x="516" y="671" text-anchor="middle" fill="#a0a8b8" font-size="11" font-weight="700">3</text>
         </g>
         <g class="btn-zone" data-btn="4" onclick="openModal(4)">
-          <rect x="540" y="700" width="32" height="20" rx="3" fill="#1a1a2a" stroke="#3a3a4a" stroke-width="1.5"/>
-          <text x="556" y="715" text-anchor="middle" fill="#a0a8b8" font-size="10" font-weight="700">4</text>
+          <rect x="540" y="655" width="32" height="22" rx="3" fill="#1a1a2a" stroke="#3a3a4a" stroke-width="1.5"/>
+          <text x="556" y="671" text-anchor="middle" fill="#a0a8b8" font-size="11" font-weight="700">4</text>
         </g>
 
         </g><!-- /tx-twinxlite -->
@@ -1471,7 +1491,7 @@
         <img src="../Images/r2logo.png" alt="R2 logo"
              style="width:72px;height:72px;object-fit:contain;opacity:0.9">
         <div style="font-size:11px;color:var(--muted);font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;letter-spacing:0.3px">
-          RC Controller Config Tool &nbsp;·&nbsp; <span id="footer-dtg">221421QMAY26</span>
+          RC Controller Config Tool &nbsp;·&nbsp; <span id="footer-dtg">221428QMAY26</span>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap">

@@ -2,10 +2,12 @@
 //  fw_version.h — RC-Controller firmware version string
 //
 //  Single source of truth for the firmware version, formatted as:
-//      <BASE>_<DTG>     e.g.  v0.1_211520QMAY26
+//      <BASE>_<DTG>     e.g.  v0.2.0_211520QMAY26
 //
-//  • FW_VERSION_BASE  — bumped MANUALLY when cutting a new release
-//                       (e.g. "v0.1" → "v0.2" → "v1.0").  Edit by hand.
+//  • FW_VERSION_BASE  — bumped MANUALLY when cutting a new release.
+//                       Three-digit semver (MAJOR.MINOR.PATCH) is preferred:
+//                       e.g. "v0.2.0" → "v0.2.1" → "v0.3.0" → "v1.0.0".
+//                       Edit by hand.
 //
 //  • FW_VERSION_DTG   — stamped AUTOMATICALLY by the pre-commit hook
 //                       (tools/git-hooks/pre-commit), same Date-Time-Group
@@ -23,6 +25,6 @@
 
 #pragma once
 
-#define FW_VERSION_BASE  "v0.1"
-#define FW_VERSION_DTG   "221301QMAY26"
+#define FW_VERSION_BASE  "v0.2.0"
+#define FW_VERSION_DTG   "221319QMAY26"
 #define FW_VERSION       FW_VERSION_BASE "_" FW_VERSION_DTG

@@ -61,7 +61,7 @@ if (-not $cli) {
 
 # ── Resolve tag from fw_version.h (single source of truth) ───────────────
 # The header defines two values we care about:
-#   #define FW_VERSION_BASE  "v0.1"
+#   #define FW_VERSION_BASE  "v0.2.0"      (semver — any quoted string works)
 #   #define FW_VERSION_DTG   "211520QMAY26"
 # Default Tag = "<BASE>_<DTG>", matching the FW_VERSION macro the firmware
 # itself reports at runtime.  Caller can override with -Tag.

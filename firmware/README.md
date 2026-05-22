@@ -10,13 +10,15 @@ GitHub Contents API.
 The firmware version is stored in `fw_version.h` at the repo root:
 
 ```c
-#define FW_VERSION_BASE  "v0.1"           // bump by hand for releases
+#define FW_VERSION_BASE  "v0.2.0"         // bump by hand for releases
 #define FW_VERSION_DTG   "211520QMAY26"   // auto-stamped by pre-commit hook
 #define FW_VERSION       FW_VERSION_BASE "_" FW_VERSION_DTG
 ```
 
-- **`FW_VERSION_BASE`** — semantic-ish version. Edit by hand when you want
-  to cut a new release (`v0.1` → `v0.2` → `v1.0`).
+- **`FW_VERSION_BASE`** — semver version (MAJOR.MINOR.PATCH).  Edit by hand
+  when cutting a new release: `v0.2.0` → `v0.2.1` → `v0.3.0` → `v1.0.0`.
+  The build scripts treat the field as opaque — any quoted string works,
+  so two-digit forms (`v0.1`) still parse if you need them.
 - **`FW_VERSION_DTG`** — stamped automatically by `tools/git-hooks/pre-commit`
   on every commit, same DTG format as the UI footer in `config_tool/index.html`.
   Both files always reflect the same commit time.
@@ -24,7 +26,7 @@ The firmware version is stored in `fw_version.h` at the repo root:
   in the `PONG` reply and at boot.
 
 The build script reads both `#define`s and embeds them in the bin filename
-(e.g. `RC-Controller_v0.1_211520QMAY26_ESP32S3.bin`), so the file on disk,
+(e.g. `RC-Controller_v0.2.0_211520QMAY26_ESP32S3.bin`), so the file on disk,
 the file's reported version at runtime, and the source header all match.
 
 ## File naming

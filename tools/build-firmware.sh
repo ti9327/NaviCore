@@ -59,10 +59,15 @@ echo "  tag  : $TAG"
 echo ""
 
 # ── Compile ─────────────────────────────────────────────────────────────
-# FQBN matches Arduino IDE board "ESP32S3 Dev Module" with USB CDC on
-# boot enabled (required for the config tool's serial connection) and
-# the Minimal SPIFFS partition scheme (ota_0/ota_1 each ~1.9 MB).
-FQBN="esp32:esp32:esp32s3:USBMode=hwcdc,CDCOnBoot=cdc,MSCOnBoot=default,DFUOnBoot=default,UploadMode=default,PartitionScheme=min_spiffs,CPUFreq=240,FlashMode=qio,FlashSize=4M,LoopCore=1,EventsCore=1,DebugLevel=none,EraseFlash=none"
+# FQBN deliberately mirrors what Arduino IDE produces with the
+# "ESP32S3 Dev Module" board selected and NO menu options changed —
+# all options at their defaults except PartitionScheme=min_spiffs.
+# Critically this means USBMode=default + CDCOnBoot=default, i.e. Serial
+# is UART0 (routed off-chip via the WCB v3.2's USB-to-UART bridge), NOT
+# the ESP32-S3's native USB-Serial-JTAG controller.  Overriding to hwcdc
+# routes Serial to native USB pins (GPIO19/20) which the WCB v3.2 board
+# doesn't expose for debug — output silently goes nowhere.
+FQBN="esp32:esp32:esp32s3:PartitionScheme=min_spiffs"
 BUILD_DIR="${TMPDIR:-/tmp}/rc-fw-build"
 
 rm -rf "$BUILD_DIR"

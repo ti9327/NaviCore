@@ -1296,6 +1296,39 @@ void handleSerialInput() {
             }
             case 12: Serial.printf("Mode=%d  matrixBtn=%d  matrixVal=%d\n",
                                    FunctionSwState, pwmToButton(oldValueMatrix), oldValueMatrix); break;
+            // #L13 — Raw SBUS frame hex dump.  Shows exactly what bytes the
+            // RX is delivering, with channel-decoding offsets annotated so
+            // we can see at a glance whether bytes 23-33 (CH17-24 in SBUS-24)
+            // carry data or are zero on the wire.
+            case 13: {
+              const uint8_t* raw = sbusRx.rawFrameBytes();
+              uint8_t        len = sbusRx.rawFrameLen();
+              if (len == 0) {
+                Serial.println("---- SBUS RAW ---- (no frame parsed yet)");
+                break;
+              }
+              Serial.printf("---- SBUS RAW ---- (%u bytes, %s)\n",
+                            len, len == 25 ? "SBUS-16" :
+                                 len == 36 ? "SBUS-24" : "unknown length");
+              for (uint8_t i = 0; i < len; i++) {
+                if (i % 8 == 0) Serial.printf("  [%2u] ", i);
+                Serial.printf("%02X ", raw[i]);
+                if (i % 8 == 7) Serial.println();
+              }
+              if (len % 8) Serial.println();
+              Serial.println("  byte 0       = header (expect 0F)");
+              if (len == 25) {
+                Serial.println("  bytes 1-22   = CH1-16 data");
+                Serial.println("  byte 23      = flags");
+                Serial.println("  byte 24      = footer (expect 00)");
+              } else if (len == 36) {
+                Serial.println("  bytes 1-22   = CH1-16 data");
+                Serial.println("  bytes 23-33  = CH17-24 data  ← check these");
+                Serial.println("  byte 34      = flags");
+                Serial.println("  byte 35      = footer (expect 00)");
+              }
+              break;
+            }
             // ── HCR local-serial TX diagnostics ──────────────────────────────
             // These bypass rcConfig.hcrDest AND button mapping entirely. They
             // drive Serial3/Serial4 directly so a "nothing on the HCR" report
@@ -1418,7 +1451,7 @@ void setup() {
   Serial.print  (FW_VERSION);
   Serial.println(" — setup complete.");
   Serial.println("  Connect config_tool/index.html via Web Serial for configuration.");
-  Serial.println("  CLI: #L01=info  #L09=SBUS dump  #L10=live  #L11=WCB status  #L12=RC state");
+  Serial.println("  CLI: #L01=info  #L09=SBUS dump  #L10=live  #L11=WCB status  #L12=RC state  #L13=SBUS raw hex");
   Serial.println("  CLI: #L20=HCR S3 test  #L21=HCR S4 test  (direct, bypasses config+mapping)");
   Serial.println("  Send PING to test. Send GET_CONFIG to read mappings.");
 }

@@ -40,6 +40,15 @@ public:
   bool     lostFrame = false;
   unsigned long lastValidFrameMs = 0;
 
+  // Most recently parsed raw frame, kept for diagnostic dumping (#L13).
+  // lastFrameRawBuf_ is updated only on a successful parse, so it always
+  // holds either a complete SBUS-16 (25 bytes) or SBUS-24 (36 bytes) image.
+  // Length is in lastFrameRawLen_; bytes beyond that are unused.
+  uint8_t  lastFrameRawBuf_[FRAME_LEN_24] = {0};
+  uint8_t  lastFrameRawLen_ = 0;
+  const uint8_t* rawFrameBytes() const { return lastFrameRawBuf_; }
+  uint8_t  rawFrameLen()        const { return lastFrameRawLen_; }
+
   void begin(HardwareSerial* uart, int rxPin, int txPin) {
     uart_ = uart;
     // Standard SBUS: 100k baud, 8E2, inverted.  ESP32 HardwareSerial::begin
@@ -131,12 +140,16 @@ private:
       detectedChCount   = 16;
       detectedFrameLen  = 25;
       lastValidFrameMs  = millis();
+      memcpy(lastFrameRawBuf_, buf_, FRAME_LEN_16);
+      lastFrameRawLen_  = FRAME_LEN_16;
       ok = true;
     } else if (bufIdx_ == FRAME_LEN_24 && buf_[0] == SBUS_HEADER && buf_[FRAME_LEN_24 - 1] == SBUS_FOOTER) {
       decodeFrame(buf_, 24);
       detectedChCount   = 24;
       detectedFrameLen  = 36;
       lastValidFrameMs  = millis();
+      memcpy(lastFrameRawBuf_, buf_, FRAME_LEN_24);
+      lastFrameRawLen_  = FRAME_LEN_24;
       ok = true;
     }
     // Otherwise: malformed / partial — drop silently

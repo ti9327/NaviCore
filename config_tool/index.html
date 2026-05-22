@@ -677,7 +677,7 @@
   .calib-svg-panel svg { width: 100%; height: auto; pointer-events: none; cursor: default; }
   .calib-info-panel { width: 290px; flex-shrink: 0; display: flex; flex-direction: column; gap: 10px; }
   .calib-step-counter { font-size: 11px; color: var(--muted); text-align: right; }
-  .calib-instruction  { font-size: 15px; font-weight: 600; color: var(--text); line-height: 1.4; }
+  .calib-instruction  { font-size: 15px; font-weight: 600; color: var(--text); line-height: 1.4; white-space: pre-wrap; }
 </style>
 </head>
 <body>
@@ -1244,7 +1244,7 @@
              style="width:72px;height:72px;object-fit:contain;opacity:0.9">
         <div style="font-size:11px;color:var(--muted);font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;letter-spacing:0.3px">
           RC Controller Config Tool &nbsp;·&nbsp; UI Version <span id="footer-ui-version">1.0</span>
-          &nbsp;·&nbsp; <span id="footer-dtg">221148QMAY26</span>
+          &nbsp;·&nbsp; <span id="footer-dtg">221204QMAY26</span>
           &nbsp;·&nbsp; FW <span id="footer-fw-version">—</span>
         </div>
       </div>
@@ -1808,8 +1808,11 @@ const knobDefaults = {
   RS: { channel: 19, function: 0, outputs: [], kind: 'slider',   friendly: 'RS slider' },
   J1: { channel: 1, function: 0, outputs: [], kind: 'joystick', friendly: 'J1 — R-stick X (AIL)' },
   J2: { channel: 2, function: 0, outputs: [], kind: 'joystick', friendly: 'J2 — R-stick Y (ELE)' },
-  J3: { channel: 4, function: 0, outputs: [], kind: 'joystick', friendly: 'J3 — L-stick X (RUD)' },
-  J4: { channel: 3, function: 0, outputs: [], kind: 'joystick', friendly: 'J4 — L-stick Y (THR)' },
+  // Greg's TX sends L-stick X on CH3 and L-stick Y on CH4 (not the standard
+  // AETR mapping which would have CH3=THR/L-Y and CH4=RUD/L-X). Defaults below
+  // match his actual TX output — confirmed via calibration after the xyxy rename.
+  J3: { channel: 3, function: 0, outputs: [], kind: 'joystick', friendly: 'J3 — L-stick X (RUD)' },
+  J4: { channel: 4, function: 0, outputs: [], kind: 'joystick', friendly: 'J4 — L-stick Y (THR)' },
 };
 
 // Friendly title for the modal header — picks the right noun for the source.
@@ -4721,7 +4724,41 @@ function buildCalibrationSteps() {
     label: (knobDefaults[knobName] && knobDefaults[knobName].friendly) || knobName
   }));
 
-  return [...buttonSteps, ...switchSteps, ...knobSteps];
+  // ── Info steps (no capture — just instructions + Next) ────────────────
+  // Inserted at section boundaries so the user gets a "set up your TX
+  // before this block" reminder before things that would otherwise be
+  // unreadable (e.g. joysticks that need SA in enable position).
+  const prefligthStep = {
+    type:  'info',
+    label: 'Pre-flight',
+    title: 'Before You Start',
+    message:
+      'Set ALL switches (SA-SJ) to their BACK / UP position before continuing.\n' +
+      'Center the trims and gimbals as well.\n\n' +
+      'This makes the per-control auto-detect work reliably (movement on one ' +
+      'channel at a time, no spurious swings from other switches).\n\n' +
+      'When ready, click Next →.'
+  };
+
+  const joystickPrepStep = {
+    type:  'info',
+    label: 'Joystick Section',
+    title: 'Joystick Calibration',
+    message:
+      'For the joystick axes to send live data, flip switch SA to its ' +
+      'MIDDLE (ENABLE) position now.\n\n' +
+      'With SA in the BACK position the gimbals may be frozen / muted by ' +
+      'your TX mixer — calibration would see no movement.\n\n' +
+      'When SA is in the middle position, click Next →.'
+  };
+
+  return [
+    prefligthStep,
+    ...buttonSteps,
+    ...switchSteps,
+    joystickPrepStep,
+    ...knobSteps,
+  ];
 }
 
 function openCalibrationModal() {
@@ -4789,7 +4826,9 @@ function renderCalibrationStep() {
   calibrationState.detect = null;   // fresh channel-swing baseline per step
   const step = calibrationState.steps[calibrationState.index];
   let instruction = '';
-  if (step.type === 'button') {
+  if (step.type === 'info') {
+    instruction = step.title + '\n\n' + step.message;
+  } else if (step.type === 'button') {
     instruction = `Press ${step.label} on the transmitter and hold until captured.`;
   } else if (step.type === 'switch') {
     const sw = (config.switches && config.switches[step.swName]) || switchDefaults[step.swName];
@@ -4809,19 +4848,29 @@ function renderCalibrationStep() {
       + `the most is auto-detected — click Capture to save it.`;
   }
   document.getElementById('calibration-instruction').textContent = instruction;
-  document.getElementById('calibration-live-value').textContent = 'Waiting for live SBUS data...';
+  document.getElementById('calibration-live-value').textContent =
+    step.type === 'info' ? '' : 'Waiting for live SBUS data...';
   setCalibrationStatus('');
-  // Capture is available for every step type now: buttons capture a PWM
-  // threshold; knobs/sliders/joysticks/switches capture their SBUS channel.
+  // Info steps have nothing to capture — they're just "read this and click Next".
+  // For every other step type, the Capture button is shown.
   const capBtn = document.getElementById('btn-calibration-capture');
-  capBtn.style.display = '';
-  capBtn.textContent = step.type === 'button' ? 'Force Capture' : 'Capture Channel';
+  if (step.type === 'info') {
+    capBtn.style.display = 'none';
+  } else {
+    capBtn.style.display = '';
+    capBtn.textContent = step.type === 'button' ? 'Force Capture' : 'Capture Channel';
+  }
   const prevBtn = document.getElementById('btn-calibration-prev');
   if (prevBtn) prevBtn.disabled = calibrationState.index === 0;
   // Manual channel input — visible for switches/knobs/sliders/joysticks,
-  // hidden for buttons.  Pre-populate with the currently configured
-  // channel so the user sees what's stored and can either change it
-  // (manual override) or leave it and rely on auto-detect via swing.
+  // hidden for buttons AND info steps.  Pre-populate with the currently
+  // configured channel so the user sees what's stored and can either
+  // change it (manual override) or leave it and rely on auto-detect via swing.
+  //
+  // Fallback chain matters: if config has the name but its `.channel` is 0
+  // (un-calibrated state), we still fall back to the static switchDefaults /
+  // knobDefaults channel so the input shows the right default (e.g. SA=8,
+  // SB=9) instead of being blank for both.
   const manualRow   = document.getElementById('calib-manual-channel-row');
   const manualInput = document.getElementById('calib-manual-channel');
   const showManual  = (step.type === 'switch' || step.type === 'knob');
@@ -4830,8 +4879,9 @@ function renderCalibrationStep() {
     const name   = step.swName || step.knobName;
     const defMap = step.type === 'switch' ? switchDefaults : knobDefaults;
     const cfgMap = step.type === 'switch' ? config.switches : config.knobs;
-    const cur    = (cfgMap && cfgMap[name]) || (defMap && defMap[name]) || {};
-    const ch     = +cur.channel | 0;
+    const cur    = (cfgMap && cfgMap[name]) || {};
+    const def    = (defMap && defMap[name]) || {};
+    const ch     = (+cur.channel) || (+def.channel) || 0;
     manualInput.value = (ch >= 1 && ch <= 24) ? String(ch) : '';
   }
   highlightCalibrationTarget(step);
@@ -4872,6 +4922,8 @@ function calibDetectChannel(msg) {
 function updateCalibrationLive(msg) {
   if (!calibrationState) return;
   const step = calibrationState.steps[calibrationState.index];
+  // Info steps have no live readout / no auto-capture — just sit until Next.
+  if (step.type === 'info') return;
   let liveText = '';
 
   if (step.type === 'button') {
@@ -4958,6 +5010,9 @@ function clearCalibrationHighlights() {
 function captureCalibrationValue() {
   if (!calibrationState) return;
   const step = calibrationState.steps[calibrationState.index];
+  // Info steps have nothing to capture — they're just "read this and click Next".
+  // The Capture button is hidden for info steps, but guard here too for safety.
+  if (step.type === 'info') return;
   const msg = calibrationState.lastMsg;
   if (!msg) {
     setCalibrationStatus('No live SBUS message yet. Move a control to capture.', true);

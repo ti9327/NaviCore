@@ -1250,15 +1250,43 @@
              ─────────────────────────────────────────────────────────── -->
         <g class="tx-model tx-twinxlite">
 
-        <!-- Body rendered as a vector trace of the actual Twin X-Lite
-             photo (saved as tx-twin-xlite.svg in this folder).  Scaled
-             840 × 614 to fit within the 1000 × 830 canvas, leaving room
-             above and below for the click-zone overlays (switches at
-             the top, face buttons at the bottom).  The trace shows the
-             real silhouette, switch positions, screen, knobs, sticks,
-             and grips; my drawn click zones overlay it for interactivity
-             and per-control highlighting during calibration. -->
-        <image href="tx-twin-xlite.svg" x="80" y="60" width="840" height="614" preserveAspectRatio="xMidYMid meet"/>
+        <!-- Body silhouette: drawn by hand to match the proportions in
+             Greg's reference photo (the image2vector trace was provided
+             for reference only, not for direct inclusion).  Key
+             features:
+               • Top corners 40 px radius, top edge flat
+               • Sides curve OUTWARD modestly from y=400 to y=540, then
+                 curve back inward — a gentle bulge, not a dramatic flare
+               • Widest point in mid-handle (around y=540), not at the
+                 very bottom
+               • Shallow notch at bottom centre, not a deep gamepad-style U
+               • Antennas poke up from the top corners -->
+        <path d="
+          M 220 130
+          Q 180 130 180 170
+          L 180 400
+          Q 165 480 145 540
+          Q 125 660 200 720
+          Q 280 745 380 730
+          Q 440 720 480 705
+          Q 500 700 520 705
+          Q 560 720 620 730
+          Q 720 745 800 720
+          Q 875 660 855 540
+          Q 835 480 820 400
+          L 820 170
+          Q 820 130 780 130 Z" fill="url(#body-grad)" stroke="#0a1224" stroke-width="2" filter="url(#shadow)"/>
+        <!-- Highlight gradient overlay on the upper half for 3D feel -->
+        <path d="
+          M 220 132
+          Q 182 132 182 170
+          L 182 400
+          L 818 400
+          L 818 170
+          Q 818 132 780 132 Z" fill="url(#body-highlight)" opacity="0.55"/>
+        <!-- Two antenna stubs poking up from the body's top corners -->
+        <rect x="228" y="85" width="14" height="48" rx="4" fill="#1a1a1a" stroke="#0a0a0a"/>
+        <rect x="758" y="85" width="14" height="48" rx="4" fill="#1a1a1a" stroke="#0a0a0a"/>
 
         <!-- Screen -->
         <rect x="330" y="220" width="340" height="170" rx="14" fill="#0a0a0a" stroke="#1a2a4a" stroke-width="2"/>
@@ -1470,7 +1498,7 @@
         <img src="../Images/r2logo.png" alt="R2 logo"
              style="width:72px;height:72px;object-fit:contain;opacity:0.9">
         <div style="font-size:11px;color:var(--muted);font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;letter-spacing:0.3px">
-          RC Controller Config Tool &nbsp;·&nbsp; <span id="footer-dtg">221552QMAY26</span>
+          RC Controller Config Tool &nbsp;·&nbsp; <span id="footer-dtg">221600QMAY26</span>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap">

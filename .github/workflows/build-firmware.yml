@@ -106,13 +106,18 @@ jobs:
               s = s.replace(
                   '_i2c->write((command + "\\\\n").c_str());',
                   '_i2c->print(command + "\\\\n");')
-              # 6. Wrap each "case 0x03:" body in { } so var declarations
-              # don't cross initialization to "default: break;". Two occurrences
-              # (transmit + receive), both with the same shape.
-              s = re.sub(
-                  r'(case 0x03:)([\\s\\S]*?break;\\n)(\\s*)(default: break;)',
-                  r'\\1 {\\2\\3}\\n\\3\\4',
-                  s)
+              # 6. "jump to case label crosses initialization" — caused by
+              # variables initialized inside case 0x03 of two switches.
+              # Easiest fix: split the declaration from the initializer so
+              # the bare declaration doesn't conflict with default: break;.
+              # (Brace-wrapping the case body would also work but regex is
+              # brittle here — the case bodies span many lines.)
+              s = s.replace(
+                  'int i2cStatus = 0;',
+                  'int i2cStatus; i2cStatus = 0;')
+              s = s.replace(
+                  'int bytes = _i2c->requestFrom((int)_i2caddr,(int)8);',
+                  'int bytes; bytes = _i2c->requestFrom((int)_i2caddr,(int)8);')
               c.write_text(s)
               print('patched hcr.cpp:', len(s), 'bytes')
           PYEOF

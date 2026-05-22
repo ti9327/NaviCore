@@ -662,13 +662,17 @@
   }
   .terminal-send:hover { background: var(--accent2); }
 
-  /* ── Calibration modal ── */
+  /* ── Calibration modal ──
+   * Highlight uses yellow (not the blue --accent / --accent2) so the
+   * "press THIS control" pulse stands out against the blue "this
+   * button has actions configured" fill that several controls already
+   * carry from normal operation. */
   .calibration-highlight rect,
   .calibration-highlight circle,
   .calibration-highlight path {
-    stroke: var(--accent);
+    stroke: var(--yellow);
     stroke-width: 3px;
-    filter: drop-shadow(0 0 10px rgba(56,189,248,.65));
+    filter: drop-shadow(0 0 10px rgba(255,193,7,.75));
   }
   .calibration-indicator { margin-top: 12px; padding: 12px; border-radius: 8px; background: rgba(56,189,248,.08); border: 1px solid rgba(56,189,248,.16); color: var(--text); font-variant-numeric: tabular-nums; }
   .calib-wide-modal { width: 92vw; max-width: 1300px; }
@@ -1244,7 +1248,7 @@
              style="width:72px;height:72px;object-fit:contain;opacity:0.9">
         <div style="font-size:11px;color:var(--muted);font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;letter-spacing:0.3px">
           RC Controller Config Tool &nbsp;·&nbsp; UI Version <span id="footer-ui-version">1.0</span>
-          &nbsp;·&nbsp; <span id="footer-dtg">221247QMAY26</span>
+          &nbsp;·&nbsp; <span id="footer-dtg">221301QMAY26</span>
           &nbsp;·&nbsp; FW <span id="footer-fw-version">—</span>
         </div>
       </div>

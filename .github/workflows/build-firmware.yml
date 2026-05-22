@@ -62,9 +62,14 @@ jobs:
         # so a fresh checkout always works.
         run: |
           arduino-cli config set library.enable_unsafe_install true
-          arduino-cli lib install "ArduinoJson@6.21.5"
+          # Versions pinned to match Greg's local Arduino IDE installs so CI
+          # builds behave identically to bench builds.  ArduinoJson 7 vs 6 in
+          # particular has a significant memory-allocation behavior change
+          # for DynamicJsonDocument that broke SET_CONFIG parsing under 6.x —
+          # see chat log 2026-05-21 for the diagnosis.
+          arduino-cli lib install "ArduinoJson@7.4.3"
           arduino-cli lib install "EspSoftwareSerial@8.1.0"
-          arduino-cli lib install "Adafruit NeoPixel@1.12.5"
+          arduino-cli lib install "Adafruit NeoPixel@1.15.4"
           arduino-cli lib install "PololuMaestro"
           arduino-cli lib install --git-url https://github.com/greghulette/WCBClient.git
 

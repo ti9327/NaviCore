@@ -1244,7 +1244,7 @@
              style="width:72px;height:72px;object-fit:contain;opacity:0.9">
         <div style="font-size:11px;color:var(--muted);font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;letter-spacing:0.3px">
           RC Controller Config Tool &nbsp;·&nbsp; UI Version <span id="footer-ui-version">1.0</span>
-          &nbsp;·&nbsp; <span id="footer-dtg">221138QMAY26</span>
+          &nbsp;·&nbsp; <span id="footer-dtg">221148QMAY26</span>
           &nbsp;·&nbsp; FW <span id="footer-fw-version">—</span>
         </div>
       </div>
@@ -1671,6 +1671,23 @@
         <div id="calibration-instruction" class="calib-instruction"></div>
         <div id="calibration-live-value" class="calibration-indicator">Waiting for live SBUS data...</div>
         <div id="calibration-summary" style="font-size:13px; color:var(--muted)"></div>
+        <!-- Manual channel-override row — shown only for switches and knobs
+             (incl. sliders and joystick axes). User can type a channel
+             number directly here; on Capture, this value WINS over the
+             auto-detected channel. Pre-populated with the currently
+             configured channel each time the step opens. -->
+        <div id="calib-manual-channel-row" style="display:none; margin-top:10px;
+                  padding:10px 12px; background:rgba(122,205,246,0.08);
+                  border:1px solid rgba(122,205,246,0.25); border-radius:6px">
+          <label style="display:flex; align-items:center; gap:10px; font-size:12px; margin:0">
+            <span style="color:var(--text)">Channel:</span>
+            <input type="number" id="calib-manual-channel" min="1" max="24" step="1"
+                   style="width:64px; font-size:13px" placeholder="1-24">
+            <span style="color:var(--muted); font-size:11px; flex:1">
+              Enter manually, or leave alone to use the auto-detected channel. Click Capture to apply.
+            </span>
+          </label>
+        </div>
         <div style="margin-top:auto; padding-top:16px; display:flex; flex-direction:column; gap:8px">
           <label style="display:flex; align-items:center; gap:8px; font-size:12px; cursor:pointer; color:var(--muted)">
             <input type="checkbox" id="calib-auto-advance"
@@ -4801,6 +4818,22 @@ function renderCalibrationStep() {
   capBtn.textContent = step.type === 'button' ? 'Force Capture' : 'Capture Channel';
   const prevBtn = document.getElementById('btn-calibration-prev');
   if (prevBtn) prevBtn.disabled = calibrationState.index === 0;
+  // Manual channel input — visible for switches/knobs/sliders/joysticks,
+  // hidden for buttons.  Pre-populate with the currently configured
+  // channel so the user sees what's stored and can either change it
+  // (manual override) or leave it and rely on auto-detect via swing.
+  const manualRow   = document.getElementById('calib-manual-channel-row');
+  const manualInput = document.getElementById('calib-manual-channel');
+  const showManual  = (step.type === 'switch' || step.type === 'knob');
+  if (manualRow)   manualRow.style.display = showManual ? 'block' : 'none';
+  if (manualInput && showManual) {
+    const name   = step.swName || step.knobName;
+    const defMap = step.type === 'switch' ? switchDefaults : knobDefaults;
+    const cfgMap = step.type === 'switch' ? config.switches : config.knobs;
+    const cur    = (cfgMap && cfgMap[name]) || (defMap && defMap[name]) || {};
+    const ch     = +cur.channel | 0;
+    manualInput.value = (ch >= 1 && ch <= 24) ? String(ch) : '';
+  }
   highlightCalibrationTarget(step);
 }
 
@@ -4882,21 +4915,21 @@ function updateCalibrationLive(msg) {
   }
   document.getElementById('calibration-live-value').textContent = liveText;
 
-  // Auto-capture only on a confident, near-full-travel sweep (and only if
-  // auto-advance is on — otherwise wait for an explicit Capture click).
+  // Auto-capture is ONLY for buttons (handled above — buttons leave the
+  // neutral matrix-PWM band cleanly when pressed, low false-positive rate).
   //
-  // Switches are EXCLUDED from auto-capture: a 3-position switch flicked
-  // from position 1→2 already produces a ~820 SBUS-count swing — over the
-  // CALIB_SWING_AUTO threshold — so it would auto-advance before the user
-  // ever exercises position 3.  The user said the prior behaviour was
-  // "exercise the switch then click Next" — so switches always require an
-  // explicit Capture click now, regardless of auto-advance.
-  if (calibrationState.stepCaptured) return;
-  if (calibrationState.autoAdvance && det && det.swing >= CALIB_SWING_AUTO
-      && step.type !== 'switch') {
-    calibrationState.stepCaptured = true;
-    captureCalibrationValue();
-  }
+  // Switches / knobs / sliders / joysticks all require an EXPLICIT Capture
+  // click — auto-capture proved too noisy in practice:
+  //   • 3-pos switches auto-fired after just position 1→2 movement
+  //     (~820-count swing → over the CALIB_SWING_AUTO threshold), never
+  //     letting the user exercise position 3.
+  //   • Sliders auto-advanced from LS to RS the moment the user moved LS
+  //     past the swing threshold — before they were ready to commit.
+  //   • Joystick axes had similar mid-sweep auto-fire problems.
+  //
+  // After the user clicks Capture, the autoAdvance setting still applies
+  // (a 900 ms delay then automatic Next →). So the only behaviour change
+  // here is "must click Capture to commit the value."
 }
 
 function highlightCalibrationTarget(step) {
@@ -4961,36 +4994,53 @@ function captureCalibrationValue() {
       }, 900);
     }
   } else {
-    // ── Knob/slider/joystick or switch: save the auto-detected channel ──────
-    const det = calibDetectChannel(msg);
-    if (!det || det.swing < CALIB_SWING_MIN) {
-      calibrationState.stepCaptured = false;   // let auto-capture retry
-      setCalibrationStatus(
-        `Not enough movement yet${det ? ` (best ch${det.ch}, Δ${det.swing})` : ''}. `
-        + `Move ${step.label} fully through its range, then click Capture.`, true);
-      return;
-    }
+    // ── Knob/slider/joystick or switch: save the channel ────────────────────
+    // Manual override wins: if the user typed a channel number in the
+    // calib-manual-channel input, use that. Otherwise fall back to the
+    // auto-detected channel from observed movement.
     const isKnob = step.type === 'knob';
     const name   = isKnob ? step.knobName : step.swName;
+
+    const manualInput = document.getElementById('calib-manual-channel');
+    const manualVal   = manualInput ? parseInt(manualInput.value, 10) : NaN;
+    const hasManual   = Number.isFinite(manualVal) && manualVal >= 1 && manualVal <= 24;
+
+    let chosenCh;
+    let savedNote;
+    if (hasManual) {
+      chosenCh  = manualVal;
+      savedNote = `ch${chosenCh} (manually set)`;
+    } else {
+      const det = calibDetectChannel(msg);
+      if (!det || det.swing < CALIB_SWING_MIN) {
+        calibrationState.stepCaptured = false;
+        setCalibrationStatus(
+          `Not enough movement yet${det ? ` (best ch${det.ch}, Δ${det.swing})` : ''}. `
+          + `Move ${step.label} fully through its range, OR type the channel `
+          + `number manually above, then click Capture.`, true);
+        return;
+      }
+      chosenCh  = det.ch;
+      savedNote = `ch${chosenCh}  (auto-detected: range ${fmtVal(det.min)}–${fmtVal(det.max)}, Δ${det.swing})`;
+    }
+
     if (isKnob) {
       if (!config.knobs) config.knobs = {};
       const prev = config.knobs[name] || knobDefaults[name] || {};
-      config.knobs[name] = { ...prev, channel: det.ch };
+      config.knobs[name] = { ...prev, channel: chosenCh };
       if (typeof renderKnobHighlights === 'function') renderKnobHighlights();
     } else {
       if (!config.switches) config.switches = {};
       const dflt = switchDefaults[name] || { positions: 3 };
       const prev = config.switches[name] || dflt;
-      config.switches[name] = { ...prev, channel: det.ch,
+      config.switches[name] = { ...prev, channel: chosenCh,
         positions: prev.positions || dflt.positions || 3 };
       if (typeof renderSwitchHighlights === 'function') renderSwitchHighlights();
     }
     calibrationState.captured += 1;
     const advNote = calibrationState.autoAdvance
       ? ' Auto-advancing…' : ' Click Next → to continue.';
-    setCalibrationStatus(
-      `${name} → ch${det.ch} saved  (range ${fmtVal(det.min)}–${fmtVal(det.max)}, `
-      + `Δ${det.swing}).${advNote}`, false);
+    setCalibrationStatus(`${name} → ${savedNote}.${advNote}`, false);
     if (calibrationState.autoAdvance) {
       calibrationState.autoAdvanceTimer = setTimeout(() => {
         if (calibrationState) calibrationNextStep();

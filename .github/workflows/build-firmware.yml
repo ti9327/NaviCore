@@ -51,9 +51,13 @@ jobs:
         # Library list mirrors the #include set in RC-Controller.ino:
         #   ArduinoJson, Adafruit NeoPixel, EspSoftwareSerial — Library Manager
         #   PololuMaestro                                    — Library Manager
-        #   HumanCyborgRelationsAPI (hcr.h)                  — roy86 GitHub
         #   WCBClient + WCBStream (single repo)              — greghulette GitHub
         # WiFi and Preferences come bundled with the ESP32 core.
+        # HCRVocalizer is intentionally NOT a dependency — RC-Controller
+        # formats its own HCR command strings via hcrFormatCommand() and
+        # writes them straight to Serial3/Serial4 (or via wcb->sendRaw for
+        # remote HCRs).  See the comment block above hcrFormatCommand in
+        # RC-Controller.ino for the rationale.
         # Versions pinned where the WCB workflow pins; floats elsewhere
         # so a fresh checkout always works.
         run: |
@@ -62,77 +66,7 @@ jobs:
           arduino-cli lib install "EspSoftwareSerial@8.1.0"
           arduino-cli lib install "Adafruit NeoPixel@1.12.5"
           arduino-cli lib install "PololuMaestro"
-          arduino-cli lib install --git-url https://github.com/roy86/HumanCyborgRelationsAPI.git
           arduino-cli lib install --git-url https://github.com/greghulette/WCBClient.git
-
-          # ─────────────────────────────────────────────────────────────────
-          # TODO(greg): replace this whole block with a one-line install from
-          # a personal fork at greghulette/HumanCyborgRelationsAPI once that
-          # fork exists.  Per-build sed/python mutation of an upstream library
-          # is a stopgap — the canonical fix is a fork you control, mirroring
-          # how greghulette/WCBClient is handled above.  See chat history
-          # 2026-05-21 for the rationale.
-          # ─────────────────────────────────────────────────────────────────
-          # ── Patch upstream HCR API for ESP32 core 3.3.4 + GCC 14 ─────────
-          # The HumanCyborgRelationsAPI library was written for older Arduino
-          # cores and stricter modern C++ exposes a handful of bugs. WCB's CI
-          # doesn't trip on these because WCB.ino never #includes <hcr.h>;
-          # RC-Controller does, so its .cpp gets compiled and surfaces them.
-          # Five surgical edits (all idempotent — re-running is a no-op):
-          #   1. hcr.h:  #include <String.h>   → <string.h>     (case)
-          #   2. hcr.cpp: _i2c->setWireTimeout(...) — comment out (not on ESP32 TwoWire)
-          #   3. hcr.cpp: (byte)_i2caddr        → (uint8_t)_i2caddr  (std::byte ambiguity)
-          #   4. hcr.cpp: byte ch = _i2c->read() → uint8_t ch         (std::byte ambiguity)
-          #   5. hcr.cpp: _i2c->write((cmd+"\n").c_str()) → _i2c->print(cmd+"\n")
-          #   6. hcr.cpp: wrap case 0x03 bodies in {} so var inits don't cross
-          #               to default: break; (jump-to-case-crosses-init)
-          HCR_DIR="$HOME/Arduino/libraries/HumanCyborgRelations/src"
-          if [ -d "$HCR_DIR" ]; then
-            python3 <<PYEOF
-          import pathlib, re
-          h = pathlib.Path("$HCR_DIR/hcr.h")
-          c = pathlib.Path("$HCR_DIR/hcr.cpp")
-
-          # 1. hcr.h — case-sensitive header lookup
-          if h.exists():
-              h.write_text(h.read_text().replace(
-                  '#include <String.h>',
-                  '#include <string.h>'))
-              print('patched hcr.h: <String.h> -> <string.h>')
-
-          if c.exists():
-              s = c.read_text()
-              # 2. setWireTimeout not on ESP32 TwoWire
-              s = s.replace(
-                  '_i2c->setWireTimeout(3000 /* us */, true /* reset_on_timeout */);',
-                  '/* setWireTimeout: AVR-only, not on ESP32 TwoWire */')
-              # 3+4. byte → uint8_t (std::byte ambiguity under C++17)
-              s = s.replace('(byte)_i2caddr',  '(uint8_t)_i2caddr')
-              s = s.replace('byte ch = _i2c->read();',
-                            'uint8_t ch = _i2c->read();')
-              # 5. write(const char*) overload doesn't exist on TwoWire; use print()
-              s = s.replace(
-                  '_i2c->write((command + "\\\\n").c_str());',
-                  '_i2c->print(command + "\\\\n");')
-              # 6. "jump to case label crosses initialization" — caused by
-              # variables initialized inside case 0x03 of two switches.
-              # Easiest fix: split the declaration from the initializer so
-              # the bare declaration doesn't conflict with default: break;.
-              # (Brace-wrapping the case body would also work but regex is
-              # brittle here — the case bodies span many lines.)
-              s = s.replace(
-                  'int i2cStatus = 0;',
-                  'int i2cStatus; i2cStatus = 0;')
-              s = s.replace(
-                  'int bytes = _i2c->requestFrom((int)_i2caddr,(int)8);',
-                  'int bytes; bytes = _i2c->requestFrom((int)_i2caddr,(int)8);')
-              c.write_text(s)
-              print('patched hcr.cpp:', len(s), 'bytes')
-          PYEOF
-            echo "HCR library patched"
-          else
-            echo "WARN: $HCR_DIR not found — HCR install may have moved"
-          fi
 
       - name: Build firmware
         run: |

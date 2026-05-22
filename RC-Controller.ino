@@ -42,7 +42,9 @@
 #include <Adafruit_NeoPixel.h>
 #include <WCB_Client.h>   // header in greghulette/WCBClient is WCB_Client.h
 #include <WCBStream.h>
-#include <hcr.h>
+// HCR (Human Cyborg Relations Vocalizer): no library dependency — we format
+// the same byte string the upstream HCRVocalizer would have written and push
+// it directly to the bound aux-serial port.  See hcrFormatCommand() below.
 #include "sbus_reader.h"
 #include "rc_config.h"
 #include "wcb_config.h"
@@ -117,25 +119,25 @@ SoftwareSerial Serial4;    // Aux command-line port, bound in setup()
 SoftwareSerial sbusOut;    // SBUS OUT passthrough, bound in setup()
 
 // =============================================================================
-//  HCR Vocalizer — one instance per local aux serial port (S3, S4)
+//  HCR Vocalizer routing
 //
-//  The HCRVocalizer library writes its own framed command strings (e.g.
-//  "<SH3,QEH,QT>\n") to the bound Stream. For WCB transport we don't use
-//  HCRVocalizer at all; we format the same byte string ourselves and ship it
-//  via wcb.sendRaw() / wcb.broadcast() — the receiving WCB forwards the bytes
-//  to its serial port unmodified, with no Kyber_Remote config required.
+//  HCR command strings are the same regardless of transport (Serial or
+//  WCB-ESP-NOW) — short ASCII frames like "<SH3,QEH,QT>\n".  hcrFormatCommand()
+//  builds them; executeHcrAction() picks the destination (Serial3, Serial4,
+//  or a remote WCB) and writes the formatted payload there.
 //
-//  S5 is no longer available for HCR (it's reserved for SBUS OUT).
+//  We deliberately do NOT use the upstream HCRVocalizer library:
+//    • Its begin() is the only place it touches Serial — and we never call it
+//      (Serial3/4 baud comes from rcConfig.auxBaud via setup()'s begin call).
+//    • Its update()/receive() are no-ops without setRefreshSpeed() — which
+//      this sketch doesn't call.
+//    • Its I2C transport path has known upstream bugs that don't compile on
+//      modern ESP32 + GCC 14, and we never use I2C anyway.
+//  Eliminating the dependency keeps CI builds clean and removes a third-party
+//  library from the install chain.
+//
+//  S5 is reserved for SBUS OUT — not a valid HCR destination.
 // =============================================================================
-// NOTE: HCR_BAUD_RATE is effectively a DEAD parameter on ESP32. HCRVocalizer
-// only applies this baud inside its begin() — which this sketch never calls,
-// and whose SoftwareSerial path is #ifdef AVR/PIC32 anyway (no-op on ESP32).
-// The HCR port's real line rate is set by Serial3/4.begin() in setup() from
-// rcConfig.auxBaud (the single source of truth for S3/S4 baud). Keep this 9600
-// only so the constructor signature is satisfied — change aux baud in the GUI.
-#define HCR_BAUD_RATE 9600
-HCRVocalizer hcrS3(&Serial3, HCR_BAUD_RATE);
-HCRVocalizer hcrS4(&Serial4, HCR_BAUD_RATE);
 
 // =============================================================================
 //  SBUS + RC Config
@@ -536,33 +538,30 @@ static void executeHcrAction(const RcAction& a) {
     return;
   }
 
-  // ── Local serial transport (HCRVocalizer handles the framing) ─────────────
-  HCRVocalizer* hcr = nullptr;
-  if      (!strcmp(dest.target, "S3")) hcr = &hcrS3;
-  else if (!strcmp(dest.target, "S4")) hcr = &hcrS4;
-  // S5 is now SBUS OUT — no HCR routing available there. Legacy configs
-  // that point HCR at S5 will fall through to the "unknown port" log below.
-  if (!hcr) {
+  // ── Local serial transport ───────────────────────────────────────────────
+  // We format the same byte string the HCRVocalizer library would have
+  // written and push it directly to the bound aux-serial port.  No library
+  // dependency required — see hcrFormatCommand() for the formatter that
+  // mirrors HCRVocalizer's protocol.  S5 is reserved for SBUS OUT and is
+  // not a valid HCR destination; legacy configs pointing at S5 fall through
+  // to the "unknown port" log below.
+  Stream* hcrSerial = nullptr;
+  if      (!strcmp(dest.target, "S3")) hcrSerial = &Serial3;
+  else if (!strcmp(dest.target, "S4")) hcrSerial = &Serial4;
+  if (!hcrSerial) {
     dlog(DBG_HCR, "[DISPATCH] HCR: unknown serial port '%s' — skipped\n", dest.target);
     return;
   }
 
-  dlog(DBG_HCR, "[DISPATCH] HCR→%s  fn=%u chan=%d track=%d\n",
-        dest.target, a.fn, a.chan, a.track);
-  switch (a.fn) {
-    case 2:  hcr->SetEmotion(a.chan, a.track); hcr->update(); break;
-    case 3:  hcr->Trigger   (a.chan, a.track);                break;
-    case 4:  hcr->Stimulate (a.chan, a.track);                break;
-    case 5:  hcr->Overload  ();                               break;
-    case 6:  hcr->Muse      ();                               break;
-    case 8:  hcr->Stop      ();                               break;
-    case 9:  hcr->StopEmote ();                               break;
-    case 11: hcr->ResetEmotions();                            break;
-    case 14: hcr->PlayWAV   (a.chan, a.track); hcr->update(); break;
-    case 16: hcr->StopWAV   (a.chan);                         break;
-    case 17: hcr->SetVolume (a.chan, a.track);                break;
-    default: dlog(DBG_HCR, "[DISPATCH] HCR: unsupported fn=%u\n", a.fn); break;
+  String payload = hcrFormatCommand(a.fn, a.chan, a.track);
+  if (payload.length() == 0) {
+    dlog(DBG_HCR, "[DISPATCH] HCR-Serial: bad/unsupported fn=%u chan=%d track=%d — skipped\n",
+          a.fn, a.chan, a.track);
+    return;
   }
+  dlog(DBG_HCR, "[DISPATCH] HCR→%s  fn=%u chan=%d track=%d  %s",
+        dest.target, a.fn, a.chan, a.track, payload.c_str());
+  hcrSerial->print(payload);
 }
 
 // Build the WCB MP3 command string for an RA_MP3 action. Mirrors the WCB's
@@ -1292,8 +1291,8 @@ void handleSerialInput() {
                                    FunctionSwState, pwmToButton(oldValueMatrix), oldValueMatrix); break;
             // ── HCR local-serial TX diagnostics ──────────────────────────────
             // These bypass rcConfig.hcrDest AND button mapping entirely. They
-            // drive hcrS3/hcrS4 directly so a "nothing on the HCR" report can
-            // be split into:  firmware-TX-path/wiring  vs  config/dispatch.
+            // drive Serial3/Serial4 directly so a "nothing on the HCR" report
+            // can be split into:  firmware-TX-path/wiring  vs  config/dispatch.
             //   #L20 → HCR on S3 (GPIO15 TX): SetEmotion(HAPPY,80) + raw marker
             //   #L21 → HCR on S4 (GPIO17 TX): same
             // If the HCR reacts to #L20 but not to a mapped button, the bug is
@@ -1302,16 +1301,15 @@ void handleSerialInput() {
             // (TX/RX swap, ground, 3V3 vs 5V) or the EspSoftwareSerial port.
             case 20:
             case 21: {
-              HCRVocalizer* h = (fn == 20) ? &hcrS3 : &hcrS4;
-              const char* pn  = (fn == 20) ? "S3 (GPIO15)" : "S4 (GPIO17)";
-              Serial.printf("[HCR TEST] -> %s : SetEmotion(HAPPY,80) then raw <OH80,QEH>\n", pn);
-              h->SetEmotion(0 /*HAPPY*/, 80);
-              h->update();
-              // Also push a raw, fully-framed line straight at the port in case
-              // a library/marker mismatch is the issue — this is exactly the
-              // bytes a working HCR expects, with no library logic in between.
-              if (fn == 20) Serial3.print("<OH80,QEH>\n");
-              else          Serial4.print("<OH80,QEH>\n");
+              Stream*     h  = (fn == 20) ? (Stream*)&Serial3 : (Stream*)&Serial4;
+              const char* pn = (fn == 20) ? "S3 (GPIO15)"     : "S4 (GPIO17)";
+              Serial.printf("[HCR TEST] -> %s : SetEmotion(HAPPY,80) via hcrFormatCommand + raw frame\n", pn);
+              // Send the SetEmotion(HAPPY,80) payload we'd normally dispatch
+              // through hcrFormatCommand, plus a second raw line in case a
+              // formatter bug is the cause — both are the exact byte string a
+              // working HCR expects, no library logic in between.
+              h->print(hcrFormatCommand(2 /*SetEmotion*/, 0 /*HAPPY*/, 80));
+              h->print("<OH80,QEH>\n");
               Serial.println("[HCR TEST] sent — watch the HCR; check TX wiring to HCR RX, common ground");
               break;
             }

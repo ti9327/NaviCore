@@ -1242,7 +1242,7 @@
              style="width:72px;height:72px;object-fit:contain;opacity:0.9">
         <div style="font-size:11px;color:var(--muted);font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;letter-spacing:0.3px">
           RC Controller Config Tool &nbsp;·&nbsp; UI Version <span id="footer-ui-version">1.0</span>
-          &nbsp;·&nbsp; <span id="footer-dtg">221047QMAY26</span>
+          &nbsp;·&nbsp; <span id="footer-dtg">221114QMAY26</span>
           &nbsp;·&nbsp; FW <span id="footer-fw-version">—</span>
         </div>
       </div>
@@ -4882,8 +4882,16 @@ function updateCalibrationLive(msg) {
 
   // Auto-capture only on a confident, near-full-travel sweep (and only if
   // auto-advance is on — otherwise wait for an explicit Capture click).
+  //
+  // Switches are EXCLUDED from auto-capture: a 3-position switch flicked
+  // from position 1→2 already produces a ~820 SBUS-count swing — over the
+  // CALIB_SWING_AUTO threshold — so it would auto-advance before the user
+  // ever exercises position 3.  The user said the prior behaviour was
+  // "exercise the switch then click Next" — so switches always require an
+  // explicit Capture click now, regardless of auto-advance.
   if (calibrationState.stepCaptured) return;
-  if (calibrationState.autoAdvance && det && det.swing >= CALIB_SWING_AUTO) {
+  if (calibrationState.autoAdvance && det && det.swing >= CALIB_SWING_AUTO
+      && step.type !== 'switch') {
     calibrationState.stepCaptured = true;
     captureCalibrationValue();
   }

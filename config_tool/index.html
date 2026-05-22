@@ -1250,39 +1250,40 @@
              ─────────────────────────────────────────────────────────── -->
         <g class="tx-model tx-twinxlite">
 
-        <!-- Gamepad-style body: narrow top section with the screen, handles
-             flaring OUTWARD at the bottom for the hand-grips, and a deep
-             U-curve between the handles where your fingers wrap.  Matches
-             the Twin X-Lite's actual silhouette. -->
+        <!-- Gamepad-style body: WIDE top section that hosts the switches +
+             knobs (their bushings sit inside the body, levers stick up).
+             Handles flare OUTWARD at the bottom for the hand-grips with a
+             deep U-curve between them.  Roughly matches the Twin X-Lite. -->
         <path d="
-          M 220 180
-          L 780 180
-          Q 800 180 800 200
-          L 800 420
-          Q 880 460 880 560
-          Q 880 700 780 720
-          L 600 720
-          Q 560 720 540 695
-          Q 520 685 500 685
-          Q 480 685 460 695
-          Q 440 720 400 720
-          L 220 720
-          Q 120 700 120 560
-          Q 120 460 200 420
-          L 200 200
-          Q 200 180 220 180 Z" fill="url(#body-grad)" stroke="#0a1224" stroke-width="2" filter="url(#shadow)"/>
+          M 180 125
+          Q 165 125 165 145
+          L 165 420
+          Q 165 450 145 470
+          Q 110 510 110 580
+          Q 110 700 200 720
+          L 380 720
+          Q 420 720 440 695
+          Q 460 685 480 685
+          Q 500 685 520 685
+          Q 540 695 560 720
+          L 800 720
+          Q 890 700 890 580
+          Q 890 510 855 470
+          Q 835 450 835 420
+          L 835 145
+          Q 835 125 820 125 Z" fill="url(#body-grad)" stroke="#0a1224" stroke-width="2" filter="url(#shadow)"/>
         <!-- Highlight gradient overlay on the upper half for 3D feel -->
         <path d="
-          M 220 182
-          L 780 182
-          Q 798 182 798 200
-          L 798 380
-          L 202 380
-          L 202 200
-          Q 202 182 220 182 Z" fill="url(#body-highlight)" opacity="0.6"/>
-        <!-- Antenna stubs poking up from the top corners -->
-        <rect x="195" y="155" width="14" height="28" rx="4" fill="#1a1a1a" stroke="#0a0a0a"/>
-        <rect x="791" y="155" width="14" height="28" rx="4" fill="#1a1a1a" stroke="#0a0a0a"/>
+          M 180 127
+          L 820 127
+          Q 833 127 833 145
+          L 833 380
+          L 167 380
+          L 167 145
+          Q 167 127 180 127 Z" fill="url(#body-highlight)" opacity="0.6"/>
+        <!-- Antenna stubs poking up from the body's top corners -->
+        <rect x="170" y="92" width="14" height="36" rx="4" fill="#1a1a1a" stroke="#0a0a0a"/>
+        <rect x="816" y="92" width="14" height="36" rx="4" fill="#1a1a1a" stroke="#0a0a0a"/>
 
         <!-- Screen -->
         <rect x="330" y="220" width="340" height="170" rx="14" fill="#0a0a0a" stroke="#1a2a4a" stroke-width="2"/>
@@ -1409,19 +1410,22 @@
           <text x="554" y="525" text-anchor="middle" fill="#7acdf6" font-size="10">▼</text>
           <text x="554" y="555" text-anchor="middle" fill="#cdd6e8" font-size="11" font-weight="700">T3</text>
         </g>
-        <!-- T1: R-stick X trim (horizontal, right of right gimbal) -->
+        <!-- T1: R-stick X trim (horizontal, right of centre).  Label placed
+             ABOVE the rect so the face buttons just below (y=655+) don't
+             overwrite it. -->
         <g class="btn-zone" data-btn="11" onclick="openModal(11)">
-          <rect x="430" y="620" width="80" height="24" rx="4" fill="#1a2440" stroke="#0a0a0a"/>
-          <text x="442" y="638" text-anchor="middle" fill="#7acdf6" font-size="10">◀</text>
-          <text x="498" y="638" text-anchor="middle" fill="#7acdf6" font-size="10">▶</text>
-          <text x="470" y="660" text-anchor="middle" fill="#cdd6e8" font-size="11" font-weight="700">T1</text>
+          <text x="450" y="615" text-anchor="middle" fill="#cdd6e8" font-size="11" font-weight="700">T1</text>
+          <rect x="410" y="620" width="80" height="24" rx="4" fill="#1a2440" stroke="#0a0a0a"/>
+          <text x="422" y="638" text-anchor="middle" fill="#7acdf6" font-size="10">◀</text>
+          <text x="478" y="638" text-anchor="middle" fill="#7acdf6" font-size="10">▶</text>
         </g>
-        <!-- T4: L-stick X trim (horizontal) -->
+        <!-- T4: L-stick X trim (horizontal).  Separated from T1 so they
+             don't overlap; label above. -->
         <g class="btn-zone" data-btn="14" onclick="openModal(14)">
-          <rect x="494" y="620" width="80" height="24" rx="4" fill="#1a2440" stroke="#0a0a0a"/>
-          <text x="506" y="638" text-anchor="middle" fill="#7acdf6" font-size="10">◀</text>
-          <text x="562" y="638" text-anchor="middle" fill="#7acdf6" font-size="10">▶</text>
-          <text x="534" y="660" text-anchor="middle" fill="#cdd6e8" font-size="11" font-weight="700">T4</text>
+          <text x="550" y="615" text-anchor="middle" fill="#cdd6e8" font-size="11" font-weight="700">T4</text>
+          <rect x="510" y="620" width="80" height="24" rx="4" fill="#1a2440" stroke="#0a0a0a"/>
+          <text x="522" y="638" text-anchor="middle" fill="#7acdf6" font-size="10">◀</text>
+          <text x="578" y="638" text-anchor="middle" fill="#7acdf6" font-size="10">▶</text>
         </g>
         <!-- T5: extra trim, bottom-left -->
         <g class="btn-zone" data-btn="15" onclick="openModal(15)">
@@ -1491,7 +1495,7 @@
         <img src="../Images/r2logo.png" alt="R2 logo"
              style="width:72px;height:72px;object-fit:contain;opacity:0.9">
         <div style="font-size:11px;color:var(--muted);font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;letter-spacing:0.3px">
-          RC Controller Config Tool &nbsp;·&nbsp; <span id="footer-dtg">221428QMAY26</span>
+          RC Controller Config Tool &nbsp;·&nbsp; <span id="footer-dtg">221536QMAY26</span>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap">

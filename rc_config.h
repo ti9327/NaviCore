@@ -297,6 +297,21 @@ struct RcMaestroSlot {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+//  Transmitter model — drives the GUI's SVG, default channel assignments,
+//  switch/trim/knob/button labels, and which controls appear in the
+//  calibration wizard.  The firmware-side struct slots are FIXED at their
+//  maximums (RC_NUM_SWITCHES = 10, RC_NUM_KNOBS = 8, etc.) regardless of
+//  model — unused slots just sit at channel=0 ("inactive") for models with
+//  fewer physical controls.  This lets the firmware stay model-agnostic at
+//  the dispatch layer while the GUI presents the right physical layout.
+// ─────────────────────────────────────────────────────────────────────────────
+enum RcTxModel : uint8_t {
+  TX_MODEL_X18          = 0,  // FrSky Tandem X18 — full-size, 10 switches, 2 knobs, 2 sliders
+  TX_MODEL_TWIN_X_LITE  = 1,  // FrSky Twin X-Lite — handheld, 6 switches (SE/SF momentary), 2 knobs, no sliders, 4 face buttons
+  // Future: TX_MODEL_X20 = 2 (with optional 3-axis gimbals via J5/J6).
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 //  Full runtime config block
 //  buttonId  = (mode * 100) + btn  →  e.g. mode=1, btn=5 → 105
 //  flat index = (mode-1)*19 + (btn-1)  → 0–56
@@ -307,6 +322,7 @@ struct RcMaestroSlot {
 inline int rcMapIndex(int mode, int btn) { return (mode - 1) * 19 + (btn - 1); }
 
 struct RcConfig {
+  uint8_t        txModel;        // RcTxModel — drives GUI layout + defaults
   int            tapWindowMs;
   int            matrixChannel;   // SBUS channel carrying the multiplexed button matrix
   // Consecutive in-band SBUS frames a matrix button must hold before a press
@@ -403,6 +419,7 @@ static inline void setTier3(RcTier& tier, RcAction a0, RcAction a1, RcAction a2)
 //  Switch channel assignments mirror the Kyber ELRS layout (SA-SH on CH8-CH15).
 // ─────────────────────────────────────────────────────────────────────────────
 void rcConfigLoadDefaults() {
+  rcConfig.txModel       = TX_MODEL_X18;  // GUI default; user picks via Config → Transmitter
   rcConfig.tapWindowMs   = 500;
   rcConfig.matrixChannel = 7;            // button matrix on CH7
   rcConfig.matrixDebounceFrames = 1;     // digital SBUS source — fastest; bump for analog matrix
@@ -622,6 +639,7 @@ static bool actionFromJson(const JsonObject& obj, RcAction& a) {
 String rcConfigToJSON() {
   DynamicJsonDocument doc(32768);
 
+  doc["txModel"]              = rcConfig.txModel;          // RcTxModel — GUI uses this to swap SVG / labels
   doc["tapWindowMs"]          = rcConfig.tapWindowMs;
   doc["matrixChannel"]        = rcConfig.matrixChannel;
   doc["matrixDebounceFrames"] = rcConfig.matrixDebounceFrames;
@@ -744,6 +762,7 @@ String rcConfigToJSON() {
 //  Load config from JSON object (from SET_CONFIG WebSocket message)
 // ─────────────────────────────────────────────────────────────────────────────
 bool rcConfigFromJSON(const JsonObject& doc) {
+  if (doc.containsKey("txModel"))       rcConfig.txModel       = (uint8_t)(doc["txModel"] | (int)TX_MODEL_X18);
   if (doc.containsKey("tapWindowMs"))   rcConfig.tapWindowMs   = doc["tapWindowMs"];
   if (doc.containsKey("matrixChannel")) rcConfig.matrixChannel = doc["matrixChannel"];
   if (doc.containsKey("matrixDebounceFrames")) {
@@ -927,6 +946,7 @@ void rcConfigSaveNVS() {
   Preferences prefs;
   prefs.begin("rcfg", false);
 
+  prefs.putUChar("tx",     rcConfig.txModel);   // transmitter model (RcTxModel)
   prefs.putInt("cfg",      rcConfig.tapWindowMs);
   prefs.putInt("matrixCh", rcConfig.matrixChannel);
   prefs.putInt("mtxDeb",   rcConfig.matrixDebounceFrames);
@@ -1090,6 +1110,7 @@ void rcConfigLoadNVS() {
   Preferences prefs;
   prefs.begin("rcfg", true);
 
+  if (prefs.isKey("tx"))       rcConfig.txModel       = prefs.getUChar("tx",     rcConfig.txModel);
   if (prefs.isKey("cfg"))      rcConfig.tapWindowMs   = prefs.getInt("cfg",      rcConfig.tapWindowMs);
   if (prefs.isKey("matrixCh")) rcConfig.matrixChannel = prefs.getInt("matrixCh", rcConfig.matrixChannel);
   if (prefs.isKey("mtxDeb")) {

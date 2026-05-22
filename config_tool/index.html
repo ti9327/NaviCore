@@ -229,6 +229,11 @@
   /* ── Transmitter SVG area ── */
   .tx-wrap { max-width: 850px; margin: 0 auto; }
   .tx-wrap svg { width: 100%; height: auto; }
+  /* Per-model SVG visibility — applyTxModel() sets one of these classes
+     on <body>; everything inside the non-active .tx-model group hides. */
+  .tx-model { display: none; }
+  body.tx-show-x18        .tx-x18        { display: inline; }
+  body.tx-show-twinxlite  .tx-twinxlite  { display: inline; }
 
   /* Clickable button zones — base styling (hover + "configured" indicator) */
   .btn-zone { cursor: pointer; transition: opacity .15s; }
@@ -684,7 +689,7 @@
   .calib-instruction  { font-size: 15px; font-weight: 600; color: var(--text); line-height: 1.4; white-space: pre-wrap; }
 </style>
 </head>
-<body>
+<body class="tx-show-x18"><!-- Default model; applyTxModel() swaps when user picks a different one -->
 
 <!-- Brand box — fixed-position overhang anchored top-left. Lives OUTSIDE
      the sidebar so there's no gap above the logo, but JS keeps its width
@@ -852,6 +857,14 @@
             <feDropShadow dx="0" dy="6" stdDeviation="10" flood-opacity=".55"/>
           </filter>
         </defs>
+
+        <!-- ───────────────────────────────────────────────────────────
+             X18 model — full FrSky Tandem X18 layout.  Entire content
+             below (body, screen, switches, gimbals, trims, knobs,
+             sliders, face buttons) belongs to this model.  Visibility
+             toggled by .tx-show-x18 CSS rule on <body>.
+             ─────────────────────────────────────────────────────────── -->
+        <g class="tx-model tx-x18">
 
         <!-- Main body -->
         <path d="
@@ -1219,6 +1232,215 @@
           <circle cx="680" cy="722" r="7"  fill="#1a1a1a"/>
           <text x="680" y="725" text-anchor="middle" fill="#a0a8b8" font-size="9" font-weight="700">6</text>
         </g>
+
+        </g><!-- /tx-x18 -->
+
+        <!-- ───────────────────────────────────────────────────────────
+             Twin X-Lite model — handheld FrSky controller.  Layout is
+             stylised (not pixel-accurate); controls are positioned to
+             approximate the real X-Lite top-down view: switches & knobs
+             across the top, sticks below centre, trims around sticks,
+             4 face buttons in the centre-bottom row.
+
+             Visibility toggled by .tx-show-twinxlite CSS rule on <body>.
+             The artwork can be refined in follow-up commits — what
+             matters now is that every control is clickable, named,
+             and the channel-grid / calibration / animation code can
+             all find their elements via the standard data-attrs.
+             ─────────────────────────────────────────────────────────── -->
+        <g class="tx-model tx-twinxlite">
+
+        <!-- Compact handheld body -->
+        <path d="
+          M 150 220
+          Q 150 180 200 180
+          L 800 180
+          Q 850 180 850 220
+          L 850 620
+          Q 850 700 770 700
+          L 690 700
+          Q 670 700 660 685
+          Q 645 670 620 670
+          L 380 670
+          Q 355 670 340 685
+          Q 330 700 310 700
+          L 230 700
+          Q 150 700 150 620 Z" fill="url(#body-grad)" stroke="#0a1224" stroke-width="2" filter="url(#shadow)"/>
+
+        <!-- Screen -->
+        <rect x="330" y="220" width="340" height="170" rx="14" fill="#0a0a0a" stroke="#1a2a4a" stroke-width="2"/>
+        <rect x="342" y="232" width="316" height="146" rx="4" fill="url(#screen-grad)"/>
+        <text x="650" y="252" text-anchor="end" fill="#a8b2c8" font-size="13" font-weight="700" font-style="italic" font-family="serif">FrSky</text>
+        <rect x="354" y="262" width="292" height="22" rx="3" fill="#1a3a6a"/>
+        <text x="362" y="278" fill="#7acdf6" font-size="11" font-family="monospace" font-weight="700">RC Controller</text>
+        <text x="362" y="304" fill="#5a9ac6" font-size="10" font-family="monospace">Model: TWIN X-LITE</text>
+        <text x="362" y="320" fill="#5a9ac6" font-size="10" font-family="monospace">RX:    Connected</text>
+        <rect x="354" y="332" width="292" height="40" rx="4" fill="#0a1a2e" stroke="#1a3a6a"/>
+        <text x="362" y="350" fill="#5a9ac6" font-size="10" font-family="monospace">UI:    <tspan id="tx-screen-ui-version-xl" fill="#7acdf6" font-weight="700">v0.2.0</tspan></text>
+        <text x="362" y="366" fill="#5a9ac6" font-size="10" font-family="monospace">FW:    <tspan id="tx-screen-fw-version-xl" fill="#7acdf6" font-weight="700">—</tspan></text>
+
+        <!-- ── Switches across the top: SA SE SC | knobs | SD SF SB ── -->
+        <!-- SA (3-pos, left side) -->
+        <g class="switch-zone" data-sw="SA" onclick="openSwitchModal('SA')">
+          <circle cx="200" cy="155" r="10" fill="url(#bush-grad)" stroke="#0a0a0a"/>
+          <circle cx="200" cy="155" r="5"  fill="#0a0a0a"/>
+          <rect x="197" y="100" width="6" height="55" rx="2" fill="url(#lever-grad)" stroke="#0a0a0a" stroke-width="0.5"/>
+          <rect x="193" y="92"  width="14" height="14" rx="3" fill="#e8e8e8" stroke="#0a0a0a"/>
+          <text x="200" y="180" text-anchor="middle" fill="#cdd6e8" font-size="11" font-weight="700">SA</text>
+        </g>
+        <!-- SE (momentary push button) -->
+        <g class="switch-zone" data-sw="SE" onclick="openSwitchModal('SE')">
+          <circle cx="250" cy="135" r="13" fill="#1a1a1a" stroke="#3a3a3a" stroke-width="2"/>
+          <circle cx="250" cy="135" r="7"  fill="#dd2a2a"/>
+          <text x="250" y="170" text-anchor="middle" fill="#cdd6e8" font-size="11" font-weight="700">SE</text>
+          <text x="250" y="183" text-anchor="middle" fill="#888" font-size="8">momentary</text>
+        </g>
+        <!-- SC (3-pos) -->
+        <g class="switch-zone" data-sw="SC" onclick="openSwitchModal('SC')">
+          <circle cx="305" cy="155" r="10" fill="url(#bush-grad)" stroke="#0a0a0a"/>
+          <circle cx="305" cy="155" r="5"  fill="#0a0a0a"/>
+          <rect x="302" y="100" width="6" height="55" rx="2" fill="url(#lever-grad)" stroke="#0a0a0a" stroke-width="0.5"/>
+          <rect x="298" y="92"  width="14" height="14" rx="3" fill="#e8e8e8" stroke="#0a0a0a"/>
+          <text x="305" y="180" text-anchor="middle" fill="#cdd6e8" font-size="11" font-weight="700">SC</text>
+        </g>
+        <!-- S1 knob -->
+        <g class="knob-zone" data-knob="S1" onclick="openKnobModal('S1')">
+          <circle cx="430" cy="135" r="22" fill="url(#knob-grad)" stroke="#1a1a1a" stroke-width="2"/>
+          <line x1="430" y1="135" x2="430" y2="117" stroke="#0a0a0a" stroke-width="3"/>
+          <text x="430" y="180" text-anchor="middle" fill="#cdd6e8" font-size="11" font-weight="700">S1</text>
+        </g>
+        <!-- S2 knob -->
+        <g class="knob-zone" data-knob="S2" onclick="openKnobModal('S2')">
+          <circle cx="570" cy="135" r="22" fill="url(#knob-grad)" stroke="#1a1a1a" stroke-width="2"/>
+          <line x1="570" y1="135" x2="570" y2="117" stroke="#0a0a0a" stroke-width="3"/>
+          <text x="570" y="180" text-anchor="middle" fill="#cdd6e8" font-size="11" font-weight="700">S2</text>
+        </g>
+        <!-- SD (3-pos) -->
+        <g class="switch-zone" data-sw="SD" onclick="openSwitchModal('SD')">
+          <circle cx="695" cy="155" r="10" fill="url(#bush-grad)" stroke="#0a0a0a"/>
+          <circle cx="695" cy="155" r="5"  fill="#0a0a0a"/>
+          <rect x="692" y="100" width="6" height="55" rx="2" fill="url(#lever-grad)" stroke="#0a0a0a" stroke-width="0.5"/>
+          <rect x="688" y="92"  width="14" height="14" rx="3" fill="#e8e8e8" stroke="#0a0a0a"/>
+          <text x="695" y="180" text-anchor="middle" fill="#cdd6e8" font-size="11" font-weight="700">SD</text>
+        </g>
+        <!-- SF (momentary push button) -->
+        <g class="switch-zone" data-sw="SF" onclick="openSwitchModal('SF')">
+          <circle cx="750" cy="135" r="13" fill="#1a1a1a" stroke="#3a3a3a" stroke-width="2"/>
+          <circle cx="750" cy="135" r="7"  fill="#dd2a2a"/>
+          <text x="750" y="170" text-anchor="middle" fill="#cdd6e8" font-size="11" font-weight="700">SF</text>
+          <text x="750" y="183" text-anchor="middle" fill="#888" font-size="8">momentary</text>
+        </g>
+        <!-- SB (3-pos, rightmost) -->
+        <g class="switch-zone" data-sw="SB" onclick="openSwitchModal('SB')">
+          <circle cx="800" cy="155" r="10" fill="url(#bush-grad)" stroke="#0a0a0a"/>
+          <circle cx="800" cy="155" r="5"  fill="#0a0a0a"/>
+          <rect x="797" y="100" width="6" height="55" rx="2" fill="url(#lever-grad)" stroke="#0a0a0a" stroke-width="0.5"/>
+          <rect x="793" y="92"  width="14" height="14" rx="3" fill="#e8e8e8" stroke="#0a0a0a"/>
+          <text x="800" y="180" text-anchor="middle" fill="#cdd6e8" font-size="11" font-weight="700">SB</text>
+        </g>
+
+        <!-- ── Left gimbal (J3 = L-X, J4 = L-Y) ── -->
+        <rect x="220" y="430" width="180" height="180" rx="22" fill="#000" stroke="#1a1a1a" stroke-width="2"/>
+        <rect x="232" y="442" width="156" height="156" rx="14" fill="#0a0a0a"/>
+        <line x1="310" y1="445" x2="310" y2="459" stroke="#5a5a5a" stroke-width="1.5"/>
+        <line x1="310" y1="581" x2="310" y2="595" stroke="#5a5a5a" stroke-width="1.5"/>
+        <line x1="236" y1="520" x2="250" y2="520" stroke="#5a5a5a" stroke-width="1.5"/>
+        <line x1="370" y1="520" x2="384" y2="520" stroke="#5a5a5a" stroke-width="1.5"/>
+        <rect x="278" y="488" width="64" height="64" rx="8" fill="#000" stroke="#252525"/>
+        <circle id="leftGimbalCap-xl"  cx="310" cy="520" r="15" fill="url(#cap-grad)" stroke="#1a1a1a"/>
+        <circle id="leftGimbalDot-xl"  cx="310" cy="520" r="6"  fill="#0a0a0a"/>
+        <g class="knob-zone" data-knob="J3" onclick="openKnobModal('J3')">
+          <circle cx="250" cy="520" r="10" fill="#08101e" stroke="#1a2a4a"/>
+          <text x="250" y="524" text-anchor="middle" fill="#7acdf6" font-size="10" font-weight="700">J3</text>
+        </g>
+        <g class="knob-zone" data-knob="J4" onclick="openKnobModal('J4')">
+          <circle cx="310" cy="460" r="10" fill="#08101e" stroke="#1a2a4a"/>
+          <text x="310" y="464" text-anchor="middle" fill="#7acdf6" font-size="10" font-weight="700">J4</text>
+        </g>
+
+        <!-- ── Right gimbal (J1 = R-X, J2 = R-Y) ── -->
+        <rect x="600" y="430" width="180" height="180" rx="22" fill="#000" stroke="#1a1a1a" stroke-width="2"/>
+        <rect x="612" y="442" width="156" height="156" rx="14" fill="#0a0a0a"/>
+        <line x1="690" y1="445" x2="690" y2="459" stroke="#5a5a5a" stroke-width="1.5"/>
+        <line x1="690" y1="581" x2="690" y2="595" stroke="#5a5a5a" stroke-width="1.5"/>
+        <line x1="616" y1="520" x2="630" y2="520" stroke="#5a5a5a" stroke-width="1.5"/>
+        <line x1="750" y1="520" x2="764" y2="520" stroke="#5a5a5a" stroke-width="1.5"/>
+        <rect x="658" y="488" width="64" height="64" rx="8" fill="#000" stroke="#252525"/>
+        <circle id="rightGimbalCap-xl"  cx="690" cy="520" r="15" fill="url(#cap-grad)" stroke="#1a1a1a"/>
+        <circle id="rightGimbalDot-xl"  cx="690" cy="520" r="6"  fill="#0a0a0a"/>
+        <g class="knob-zone" data-knob="J2" onclick="openKnobModal('J2')">
+          <circle cx="690" cy="460" r="10" fill="#08101e" stroke="#1a2a4a"/>
+          <text x="690" y="464" text-anchor="middle" fill="#7acdf6" font-size="10" font-weight="700">J2</text>
+        </g>
+        <g class="knob-zone" data-knob="J1" onclick="openKnobModal('J1')">
+          <circle cx="750" cy="520" r="10" fill="#08101e" stroke="#1a2a4a"/>
+          <text x="750" y="524" text-anchor="middle" fill="#7acdf6" font-size="10" font-weight="700">J1</text>
+        </g>
+
+        <!-- ── Trims T1-T6 (all +/- digital buttons) ── -->
+        <!-- T2: R-stick Y trim (vertical, between sticks - left of right stick) -->
+        <g class="btn-zone" data-btn="12" onclick="openModal(12)">
+          <rect x="430" y="455" width="32" height="80" rx="4" fill="#1a2440" stroke="#0a0a0a"/>
+          <text x="446" y="475" text-anchor="middle" fill="#7acdf6" font-size="10">▲</text>
+          <text x="446" y="525" text-anchor="middle" fill="#7acdf6" font-size="10">▼</text>
+          <text x="446" y="555" text-anchor="middle" fill="#cdd6e8" font-size="11" font-weight="700">T2</text>
+        </g>
+        <!-- T3: L-stick Y trim (vertical, right of left stick) -->
+        <g class="btn-zone" data-btn="13" onclick="openModal(13)">
+          <rect x="538" y="455" width="32" height="80" rx="4" fill="#1a2440" stroke="#0a0a0a"/>
+          <text x="554" y="475" text-anchor="middle" fill="#7acdf6" font-size="10">▲</text>
+          <text x="554" y="525" text-anchor="middle" fill="#7acdf6" font-size="10">▼</text>
+          <text x="554" y="555" text-anchor="middle" fill="#cdd6e8" font-size="11" font-weight="700">T3</text>
+        </g>
+        <!-- T1: R-stick X trim (horizontal, right of right gimbal) -->
+        <g class="btn-zone" data-btn="11" onclick="openModal(11)">
+          <rect x="430" y="620" width="80" height="24" rx="4" fill="#1a2440" stroke="#0a0a0a"/>
+          <text x="442" y="638" text-anchor="middle" fill="#7acdf6" font-size="10">◀</text>
+          <text x="498" y="638" text-anchor="middle" fill="#7acdf6" font-size="10">▶</text>
+          <text x="470" y="660" text-anchor="middle" fill="#cdd6e8" font-size="11" font-weight="700">T1</text>
+        </g>
+        <!-- T4: L-stick X trim (horizontal) -->
+        <g class="btn-zone" data-btn="14" onclick="openModal(14)">
+          <rect x="494" y="620" width="80" height="24" rx="4" fill="#1a2440" stroke="#0a0a0a"/>
+          <text x="506" y="638" text-anchor="middle" fill="#7acdf6" font-size="10">◀</text>
+          <text x="562" y="638" text-anchor="middle" fill="#7acdf6" font-size="10">▶</text>
+          <text x="534" y="660" text-anchor="middle" fill="#cdd6e8" font-size="11" font-weight="700">T4</text>
+        </g>
+        <!-- T5: extra trim, bottom-left -->
+        <g class="btn-zone" data-btn="15" onclick="openModal(15)">
+          <rect x="220" y="620" width="80" height="24" rx="4" fill="#1a2440" stroke="#0a0a0a"/>
+          <text x="232" y="638" text-anchor="middle" fill="#7acdf6" font-size="10">◀</text>
+          <text x="288" y="638" text-anchor="middle" fill="#7acdf6" font-size="10">▶</text>
+          <text x="260" y="660" text-anchor="middle" fill="#cdd6e8" font-size="11" font-weight="700">T5</text>
+        </g>
+        <!-- T6: extra trim, bottom-right -->
+        <g class="btn-zone" data-btn="16" onclick="openModal(16)">
+          <rect x="700" y="620" width="80" height="24" rx="4" fill="#1a2440" stroke="#0a0a0a"/>
+          <text x="712" y="638" text-anchor="middle" fill="#7acdf6" font-size="10">◀</text>
+          <text x="768" y="638" text-anchor="middle" fill="#7acdf6" font-size="10">▶</text>
+          <text x="740" y="660" text-anchor="middle" fill="#cdd6e8" font-size="11" font-weight="700">T6</text>
+        </g>
+
+        <!-- ── Face buttons B1-B4 (single SBUS matrix channel) ── -->
+        <g class="btn-zone" data-btn="1" onclick="openModal(1)">
+          <rect x="420" y="700" width="32" height="20" rx="3" fill="#1a1a2a" stroke="#3a3a4a" stroke-width="1.5"/>
+          <text x="436" y="715" text-anchor="middle" fill="#a0a8b8" font-size="10" font-weight="700">1</text>
+        </g>
+        <g class="btn-zone" data-btn="2" onclick="openModal(2)">
+          <rect x="460" y="700" width="32" height="20" rx="3" fill="#1a1a2a" stroke="#3a3a4a" stroke-width="1.5"/>
+          <text x="476" y="715" text-anchor="middle" fill="#a0a8b8" font-size="10" font-weight="700">2</text>
+        </g>
+        <g class="btn-zone" data-btn="3" onclick="openModal(3)">
+          <rect x="500" y="700" width="32" height="20" rx="3" fill="#1a1a2a" stroke="#3a3a4a" stroke-width="1.5"/>
+          <text x="516" y="715" text-anchor="middle" fill="#a0a8b8" font-size="10" font-weight="700">3</text>
+        </g>
+        <g class="btn-zone" data-btn="4" onclick="openModal(4)">
+          <rect x="540" y="700" width="32" height="20" rx="3" fill="#1a1a2a" stroke="#3a3a4a" stroke-width="1.5"/>
+          <text x="556" y="715" text-anchor="middle" fill="#a0a8b8" font-size="10" font-weight="700">4</text>
+        </g>
+
+        </g><!-- /tx-twinxlite -->
+
       </svg>
 
       <!-- Per-button summary list -->
@@ -1249,7 +1471,7 @@
         <img src="../Images/r2logo.png" alt="R2 logo"
              style="width:72px;height:72px;object-fit:contain;opacity:0.9">
         <div style="font-size:11px;color:var(--muted);font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;letter-spacing:0.3px">
-          RC Controller Config Tool &nbsp;·&nbsp; <span id="footer-dtg">221319QMAY26</span>
+          RC Controller Config Tool &nbsp;·&nbsp; <span id="footer-dtg">221417QMAY26</span>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap">
@@ -1321,6 +1543,7 @@
     <div class="cfg-body">
       <nav class="cfg-tabs" id="cfg-tabs">
         <button class="cfg-tab active" type="button" data-tab="channels">Channels</button>
+        <button class="cfg-tab"        type="button" data-tab="transmitter">Transmitter</button>
         <button class="cfg-tab"        type="button" data-tab="wcb">WCB Network</button>
         <button class="cfg-tab"        type="button" data-tab="hcr">HCR</button>
         <button class="cfg-tab"        type="button" data-tab="mp3">MP3 Trigger</button>
@@ -1411,6 +1634,34 @@
                 <thead><tr><th>Axis</th><th>Channel</th><th>Reverse</th></tr></thead>
                 <tbody></tbody>
               </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- ════════════════════════════════════════════════════════════
+             Transmitter tab — pick which TX model the GUI represents.
+             Drives: which SVG is shown, default channel assignments per
+             control, calibration step list, and (eventually) per-model
+             defaults pushed to the firmware via SET_CONFIG.
+             ════════════════════════════════════════════════════════════ -->
+        <section class="cfg-pane" id="cfg-pane-transmitter">
+          <h2 class="cfg-pane-title">Transmitter</h2>
+          <div class="sb-section">
+            <h3>Model <small>which physical transmitter you're using</small></h3>
+            <div class="wcb-send-row" style="margin-top:8px">
+              <label>Model:</label>
+              <select id="tx-model-select" onchange="onTxModelChange(+this.value)">
+                <option value="0">FrSky Tandem X18</option>
+                <option value="1">FrSky Twin X-Lite</option>
+              </select>
+              <small style="color:var(--muted);font-size:11px;margin-left:10px" id="tx-model-help"></small>
+            </div>
+            <div class="noconn" style="margin-top:8px">
+              The model determines which SVG is displayed, which controls
+              appear in calibration, and the default channel assignments for
+              each control.  Calibration still overrides per-control channels
+              individually, so a custom TX mixer setup still works — the model
+              just provides sensible starting points.
             </div>
           </div>
         </section>
@@ -1805,19 +2056,102 @@ const NUM_MAESTRO_SLOTS = 8;
 //   S1, S2 → Knob
 //   LS, RS → Slider
 //   J1-J4  → Joystick axis (NOT a knob; user complained about the wording)
-const knobDefaults = {
-  S1: { channel: 5, function: 0, reverse: false, outputs: [], kind: 'knob',     friendly: 'S1 knob' },
-  S2: { channel: 6, function: 0, reverse: false, outputs: [], kind: 'knob',     friendly: 'S2 knob' },
-  LS: { channel: 18, function: 0, reverse: false, outputs: [], kind: 'slider',   friendly: 'LS slider' },
-  RS: { channel: 19, function: 0, reverse: false, outputs: [], kind: 'slider',   friendly: 'RS slider' },
-  J1: { channel: 1, function: 0, reverse: false, outputs: [], kind: 'joystick', friendly: 'J1 — R-stick X (AIL)' },
-  J2: { channel: 2, function: 0, reverse: false, outputs: [], kind: 'joystick', friendly: 'J2 — R-stick Y (ELE)' },
-  // Greg's TX sends L-stick X on CH3 and L-stick Y on CH4 (not the standard
-  // AETR mapping which would have CH3=THR/L-Y and CH4=RUD/L-X). Defaults below
-  // match his actual TX output — confirmed via calibration after the xyxy rename.
-  J3: { channel: 3, function: 0, reverse: false, outputs: [], kind: 'joystick', friendly: 'J3 — L-stick X (RUD)' },
-  J4: { channel: 4, function: 0, reverse: false, outputs: [], kind: 'joystick', friendly: 'J4 — L-stick Y (THR)' },
+// ─── Per-transmitter-model metadata ─────────────────────────────────────────
+// IDs match the RcTxModel enum in firmware/rc_config.h.  Each entry lists
+// which physical controls EXIST on that transmitter, plus the per-control
+// default channel assignments and types.  The live `knobDefaults` and
+// `switchDefaults` below are reassigned to point at the active model's
+// tables whenever the user changes models, so all existing reads keep
+// working without per-call lookups.
+const TX_MODEL_X18         = 0;
+const TX_MODEL_TWIN_X_LITE = 1;
+
+const TX_MODELS = {
+  [TX_MODEL_X18]: {
+    id:    TX_MODEL_X18,
+    name:  'FrSky Tandem X18',
+    short: 'X18',
+    svgClass:  'tx-x18',
+    buttons:   [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18],   // 18 face buttons via SBUS matrix
+    switches:  ['SA','SB','SC','SD','SE','SF','SG','SH','SI','SJ'],
+    knobs:     ['S1','S2','LS','RS','J1','J2','J3','J4'],
+    // Per-control defaults for this model
+    knobDefaults: {
+      S1: { channel: 5, function: 0, reverse: false, outputs: [], kind: 'knob',     friendly: 'S1 knob' },
+      S2: { channel: 6, function: 0, reverse: false, outputs: [], kind: 'knob',     friendly: 'S2 knob' },
+      LS: { channel: 18, function: 0, reverse: false, outputs: [], kind: 'slider',  friendly: 'LS slider' },
+      RS: { channel: 19, function: 0, reverse: false, outputs: [], kind: 'slider',  friendly: 'RS slider' },
+      J1: { channel: 1, function: 0, reverse: false, outputs: [], kind: 'joystick', friendly: 'J1 — R-stick X (AIL)' },
+      J2: { channel: 2, function: 0, reverse: false, outputs: [], kind: 'joystick', friendly: 'J2 — R-stick Y (ELE)' },
+      J3: { channel: 3, function: 0, reverse: false, outputs: [], kind: 'joystick', friendly: 'J3 — L-stick X (RUD)' },
+      J4: { channel: 4, function: 0, reverse: false, outputs: [], kind: 'joystick', friendly: 'J4 — L-stick Y (THR)' },
+    },
+    switchDefaults: {
+      SA: {channel:  8, positions: 3}, SB: {channel:  9, positions: 3},
+      SC: {channel: 10, positions: 3}, SD: {channel: 11, positions: 3},
+      SE: {channel: 12, positions: 3}, SF: {channel: 13, positions: 2},
+      SG: {channel: 14, positions: 3}, SH: {channel: 15, positions: 2},
+      SI: {channel: 16, positions: 2}, SJ: {channel: 17, positions: 2},
+    },
+  },
+
+  [TX_MODEL_TWIN_X_LITE]: {
+    id:    TX_MODEL_TWIN_X_LITE,
+    name:  'FrSky Twin X-Lite',
+    short: 'X-Lite',
+    svgClass:  'tx-twinxlite',
+    buttons:   [1,2,3,4],   // 4 face buttons (B1-B4) via SBUS matrix
+    switches:  ['SA','SB','SC','SD','SE','SF'],   // SE/SF are momentary push buttons
+    knobs:     ['S1','S2','J1','J2','J3','J4'],   // no LS/RS sliders on this model
+    knobDefaults: {
+      S1: { channel: 5, function: 0, reverse: false, outputs: [], kind: 'knob',     friendly: 'S1 knob' },
+      S2: { channel: 6, function: 0, reverse: false, outputs: [], kind: 'knob',     friendly: 'S2 knob' },
+      J1: { channel: 1, function: 0, reverse: false, outputs: [], kind: 'joystick', friendly: 'J1 — R-stick X (AIL)' },
+      J2: { channel: 2, function: 0, reverse: false, outputs: [], kind: 'joystick', friendly: 'J2 — R-stick Y (ELE)' },
+      J3: { channel: 3, function: 0, reverse: false, outputs: [], kind: 'joystick', friendly: 'J3 — L-stick X (RUD)' },
+      J4: { channel: 4, function: 0, reverse: false, outputs: [], kind: 'joystick', friendly: 'J4 — L-stick Y (THR)' },
+    },
+    switchDefaults: {
+      SA: {channel:  8, positions: 3}, SB: {channel:  9, positions: 3},
+      SC: {channel: 10, positions: 3}, SD: {channel: 11, positions: 3},
+      SE: {channel: 12, positions: 2}, SF: {channel: 13, positions: 2},
+    },
+  },
 };
+
+// Live defaults — initialised to X18 and reassigned by applyTxModel().
+// Kept as `let` (not `const`) so existing call sites `knobDefaults[name]`
+// don't need rewriting; they always see the current model's table.
+let knobDefaults   = TX_MODELS[TX_MODEL_X18].knobDefaults;
+let switchDefaults = TX_MODELS[TX_MODEL_X18].switchDefaults;
+let activeTxModel  = TX_MODEL_X18;
+
+// Switch over to a different transmitter model.  Updates the live default
+// tables, swaps SVG visibility, and re-renders every panel that depends on
+// the model (calibration steps, axes/switches tables, threshold table,
+// SVG-driven channel-grid labels).  Callers can pass `persist=false` if
+// they're applying an inbound CONFIG message (we don't want to send the
+// model back to the board).
+function applyTxModel(modelId, persist = true) {
+  const m = TX_MODELS[modelId] || TX_MODELS[TX_MODEL_X18];
+  activeTxModel  = m.id;
+  knobDefaults   = m.knobDefaults;
+  switchDefaults = m.switchDefaults;
+  if (persist && config) config.txModel = m.id;
+
+  // Show only the active model's SVG group.  Each model's <g> in the
+  // transmitter SVG carries a class like "tx-x18" / "tx-twinxlite".  We
+  // toggle a top-level CSS class on <body> so a single rule per model
+  // controls visibility.
+  document.body.classList.remove('tx-show-x18', 'tx-show-twinxlite');
+  document.body.classList.add('tx-show-' + m.short.toLowerCase().replace(/[^a-z0-9]/g, ''));
+
+  // Re-render every panel that bakes in model-specific defaults.
+  if (typeof renderAxesTable      === 'function') renderAxesTable();
+  if (typeof renderSwitchesTable  === 'function') renderSwitchesTable();
+  if (typeof renderThresholds     === 'function') renderThresholds();
+  if (typeof renderKnobHighlights === 'function') renderKnobHighlights();
+}
 
 // Friendly title for the modal header — picks the right noun for the source.
 function sourceTitleFor(name) {
@@ -1855,18 +2189,9 @@ function hcrAudioChanOptions(selected) {
   ].join('');
 }
 
-const switchDefaults = {
-  SA: {channel:  8, positions: 3},
-  SB: {channel:  9, positions: 3},
-  SC: {channel: 10, positions: 3},
-  SD: {channel: 11, positions: 3},
-  SE: {channel: 12, positions: 3},
-  SF: {channel: 13, positions: 2},
-  SG: {channel: 14, positions: 3},
-  SH: {channel: 15, positions: 2},
-  SI: {channel: 16, positions: 2},
-  SJ: {channel: 17, positions: 2},
-};
+// switchDefaults is now defined via TX_MODELS metadata above.  The let-binding
+// near TX_MODELS keeps existing reads (`switchDefaults[name]`) working —
+// `applyTxModel()` reassigns it on model change.
 
 let config = {
   tapWindowMs:   500,
@@ -2076,10 +2401,12 @@ function setConnected(v) {
   // Clear the firmware-version readouts on disconnect — they're stale until
   // the next PONG.  (When v=true we leave them alone; PONG will populate them.)
   if (!v) {
-    const fwScreen = document.getElementById('tx-screen-fw-version');
-    const fwTab    = document.getElementById('fw-current-version');
-    if (fwScreen) fwScreen.textContent = '—';
-    if (fwTab)    fwTab.textContent    = '—';
+    const fwScreen   = document.getElementById('tx-screen-fw-version');
+    const fwScreenXL = document.getElementById('tx-screen-fw-version-xl');
+    const fwTab      = document.getElementById('fw-current-version');
+    if (fwScreen)   fwScreen.textContent   = '—';
+    if (fwScreenXL) fwScreenXL.textContent = '—';
+    if (fwTab)      fwTab.textContent      = '—';
   }
   ['btn-refresh','btn-save','btn-hwsetup-save','btn-defaults','btn-qs-send','btn-wcb-reboot'].forEach(id => {
     const el = document.getElementById(id);
@@ -2554,13 +2881,16 @@ function handleBoardMessage(line) {
   if (msg.type === 'PONG') {
     document.getElementById('status-text').textContent = 'Connected ✓';
     // The board reports its firmware version (FW_VERSION = base_DTG)
-    // in the PONG reply; show it on the TX screen and on the Firmware
-    // tab so the user knows what's currently flashed before updating.
+    // in the PONG reply; show it on the TX screen (both models' SVG
+    // groups carry their own screen version readout) and on the
+    // Firmware tab so the user knows what's currently flashed.
     if (typeof msg.version === 'string' && msg.version.length) {
-      const fwScreen = document.getElementById('tx-screen-fw-version');
-      const fwTab    = document.getElementById('fw-current-version');
-      if (fwScreen) fwScreen.textContent = msg.version;
-      if (fwTab)    fwTab.textContent    = msg.version;
+      const fwScreen   = document.getElementById('tx-screen-fw-version');     // X18 screen
+      const fwScreenXL = document.getElementById('tx-screen-fw-version-xl');  // X-Lite screen
+      const fwTab      = document.getElementById('fw-current-version');
+      if (fwScreen)   fwScreen.textContent   = msg.version;
+      if (fwScreenXL) fwScreenXL.textContent = msg.version;
+      if (fwTab)      fwTab.textContent      = msg.version;
     }
     return;
   }
@@ -2579,6 +2909,15 @@ function handleBoardMessage(line) {
 // ════════════════════════════════════════════════════════════════════════════
 function applyConfig(data) {
   if (!data) return;
+  // Apply the transmitter model FIRST so all downstream renders (axes
+  // table, switches table, threshold table, SVG visibility) see the
+  // correct per-model defaults.  applyTxModel(_, false) keeps the
+  // config.txModel update local — we just received this value FROM the
+  // board, no need to bounce it back.
+  if (data.txModel !== undefined) {
+    config.txModel = +data.txModel | 0;
+    applyTxModel(config.txModel, false);
+  }
   if (data.tapWindowMs   !== undefined) config.tapWindowMs   = data.tapWindowMs;
   if (data.matrixDebounceFrames !== undefined)
     config.matrixDebounceFrames = Math.max(1, Math.min(4, +data.matrixDebounceFrames || 1));
@@ -3076,8 +3415,18 @@ function updateTransmitterAnimation(channels) {
     if (cap) { cap.setAttribute('cx', cx + ox); cap.setAttribute('cy', cy + oy); }
     if (dot) { dot.setAttribute('cx', cx + ox); dot.setAttribute('cy', cy + oy); }
   };
-  moveGimbal('leftGimbalCap',  'leftGimbalDot',  'J3', 'J4', 240, 485);
-  moveGimbal('rightGimbalCap', 'rightGimbalDot', 'J1', 'J2', 760, 485);
+  // Each transmitter model has its own gimbal cap/dot elements (different IDs
+  // and centre coordinates).  The active model is selected via activeTxModel,
+  // and the inactive group is hidden via CSS — but its DOM elements are still
+  // there with the SAME IDs, which would shadow getElementById lookups.
+  // We therefore use model-suffixed IDs and centre coords below.
+  if (activeTxModel === TX_MODEL_TWIN_X_LITE) {
+    moveGimbal('leftGimbalCap-xl',  'leftGimbalDot-xl',  'J3', 'J4', 310, 520);
+    moveGimbal('rightGimbalCap-xl', 'rightGimbalDot-xl', 'J1', 'J2', 690, 520);
+  } else {
+    moveGimbal('leftGimbalCap',     'leftGimbalDot',     'J3', 'J4', 240, 485);
+    moveGimbal('rightGimbalCap',    'rightGimbalDot',    'J1', 'J2', 760, 485);
+  }
 }
 
 // ── SVG live-activity highlight for switches / knobs / sliders / joysticks
@@ -3130,15 +3479,18 @@ function controlNameForChannel(ch) {
   if (!ch) return null;
   const matrixCh = (config.matrixChannel | 0) || 7;
   if (ch === matrixCh) return 'Matrix';
-  const swList = ['SA','SB','SC','SD','SE','SF','SG','SH','SI','SJ'];
-  for (const name of swList) {
+  // Restrict label search to the controls that actually exist on the
+  // active TX model.  Otherwise an X-Lite (which has no LS/RS/SG-SJ)
+  // could still show those labels in the channel grid from leftover
+  // saved-config entries.
+  const model = TX_MODELS[activeTxModel] || TX_MODELS[TX_MODEL_X18];
+  for (const name of model.switches) {
     const cfgEntry = (config.switches && config.switches[name]) || {};
     const dflt     = (typeof switchDefaults !== 'undefined' && switchDefaults[name]) || {};
     const c = (+cfgEntry.channel | 0) || (+dflt.channel | 0);
     if (c === ch) return name;
   }
-  const knList = ['S1','S2','LS','RS','J1','J2','J3','J4'];
-  for (const name of knList) {
+  for (const name of model.knobs) {
     const cfgEntry = (config.knobs && config.knobs[name]) || {};
     const dflt     = (typeof knobDefaults !== 'undefined' && knobDefaults[name]) || {};
     const c = (+cfgEntry.channel | 0) || (+dflt.channel | 0);
@@ -4565,6 +4917,9 @@ function openHwSetup() {
   renderMaestroLocations();
   { const el = document.getElementById('matrix-debounce-input');
     if (el) el.value = config.matrixDebounceFrames ?? 1; }
+  // Sync the transmitter-model dropdown to the currently active model.
+  { const sel = document.getElementById('tx-model-select');
+    if (sel) sel.value = String(activeTxModel); }
   // Channels-tab tables are always visible now (no expand) — render
   // them eagerly on open so they're populated even pre-connect.
   renderThresholds();
@@ -4574,6 +4929,16 @@ function openHwSetup() {
   const lastTab = localStorage.getItem('rcConfigLastTab') || 'channels';
   setConfigTab(lastTab);
   document.getElementById('hwsetup-modal').classList.add('open');
+}
+
+// Called by the Transmitter tab's <select> onchange. Applies the new
+// model locally and persists it into config so the next Save pushes
+// it to the board.  The user must click Save to write the change to
+// NVS — this matches every other Config-tab field.
+function onTxModelChange(modelId) {
+  applyTxModel(modelId, /*persist=*/true);
+  const help = document.getElementById('tx-model-help');
+  if (help) help.textContent = 'Click Save (top bar) to push this to the board.';
 }
 function closeHwSetup() {
   document.getElementById('hwsetup-modal').classList.remove('open');
@@ -4750,18 +5115,23 @@ document.getElementById('btn-fw-wipe').addEventListener('click', e => {
 //  knobs/joystick axes).  Highlights the current control on a cloned SVG.
 // ════════════════════════════════════════════════════════════════════════════
 function buildCalibrationSteps() {
-  const buttonSteps = Array.from({ length: 18 }, (_, i) => ({
+  // Use the active TX model's control lists so calibration walks through
+  // exactly the controls that physically exist on the user's transmitter
+  // (no LS/RS step for an X-Lite, no B5-B18 steps for an X-Lite, etc.).
+  const model = TX_MODELS[activeTxModel] || TX_MODELS[TX_MODEL_X18];
+
+  const buttonSteps = model.buttons.map(btnId => ({
     type: 'button',
-    btn: i + 1,
-    label: btnLabels[i + 1]
+    btn:  btnId,
+    label: btnLabels[btnId]
   }));
 
-  const switchSteps = ['SA','SB','SC','SD','SE','SF','SG','SH','SI','SJ'].map(swName => ({
+  const switchSteps = model.switches.map(swName => ({
     type: 'switch', swName, label: swName
   }));
 
-  // All knob-like sources: panel knobs/sliders + 4 gimbal axes
-  const knobSteps = ['S1','S2','LS','RS','J1','J2','J3','J4'].map(knobName => ({
+  // All knob-like sources for this model: knobs + sliders + joystick axes.
+  const knobSteps = model.knobs.map(knobName => ({
     type: 'knob', knobName,
     label: (knobDefaults[knobName] && knobDefaults[knobName].friendly) || knobName
   }));
@@ -4770,12 +5140,14 @@ function buildCalibrationSteps() {
   // Inserted at section boundaries so the user gets a "set up your TX
   // before this block" reminder before things that would otherwise be
   // unreadable (e.g. joysticks that need SA in enable position).
+  const switchList = model.switches.join(', ');   // "SA-SJ" / "SA-SF" friendly recap
   const prefligthStep = {
     type:  'info',
     label: 'Pre-flight',
     title: 'Before You Start',
     message:
-      'Set ALL switches (SA-SJ) to their BACK / UP position before continuing.\n' +
+      'Model: ' + model.name + '\n\n' +
+      'Set ALL switches (' + switchList + ') to their BACK / UP position before continuing.\n' +
       'Center the trims and gimbals as well.\n\n' +
       'This makes the per-control auto-detect work reliably (movement on one ' +
       'channel at a time, no spurious swings from other switches).\n\n' +

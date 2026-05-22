@@ -56,7 +56,13 @@
 //  RX pins: GPIO5 confirmed by user; others assumed — verify against schematic.
 // =============================================================================
 #define SBUS_RX_PIN      5    // Serial1 RX — SBUS from RC receiver (confirmed)
-#define SBUS_TX_PIN      4    // Serial1 TX — unused (SBUS is RX-only here)
+// SBUS OUT now routes through Serial1's hardware TX on SBUS_OUT_PIN below
+// (no bit-banging).  Previously this firmware bit-banged SBUS OUT via a
+// SoftwareSerial on GPIO9, which monopolised ~31% of one core (113 fps ×
+// 25 bytes × 110µs spin per byte) and starved the IDLE0 task → stack-canary
+// crashes after a few seconds of SBUS input.  Routing through Serial1's
+// hardware UART TX drops the per-byte cost from ~110µs to ~1µs (FIFO push)
+// and frees the core completely.  See 2026-05-22 crash discussion.
 
 #define MAESTRO_TX_PIN   6    // Serial2 TX — local Maestro command bus
 #define MAESTRO_RX_PIN   7    // Serial2 RX — optional Maestro feedback (verify pin)
@@ -116,7 +122,8 @@ WCBStream* maestroBroadcast = nullptr;
 // =============================================================================
 SoftwareSerial Serial3;    // Aux command-line port, bound in setup()
 SoftwareSerial Serial4;    // Aux command-line port, bound in setup()
-SoftwareSerial sbusOut;    // SBUS OUT passthrough, bound in setup()
+// SBUS OUT no longer uses SoftwareSerial — it goes out Serial1's TX pin
+// directly (configured in setup()).  See the SBUS_OUT_PIN comment above.
 
 // =============================================================================
 //  HCR Vocalizer routing
@@ -1351,19 +1358,16 @@ void setup() {
   // / rcConfig.auxBaud). Nothing uses them before setup() finishes, so
   // deferring the open is safe.
 
-  // SBUS OUT — TX-only SoftwareSerial mirroring the SBUS RX line speed/format.
-  // RX pin set to -1 (no RX), invert=true for SBUS line polarity.  The
-  // SbusReader feeds each received byte into this sink ~110 µs after it
-  // arrives on Serial1, giving downstream a one-byte-delayed copy of the
-  // upstream SBUS stream.
-  sbusOut.begin(100000, SWSERIAL_8E2, /*rxPin=*/-1, SBUS_OUT_PIN,
-                /*invert=*/true, /*bufSize=*/64);
-
-  // SBUS reader on Serial1 — wire sbusOut as the byte-streaming passthrough sink
-  sbusRx.begin(&Serial1, SBUS_RX_PIN, SBUS_TX_PIN);
-  sbusRx.setPassthroughSink(&sbusOut);
+  // SBUS reader on Serial1 — RX = SBUS_RX_PIN, TX = SBUS_OUT_PIN.  Serial1's
+  // begin() inside SbusReader configures both directions at 100k 8E2 inverted
+  // (the SBUS line spec).  Setting the passthrough sink to &Serial1 itself
+  // routes every incoming byte right back out through the same UART's TX
+  // FIFO — no bit-banging, no SoftwareSerial, no Core 1 monopoly.  Downstream
+  // sees an identical byte-streaming SBUS waveform delayed by one byte time.
+  sbusRx.begin(&Serial1, SBUS_RX_PIN, SBUS_OUT_PIN);
+  sbusRx.setPassthroughSink(&Serial1);
   Serial.printf("[SBUS] IN  on Serial1 RX (GPIO%d)\n", SBUS_RX_PIN);
-  Serial.printf("[SBUS] OUT on SoftwareSerial TX (GPIO%d) — byte-streaming passthrough\n",
+  Serial.printf("[SBUS] OUT on Serial1 TX (GPIO%d, hardware UART) — byte-streaming passthrough\n",
                 SBUS_OUT_PIN);
 
   // RC Config: defaults then NVS overrides. Must run BEFORE constructing

@@ -1471,7 +1471,7 @@
         <img src="../Images/r2logo.png" alt="R2 logo"
              style="width:72px;height:72px;object-fit:contain;opacity:0.9">
         <div style="font-size:11px;color:var(--muted);font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;letter-spacing:0.3px">
-          RC Controller Config Tool &nbsp;·&nbsp; <span id="footer-dtg">221417QMAY26</span>
+          RC Controller Config Tool &nbsp;·&nbsp; <span id="footer-dtg">221421QMAY26</span>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap">
@@ -2071,6 +2071,7 @@ const TX_MODELS = {
     id:    TX_MODEL_X18,
     name:  'FrSky Tandem X18',
     short: 'X18',
+    cssSlug:   'x18',           // → body.tx-show-x18 + <g class="tx-x18">
     svgClass:  'tx-x18',
     buttons:   [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18],   // 18 face buttons via SBUS matrix
     switches:  ['SA','SB','SC','SD','SE','SF','SG','SH','SI','SJ'],
@@ -2099,6 +2100,7 @@ const TX_MODELS = {
     id:    TX_MODEL_TWIN_X_LITE,
     name:  'FrSky Twin X-Lite',
     short: 'X-Lite',
+    cssSlug:   'twinxlite',     // → body.tx-show-twinxlite + <g class="tx-twinxlite">
     svgClass:  'tx-twinxlite',
     buttons:   [1,2,3,4],   // 4 face buttons (B1-B4) via SBUS matrix
     switches:  ['SA','SB','SC','SD','SE','SF'],   // SE/SF are momentary push buttons
@@ -2144,7 +2146,7 @@ function applyTxModel(modelId, persist = true) {
   // toggle a top-level CSS class on <body> so a single rule per model
   // controls visibility.
   document.body.classList.remove('tx-show-x18', 'tx-show-twinxlite');
-  document.body.classList.add('tx-show-' + m.short.toLowerCase().replace(/[^a-z0-9]/g, ''));
+  document.body.classList.add('tx-show-' + m.cssSlug);
 
   // Re-render every panel that bakes in model-specific defaults.
   if (typeof renderAxesTable      === 'function') renderAxesTable();

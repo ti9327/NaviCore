@@ -1244,7 +1244,7 @@
              style="width:72px;height:72px;object-fit:contain;opacity:0.9">
         <div style="font-size:11px;color:var(--muted);font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;letter-spacing:0.3px">
           RC Controller Config Tool &nbsp;·&nbsp; UI Version <span id="footer-ui-version">1.0</span>
-          &nbsp;·&nbsp; <span id="footer-dtg">221238QMAY26</span>
+          &nbsp;·&nbsp; <span id="footer-dtg">221247QMAY26</span>
           &nbsp;·&nbsp; FW <span id="footer-fw-version">—</span>
         </div>
       </div>
@@ -2961,6 +2961,18 @@ function updateTransmitterAnimation(channels) {
     const c = (config.knobs && config.knobs[name] && +config.knobs[name].channel) | 0;
     return c || ((knobDefaults[name] && +knobDefaults[name].channel) | 0);
   };
+  // Apply the per-knob "reverse" flag so the visualisation mirrors what
+  // the firmware will actually dispatch. Same flip as processKnobs():
+  // reflect around the SBUS midpoint (172 + 1811 = 1983).  Returns the
+  // raw value unchanged if reverse is off.
+  const knVal = (name, raw) => {
+    const rev = !!(config.knobs && config.knobs[name] && config.knobs[name].reverse);
+    if (!rev || !Number.isFinite(raw)) return raw;
+    let v = 1983 - raw;
+    if (v < 0) v = 0;
+    if (v > 2047) v = 2047;
+    return v;
+  };
 
   // ── SWITCHES SA-SH — rotate lever ±25° around the bushing centre ─────
   // SI/SJ are momentary push buttons (no lever) — handled separately
@@ -3010,7 +3022,7 @@ function updateTransmitterAnimation(channels) {
     if (!zone) return;
     const ch = knChan(name);
     if (!ch) return;
-    const v = channels[ch - 1];
+    const v = knVal(name, channels[ch - 1]);
     if (!Number.isFinite(v)) return;
     const norm = Math.max(0, Math.min(1, (v - 172) / (1811 - 172)));
     const deg = norm * 270 - 135;     // -135° (full CCW) … +135° (full CW)
@@ -3030,7 +3042,7 @@ function updateTransmitterAnimation(channels) {
     if (!zone) return;
     const ch = knChan(name);
     if (!ch) return;
-    const v = channels[ch - 1];
+    const v = knVal(name, channels[ch - 1]);
     if (!Number.isFinite(v)) return;
     const norm = Math.max(0, Math.min(1, (v - 172) / (1811 - 172)));
     const handle = zone.querySelectorAll('rect')[1];   // [0]=track, [1]=handle
@@ -3047,8 +3059,10 @@ function updateTransmitterAnimation(channels) {
     const xCh = knChan(xName);
     const yCh = knChan(yName);
     if (!xCh || !yCh) return;
-    const vx = channels[xCh - 1];
-    const vy = channels[yCh - 1];
+    // Apply per-axis reverse so the on-screen cap mirrors what the
+    // firmware will dispatch through any Maestro / HCR outputs.
+    const vx = knVal(xName, channels[xCh - 1]);
+    const vy = knVal(yName, channels[yCh - 1]);
     if (!Number.isFinite(vx) || !Number.isFinite(vy)) return;
     const clamp = n => Math.max(-50, Math.min(50, n));
     const ox =  clamp((vx - 992) / 819 * 50);

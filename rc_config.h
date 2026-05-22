@@ -193,6 +193,10 @@ struct RcKnobOutput {
 struct RcKnob {
   int     channel;     // SBUS channel 1–24; 0 = disabled
   uint8_t function;    // RcKnobFunction
+  bool    reverse;     // if true, invert the SBUS reading around the centre
+                       // before mapping to outputs (so a stick "up" produces
+                       // what would normally be "down").  Set per-knob in the
+                       // GUI; per-output posMin/posMax can still trim further.
   uint8_t outputCount; // number of valid entries in outputs[]
   RcKnobOutput outputs[RC_KNOB_MAX_OUTPUTS];
 };
@@ -452,6 +456,7 @@ void rcConfigLoadDefaults() {
   for (int i = 0; i < RC_NUM_KNOBS; i++) {
     rcConfig.knobs[i].channel     = RC_KNOB_DEFAULT_CH[i];
     rcConfig.knobs[i].function    = RC_KNOB_DEFAULT_FN[i];
+    rcConfig.knobs[i].reverse     = false;
     rcConfig.knobs[i].outputCount = 0;
     memset(rcConfig.knobs[i].outputs, 0, sizeof(rcConfig.knobs[i].outputs));
   }
@@ -678,6 +683,7 @@ String rcConfigToJSON() {
     JsonObject kObj = knObj.createNestedObject(RC_KNOB_LABELS[i]);
     kObj["channel"]  = kn.channel;
     kObj["function"] = kn.function;
+    kObj["reverse"]  = kn.reverse;
     JsonArray outsArr = kObj.createNestedArray("outputs");
     for (uint8_t o = 0; o < kn.outputCount && o < RC_KNOB_MAX_OUTPUTS; o++) {
       JsonObject oObj = outsArr.createNestedObject();
@@ -817,6 +823,7 @@ bool rcConfigFromJSON(const JsonObject& doc) {
       RcKnob& kn = rcConfig.knobs[i];
       kn.channel  = kObj["channel"]  | RC_KNOB_DEFAULT_CH[i];
       kn.function = kObj["function"] | RC_KNOB_DEFAULT_FN[i];
+      kn.reverse  = kObj["reverse"]  | false;
       kn.outputCount = 0;
       memset(kn.outputs, 0, sizeof(kn.outputs));
       if (kObj.containsKey("outputs")) {
@@ -999,6 +1006,7 @@ void rcConfigSaveNVS() {
       JsonObject kObj = root.createNestedObject(RC_KNOB_LABELS[i]);
       kObj["channel"]  = kn.channel;
       kObj["function"] = kn.function;
+      kObj["reverse"]  = kn.reverse;
       JsonArray outsArr = kObj.createNestedArray("outputs");
       for (uint8_t o = 0; o < kn.outputCount && o < RC_KNOB_MAX_OUTPUTS; o++) {
         JsonObject oObj = outsArr.createNestedObject();
@@ -1173,6 +1181,7 @@ void rcConfigLoadNVS() {
         RcKnob& kn = rcConfig.knobs[i];
         kn.channel  = kObj["channel"]  | RC_KNOB_DEFAULT_CH[i];
         kn.function = kObj["function"] | RC_KNOB_DEFAULT_FN[i];
+        kn.reverse  = kObj["reverse"]  | false;
         kn.outputCount = 0;
         memset(kn.outputs, 0, sizeof(kn.outputs));
         if (kObj.containsKey("outputs")) {

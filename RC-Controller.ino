@@ -907,6 +907,19 @@ void processKnobs() {
     if (kn.function == KF_NONE || kn.outputCount == 0) continue;
     uint16_t raw = sbusValues[kn.channel - 1];
 
+    // Per-knob direction reversal — invert around the SBUS centre so a
+    // "stick up" reading maps to what would otherwise be "stick down" for
+    // all downstream output computations.  SBUS valid range is ~172-1811;
+    // reflecting around the midpoint = (172 + 1811) - raw = 1983 - raw.
+    // The deadband / change-detection still uses the post-reverse value so
+    // moving the source dispatches as expected.
+    if (kn.reverse) {
+      int flipped = 1983 - (int)raw;
+      if (flipped < 0)     flipped = 0;
+      if (flipped > 2047)  flipped = 2047;
+      raw = (uint16_t)flipped;
+    }
+
     // Only dispatch when the source actually moved (or on the first frame).
     if (abs((int)raw - (int)lastKnobRaw[i]) < KNOB_CHANGE_DEADBAND) continue;
     lastKnobRaw[i] = raw;

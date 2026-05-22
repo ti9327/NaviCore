@@ -1244,7 +1244,7 @@
              style="width:72px;height:72px;object-fit:contain;opacity:0.9">
         <div style="font-size:11px;color:var(--muted);font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;letter-spacing:0.3px">
           RC Controller Config Tool &nbsp;·&nbsp; UI Version <span id="footer-ui-version">1.0</span>
-          &nbsp;·&nbsp; <span id="footer-dtg">221204QMAY26</span>
+          &nbsp;·&nbsp; <span id="footer-dtg">221223QMAY26</span>
           &nbsp;·&nbsp; FW <span id="footer-fw-version">—</span>
         </div>
       </div>
@@ -1404,7 +1404,7 @@
             <h3>Analog Axes <small>sliders LS/RS, pots S1/S2, sticks J1-J4</small></h3>
             <div id="axes-panel" style="margin-top:10px; overflow-x:auto">
               <table class="thresh-table" id="axes-table">
-                <thead><tr><th>Axis</th><th>Channel</th></tr></thead>
+                <thead><tr><th>Axis</th><th>Channel</th><th>Reverse</th></tr></thead>
                 <tbody></tbody>
               </table>
             </div>
@@ -1802,17 +1802,17 @@ const NUM_MAESTRO_SLOTS = 8;
 //   LS, RS → Slider
 //   J1-J4  → Joystick axis (NOT a knob; user complained about the wording)
 const knobDefaults = {
-  S1: { channel: 5, function: 0, outputs: [], kind: 'knob',     friendly: 'S1 knob' },
-  S2: { channel: 6, function: 0, outputs: [], kind: 'knob',     friendly: 'S2 knob' },
-  LS: { channel: 18, function: 0, outputs: [], kind: 'slider',   friendly: 'LS slider' },
-  RS: { channel: 19, function: 0, outputs: [], kind: 'slider',   friendly: 'RS slider' },
-  J1: { channel: 1, function: 0, outputs: [], kind: 'joystick', friendly: 'J1 — R-stick X (AIL)' },
-  J2: { channel: 2, function: 0, outputs: [], kind: 'joystick', friendly: 'J2 — R-stick Y (ELE)' },
+  S1: { channel: 5, function: 0, reverse: false, outputs: [], kind: 'knob',     friendly: 'S1 knob' },
+  S2: { channel: 6, function: 0, reverse: false, outputs: [], kind: 'knob',     friendly: 'S2 knob' },
+  LS: { channel: 18, function: 0, reverse: false, outputs: [], kind: 'slider',   friendly: 'LS slider' },
+  RS: { channel: 19, function: 0, reverse: false, outputs: [], kind: 'slider',   friendly: 'RS slider' },
+  J1: { channel: 1, function: 0, reverse: false, outputs: [], kind: 'joystick', friendly: 'J1 — R-stick X (AIL)' },
+  J2: { channel: 2, function: 0, reverse: false, outputs: [], kind: 'joystick', friendly: 'J2 — R-stick Y (ELE)' },
   // Greg's TX sends L-stick X on CH3 and L-stick Y on CH4 (not the standard
   // AETR mapping which would have CH3=THR/L-Y and CH4=RUD/L-X). Defaults below
   // match his actual TX output — confirmed via calibration after the xyxy rename.
-  J3: { channel: 3, function: 0, outputs: [], kind: 'joystick', friendly: 'J3 — L-stick X (RUD)' },
-  J4: { channel: 4, function: 0, outputs: [], kind: 'joystick', friendly: 'J4 — L-stick Y (THR)' },
+  J3: { channel: 3, function: 0, reverse: false, outputs: [], kind: 'joystick', friendly: 'J3 — L-stick X (RUD)' },
+  J4: { channel: 4, function: 0, reverse: false, outputs: [], kind: 'joystick', friendly: 'J4 — L-stick Y (THR)' },
 };
 
 // Friendly title for the modal header — picks the right noun for the source.
@@ -3297,24 +3297,38 @@ function renderAxesTable() {
     const cur = config.knobs[name] || {};
     const dflt = knobDefaults[name] || { channel: 0 };
     const ch = (cur.channel | 0) || dflt.channel;
+    const reverse = !!cur.reverse;
     const friendly = (dflt.friendly || name).replace(/^[^—]+ — /, '');   // strip "S1 — " prefix
     const row = document.createElement('tr');
     row.innerHTML = `
       <td><b>${name}</b>${friendly && friendly !== name ? `<small style="color:var(--muted);margin-left:6px">${escH(friendly)}</small>` : ''}</td>
       <td><input type="number" min="1" max="24" value="${ch}" style="width:60px"
-                 data-knob="${name}"></td>`;
+                 data-knob-ch="${name}"></td>
+      <td style="text-align:center"><input type="checkbox" data-knob-rev="${name}" ${reverse ? 'checked' : ''}
+                 title="Invert this axis around its centre before dispatch (stick up → reads as down for downstream outputs)"></td>`;
     tbody.appendChild(row);
   });
-  tbody.querySelectorAll('[data-knob]').forEach(el => {
+  // Helper: ensure config.knobs[name] exists with sensible defaults so we
+  // can mutate either field without checking every time.
+  function ensureKnob(name) {
+    if (!config.knobs[name]) {
+      const dflt = knobDefaults[name] || {};
+      config.knobs[name] = { channel: 0, function: 0, reverse: false, outputs: [], ...dflt };
+    }
+    return config.knobs[name];
+  }
+  tbody.querySelectorAll('[data-knob-ch]').forEach(el => {
     el.addEventListener('change', () => {
-      const name = el.dataset.knob;
+      const name = el.dataset.knobCh;
       const v    = +el.value | 0;
-      if (!config.knobs[name]) {
-        const dflt = knobDefaults[name] || {};
-        config.knobs[name] = { channel: 0, function: 0, outputs: [], ...dflt };
-      }
-      config.knobs[name].channel = v;
+      ensureKnob(name).channel = v;
       if (typeof renderKnobHighlights === 'function') renderKnobHighlights();
+    });
+  });
+  tbody.querySelectorAll('[data-knob-rev]').forEach(el => {
+    el.addEventListener('change', () => {
+      const name = el.dataset.knobRev;
+      ensureKnob(name).reverse = !!el.checked;
     });
   });
 }
@@ -3988,6 +4002,7 @@ function openKnobModal(name) {
   const k = {
     channel:     d.channel  !== undefined ? d.channel  : def.channel,
     function:    d.function !== undefined ? d.function : def.function,
+    reverse:     d.reverse  !== undefined ? !!d.reverse : !!def.reverse,
     outputs:     Array.isArray(d.outputs) ? d.outputs.map(o => ({...o})) : [],
   };
 
@@ -4050,6 +4065,13 @@ function openKnobModal(name) {
               `<option value="${v}" ${+v === k.function ? 'selected' : ''}>${lbl}</option>`
             ).join('')}
           </select>
+        </div>
+        <div class="field-group" style="align-self:flex-end">
+          <label style="display:flex; align-items:center; gap:6px; cursor:pointer">
+            <input type="checkbox" id="kn-reverse" ${k.reverse ? 'checked' : ''}
+                   title="Invert this axis around its centre. Stick up reads as down for downstream outputs.">
+            Reverse direction
+          </label>
         </div>
       </div>
       <div style="font-size:11px;color:var(--muted);margin-top:6px">${helpText}</div>
@@ -4234,6 +4256,7 @@ function saveKnobModal() {
   config.knobs[editingKnob] = {
     channel:  +document.getElementById('kn-channel').value,
     function: fn,
+    reverse:  !!document.getElementById('kn-reverse').checked,
     outputs:  fn === KF_NONE ? [] : cleanedOutputs,
   };
   editingKnobDraft = null;

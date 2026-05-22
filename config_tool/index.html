@@ -1250,44 +1250,39 @@
              ─────────────────────────────────────────────────────────── -->
         <g class="tx-model tx-twinxlite">
 
-        <!-- Body silhouette: narrow upper section (640 wide) that hosts the
-             screen + switches + knobs, then full hand-grip handles FLARING
-             outward to ~840 wide at the bottom. Big 40px-radius top corners
-             so it doesn't read as a blocky rectangle. Deep U-curve between
-             the handles. Inspired by the actual Twin X-Lite silhouette. -->
+        <!-- Body silhouette traced from the Twin X-Lite product photo.
+             Not a narrow rectangle with dramatic handle bulges — it's
+             closer to a wider-at-the-bottom rounded blob with very
+             rounded bottom corners.  Widest point is roughly mid-handle
+             (y=530-640).  Bottom centre has a SMALL notch where the
+             user's fingers wrap between the grips, NOT a deep
+             gamepad-style U. -->
         <path d="
-          M 230 125
-          L 770 125
-          Q 820 125 820 175
-          L 820 395
-          Q 820 425 850 440
-          Q 925 475 925 580
-          Q 925 720 800 735
-          L 640 735
-          Q 600 735 580 710
-          Q 540 690 500 690
-          Q 460 690 420 710
-          Q 400 735 360 735
-          L 200 735
-          Q 75 720 75 580
-          Q 75 475 150 440
-          Q 180 425 180 395
-          L 180 175
-          Q 180 125 230 125 Z" fill="url(#body-grad)" stroke="#0a1224" stroke-width="2" filter="url(#shadow)"/>
-        <!-- Highlight gradient overlay on the upper half for 3D feel.
-             Matches the upper-section silhouette so it doesn't bleed into
-             the handle area. -->
+          M 230 130
+          Q 180 130 180 175
+          L 180 400
+          Q 170 480 140 530
+          Q 110 640 180 715
+          Q 250 740 370 725
+          Q 440 720 480 705
+          Q 500 700 520 705
+          Q 560 720 630 725
+          Q 750 740 820 715
+          Q 890 640 860 530
+          Q 830 480 820 400
+          L 820 175
+          Q 820 130 770 130 Z" fill="url(#body-grad)" stroke="#0a1224" stroke-width="2" filter="url(#shadow)"/>
+        <!-- Highlight gradient overlay on the upper half for 3D feel. -->
         <path d="
-          M 230 127
-          L 770 127
-          Q 818 127 818 175
-          L 818 375
-          L 182 375
-          L 182 175
-          Q 182 127 230 127 Z" fill="url(#body-highlight)" opacity="0.6"/>
+          M 230 132
+          Q 182 132 182 175
+          L 182 400
+          L 818 400
+          L 818 175
+          Q 818 132 770 132 Z" fill="url(#body-highlight)" opacity="0.55"/>
         <!-- Two antenna stubs poking up from the body's top corners -->
-        <rect x="218" y="80" width="14" height="48" rx="4" fill="#1a1a1a" stroke="#0a0a0a"/>
-        <rect x="768" y="80" width="14" height="48" rx="4" fill="#1a1a1a" stroke="#0a0a0a"/>
+        <rect x="228" y="85" width="14" height="48" rx="4" fill="#1a1a1a" stroke="#0a0a0a"/>
+        <rect x="758" y="85" width="14" height="48" rx="4" fill="#1a1a1a" stroke="#0a0a0a"/>
 
         <!-- Screen -->
         <rect x="330" y="220" width="340" height="170" rx="14" fill="#0a0a0a" stroke="#1a2a4a" stroke-width="2"/>
@@ -1499,7 +1494,7 @@
         <img src="../Images/r2logo.png" alt="R2 logo"
              style="width:72px;height:72px;object-fit:contain;opacity:0.9">
         <div style="font-size:11px;color:var(--muted);font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;letter-spacing:0.3px">
-          RC Controller Config Tool &nbsp;·&nbsp; <span id="footer-dtg">221541QMAY26</span>
+          RC Controller Config Tool &nbsp;·&nbsp; <span id="footer-dtg">221546QMAY26</span>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap">

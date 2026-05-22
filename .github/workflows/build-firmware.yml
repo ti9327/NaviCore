@@ -65,6 +65,14 @@ jobs:
           arduino-cli lib install --git-url https://github.com/roy86/HumanCyborgRelationsAPI.git
           arduino-cli lib install --git-url https://github.com/greghulette/WCBClient.git
 
+          # ─────────────────────────────────────────────────────────────────
+          # TODO(greg): replace this whole block with a one-line install from
+          # a personal fork at greghulette/HumanCyborgRelationsAPI once that
+          # fork exists.  Per-build sed/python mutation of an upstream library
+          # is a stopgap — the canonical fix is a fork you control, mirroring
+          # how greghulette/WCBClient is handled above.  See chat history
+          # 2026-05-21 for the rationale.
+          # ─────────────────────────────────────────────────────────────────
           # ── Patch upstream HCR API for ESP32 core 3.3.4 + GCC 14 ─────────
           # The HumanCyborgRelationsAPI library was written for older Arduino
           # cores and stricter modern C++ exposes a handful of bugs. WCB's CI

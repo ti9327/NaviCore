@@ -17,8 +17,11 @@
 #define WCB_MAC_OCT3      0x00   // ?WCBM third octet
 #define WCB_PASSWORD      "change_me"
 #define WCB_QUANTITY      4      // ?WCBQ — total WCBs in the system
-#define WCB_DEVICE_ID     3      // Unique ID for this RC Controller on the WCB network
-                                  // Must be ≤ WCB_QUANTITY (or 20 for the special slot)
+#define WCB_DEVICE_ID     20     // RC Controllers always claim WCB special-peer slot 20.
+                                  // Keeps 1-19 free for regular WCBs and gives the config
+                                  // tool's "Via WCB" bridge a fixed, known target — no need
+                                  // to ask the user which RC id to address when bridging
+                                  // through any tethered WCB.
 
 // ─── WiFi credentials ────────────────────────────────────────────────────────
 //  Station networks to try on boot (first match wins).

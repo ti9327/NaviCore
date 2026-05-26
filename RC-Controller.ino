@@ -49,6 +49,7 @@
 #include "rc_config.h"
 #include "wcb_config.h"
 #include "fw_version.h"     // FW_VERSION_BASE / FW_VERSION_DTG / FW_VERSION
+#include "rc_telemetry.h"   // WCB-network remote-management bridge (Phase 1 — see file header)
 
 // =============================================================================
 //  WCB HW 3.2 — Pin Definitions
@@ -758,8 +759,16 @@ void checkPendingActions() {
 // =============================================================================
 void rcDispatch(int buttonId, uint8_t tapCount) {
   int mode = buttonId / 100, btn = buttonId % 100;
-  if (mode < 1 || mode > 3 || btn < 1 || btn > 19) return;
+  if (mode < 1 || mode > 3 || btn < 1 || btn > RC_NUM_THRESHOLDS) return;
   if (tapCount < 1 || tapCount > 3) return;
+
+  // Broadcast a "this trigger fired" event over the WCB ESP-NOW network so
+  // the config tool's "Via WCB" mode (and any listening Wizard) sees every
+  // dispatch — local matrix press, Web-Serial JSON TRIGGER, or remote
+  // ESP-NOW TRIGGER — uniformly.  Emitted BEFORE action execution so the
+  // event arrives even if a synchronous action stalls.
+  rcTelemetry::emitTrig(mode, btn, tapCount);
+
   const RcMapping& mapping = rcConfig.mappings[rcMapIndex(mode, btn)];
   if (mapping.exclusive) {
     // Exclusive: only the matched tier fires (e.g. double-tap fires t2 alone).
@@ -897,7 +906,10 @@ static void dispatchHcrVolume(uint8_t audioChan, uint8_t vol) {
 // first frame through so the initial position is always sent.
 #define KNOB_CHANGE_DEADBAND 5
 static uint16_t lastKnobRaw[RC_NUM_KNOBS] = {
-  0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF
+  0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF,    // S1, S2, LS, RS
+  0xFFFF,                            // MS  (X20)
+  0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF,    // J1-J4
+  0xFFFF, 0xFFFF                     // J5, J6 (X20 3-axis)
 };
 
 void processKnobs() {
@@ -957,9 +969,14 @@ void processSbus() {
   int modeVal = readBoundSwitchSbus(rcConfig.funcBindings.modeSwitch);
   if (modeVal >= 0 && abs(modeVal - oldValueMode) > 5) {
     oldValueMode = modeVal;
-    if      (modeVal < 582)  FunctionSwState = 1;
-    else if (modeVal < 1401) FunctionSwState = 2;
-    else                     FunctionSwState = 3;
+    int newMode = (modeVal < 582) ? 1 : (modeVal < 1401 ? 2 : 3);
+    if (newMode != FunctionSwState) {
+      FunctionSwState = newMode;
+      // Surface the mode change on the WCB network immediately — config
+      // tools watching via the bridge get instant feedback instead of
+      // waiting up to 2 s for the next rc_hb heartbeat.
+      rcTelemetry::emitMode(FunctionSwState);
+    }
   }
 
   // Button matrix — edge-detected with an asymmetric debounce (see
@@ -1047,8 +1064,13 @@ void dumpSbusState() {
 //  WCB receive callback
 // =============================================================================
 void onWCBCommand(uint8_t senderID, const char* command) {
+  // Delegate to the telemetry/management bridge first — if it recognised
+  // the command as a JSON management message addressed to us (PING /
+  // TRIGGER / SET_MODE / GET_CONFIG / SET_CONFIG), it dispatches and
+  // returns true.  Otherwise we just log the raw command for visibility
+  // (legacy WCB ;-commands intended for other peers or droid hardware).
+  if (rcTelemetry::handle(senderID, command)) return;
   Serial.printf("[WCB RX] from WCB%d: %s\n", senderID, command);
-  // Extend here to route inbound WCB commands to local actions if needed
 }
 
 // =============================================================================
@@ -1238,7 +1260,7 @@ void handleSerialInput() {
           int mode = hdr["mode"] | 1;
           int btn  = hdr["btn"]  | 0;
           int tap  = hdr["tap"]  | 1;
-          if (btn < 1 || btn > 19 || mode < 1 || mode > 3 || tap < 1 || tap > 3) {
+          if (btn < 1 || btn > RC_NUM_THRESHOLDS || mode < 1 || mode > 3 || tap < 1 || tap > 3) {
             Serial.println("{\"type\":\"ACK\",\"ok\":false,\"msg\":\"bad mode/btn/tap\"}");
           } else {
             Serial.printf("[TRIGGER] mode=%d btn=%d tap=%d\n", mode, btn, tap);
@@ -1387,11 +1409,37 @@ void setup() {
   // (e.g. a 3-4 KB SET_CONFIG payload arriving in one shot) without dropping
   // bytes that would otherwise corrupt the JSON. Must be set BEFORE begin().
   Serial.setRxBufferSize(4096);
-  // TX ring buffer so vlogf() has headroom to write into when a host is
-  // draining the port. When no host is attached this fills once and then
-  // vlogf() simply drops further lines — it never blocks the loop.
-  Serial.setTxBufferSize(1024);
+  // TX ring buffer — sized to hold an entire CONFIG response (rcConfigToJSON
+  // can produce 2-4 KB depending on how populated the config is) in one
+  // print() so the host has a full window to drain it before any byte gets
+  // dropped.  Previously 1024 — too small; a fast Serial.println of the full
+  // config overflowed mid-stream and the corrupt JSON appeared at the
+  // browser as a truncated line (e.g. "matrixChannel" → "matrixCel" gap).
+  // 8 KB is comfortable on the S3's 512 KB SRAM.  Must be set BEFORE begin().
+  Serial.setTxBufferSize(8192);
   Serial.begin(115200);
+  // ── ESP32-S3 USB-CDC TX-blocking guard (only when Serial = HWCDC) ──
+  // If the board variant is built with ARDUINO_USB_CDC_ON_BOOT=1, Serial is
+  // the native-USB HWCDC class.  Default tx timeout is ~100 ms which can
+  // make the firmware appear frozen if no host ever attaches — but the
+  // OTHER extreme (timeout = 0) drops bytes immediately when the host is
+  // just briefly slow to drain, which mangles the CONFIG response.
+  //
+  // 50 ms is a deliberate middle ground:
+  //   • host present + reading at any reasonable speed → buffer drains
+  //     within microseconds, the 50 ms ceiling never gets hit, no drops
+  //   • host absent / disappeared mid-write → writes give up after 50 ms
+  //     instead of blocking the loop indefinitely
+  //   • combined with the 8 KB tx buffer above, a full config print fits
+  //     entirely in the buffer before any wait is needed
+  //
+  // When CDC-on-boot is DISABLED, Serial is HardwareSerial (UART0 through
+  // a USB-to-serial bridge) and setTxTimeoutMs doesn't exist — the boot
+  // latch in that case is the bridge chip's DTR/RTS autoreset circuit,
+  // which is a hardware issue software can't directly suppress.
+#if ARDUINO_USB_CDC_ON_BOOT
+  Serial.setTxTimeoutMs(50);
+#endif
   delay(1500);
   Serial.println("\n\n=== RC-Controller (WCB HW 3.2) ===");
 
@@ -1475,6 +1523,12 @@ void setup() {
 void loop() {
   // WCB — heartbeats, ACKs, WCBStream flushes
   if (wcb) wcb->update();
+
+  // WCB-network telemetry bridge — periodic rc_hb (0.5 Hz) + rc_ch (5 Hz)
+  // broadcasts so the config tool's "Via WCB" mode can discover and live-
+  // monitor this RC.  Event-driven rc_trig / rc_mode are emitted from
+  // rcDispatch() and the mode-decode block in processSbus(), respectively.
+  rcTelemetry::tick();
 
   // SBUS
   processSbus();

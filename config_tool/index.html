@@ -234,6 +234,15 @@
   .tx-model { display: none; }
   body.tx-show-x18        .tx-x18        { display: inline; }
   body.tx-show-twinxlite  .tx-twinxlite  { display: inline; }
+  body.tx-show-x20        .tx-x20        { display: inline; }
+
+  /* X20-only 3-axis-gimbal indicators (rotation arcs around the gimbal
+     caps + J5/J6 twist axis pickers + stick-click button zones).
+     Toggled by the body.three-axis-on class set in applyTxModel() /
+     onThreeAxisGimbalsChange() / applyConfig() when the per-build
+     threeAxisGimbals flag is true. */
+  .three-axis-only                       { display: none; }
+  body.three-axis-on .three-axis-only    { display: inline; }
 
   /* Clickable button zones — base styling (hover + "configured" indicator) */
   .btn-zone { cursor: pointer; transition: opacity .15s; }
@@ -712,6 +721,23 @@
     <div class="status-dot" id="conn-dot"></div>
     <span id="status-text">Disconnected</span>
     <button class="btn btn-primary" id="btn-connect">Connect</button>
+    <!-- ── Via WCB (remote management bridge) ───────────────────────────
+         Unchecked = Direct USB (this tool is plugged straight into an
+         RC-Controller).
+         Checked   = Via WCB: this tool is plugged into ANY WCB on the
+         network and that WCB relays outbound JSON to the RC at the
+         fixed special-peer slot (deviceId 20).  The tethered WCB's
+         own id is irrelevant — its only role is to ferry packets
+         in/out of ESP-NOW.  Inbound rc_hb / rc_ch / rc_trig / rc_mode
+         from the RC drive the same SVG / channel-grid / mode-indicator
+         UI as a directly-connected RC.  Persisted to localStorage. -->
+    <label style="display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--muted);margin-left:4px;cursor:pointer"
+           title="Bridge through a USB-tethered WCB to the remote RC-Controller (always at WCB special-peer slot 20).">
+      <input id="via-wcb-toggle" type="checkbox"
+             style="margin:0;cursor:pointer"
+             onchange="onViaWcbToggle(this.checked)">
+      Via WCB
+    </label>
     <button class="btn btn-blue"    id="btn-refresh" disabled>Refresh</button>
     <button class="btn btn-success" id="btn-save"    disabled>Save</button>
     <button class="btn btn-ghost" id="btn-hwsetup" type="button">Config</button>
@@ -740,7 +766,7 @@
         <div id="sbus-dot" style="width:14px; height:14px; border-radius:50%; background:var(--red); flex-shrink:0; box-shadow:0 0 8px rgba(244,67,54,.6)"></div>
         <div style="flex:1">
           <div id="sbus-state" style="font-weight:700; font-size:14px">No signal</div>
-          <div id="sbus-detail" style="font-size:11px; color:var(--muted); font-variant-numeric: tabular-nums">— fps · 0 frames · age — ms</div>
+          <div id="sbus-detail" style="font-size:11px; color:var(--muted); font-variant-numeric: tabular-nums">— fps · age — ms</div>
         </div>
       </div>
     </div>
@@ -1530,6 +1556,438 @@
         </g>
 
         </g><!-- /tx-twinxlite -->
+        <g class="tx-model tx-x20">
+
+        <!-- Main body -->
+        <path d="
+          M 70 320
+          Q 70 280 110 280
+          L 270 280
+          Q 290 280 295 270
+          Q 300 250 320 250
+          L 680 250
+          Q 700 250 705 270
+          Q 710 280 730 280
+          L 890 280
+          Q 930 280 930 320
+          L 930 640
+          Q 930 730 870 760
+          L 770 790
+          Q 750 798 720 800
+          L 580 808
+          Q 540 812 500 810
+          Q 460 812 420 808
+          L 280 800
+          Q 250 798 230 790
+          L 130 760
+          Q 70 730 70 640
+          Z"
+          fill="url(#body-grad)" stroke="#0a1428" stroke-width="2" filter="url(#shadow)"/>
+        <path d="
+          M 70 320
+          Q 70 280 110 280
+          L 270 280
+          Q 290 280 295 270
+          Q 300 250 320 250
+          L 680 250
+          Q 700 250 705 270
+          Q 710 280 730 280
+          L 890 280
+          Q 930 280 930 320
+          L 930 360
+          L 70 360 Z"
+          fill="url(#body-highlight)" opacity="0.5"/>
+
+        <!-- Screen pod -->
+        <rect x="290" y="15" width="420" height="290" rx="22" fill="#0a0a0a" stroke="#1a2a4a" stroke-width="2" filter="url(#shadow)"/>
+        <rect x="305" y="32" width="390" height="258" rx="6" fill="url(#screen-grad)"/>
+        <text x="688" y="56" text-anchor="end" fill="#a8b2c8" font-size="16" font-weight="700" font-style="italic" font-family="serif">FrSky</text>
+
+        <rect x="320" y="72" width="360" height="28" rx="3" fill="#1a3a6a"/>
+        <text x="332" y="92" fill="#7acdf6" font-size="13" font-family="monospace" font-weight="700">RC Controller</text>
+        <text x="668" y="92" fill="#7acdf6" font-size="11" font-family="monospace" text-anchor="end" id="tx-screen-ui-version-x20">v0.2.0</text>
+        <text x="332" y="128" fill="#5a9ac6" font-size="12" font-family="monospace">Model: TWIN X20</text>
+        <text x="332" y="150" fill="#5a9ac6" font-size="12" font-family="monospace">Mode:  &lt;3-pos SW&gt;</text>
+        <text x="332" y="172" fill="#5a9ac6" font-size="12" font-family="monospace">RX:    Connected</text>
+        <text x="332" y="194" fill="#5a9ac6" font-size="12" font-family="monospace">WCB:   ESP-NOW</text>
+        <!-- Version readout box.  UI version is baked at build time; FW
+             version is populated from the board's PONG reply when connected. -->
+        <rect x="320" y="215" width="360" height="60" rx="4" fill="#0a1a2e" stroke="#1a3a6a"/>
+        <text x="332" y="238" fill="#5a9ac6" font-size="12" font-family="monospace">UI:    <tspan id="tx-screen-ui-version-full-x20" fill="#7acdf6" font-weight="700">v0.2.0</tspan></text>
+        <text x="332" y="258" fill="#5a9ac6" font-size="12" font-family="monospace">FW:    <tspan id="tx-screen-fw-version-x20" fill="#7acdf6" font-weight="700">—</tspan></text>
+
+        <!-- ── Switches SA-SH ── -->
+        <g class="switch-zone" data-sw="SF" onclick="openSwitchModal('SF')">
+          <circle cx="135" cy="282" r="11" fill="url(#bush-grad)" stroke="#0a0a0a"/>
+          <circle cx="135" cy="282" r="6"  fill="#0a0a0a"/>
+          <rect x="132" y="195" width="6" height="87" rx="2" fill="url(#lever-grad)" stroke="#0a0a0a" stroke-width="0.5"/>
+          <rect x="128" y="187" width="14" height="14" rx="3" fill="#e8e8e8" stroke="#0a0a0a"/>
+          <text x="155" y="287" text-anchor="start" fill="#cdd6e8" font-size="11" font-weight="700">SF</text>
+        </g>
+
+        <g class="switch-zone" data-sw="SE" onclick="openSwitchModal('SE')">
+          <circle cx="180" cy="310" r="10" fill="url(#bush-grad)" stroke="#0a0a0a"/>
+          <circle cx="180" cy="310" r="5"  fill="#0a0a0a"/>
+          <rect x="177" y="240" width="6" height="70" rx="2" fill="url(#lever-grad)" stroke="#0a0a0a" stroke-width="0.5"/>
+          <rect x="173" y="234" width="14" height="14" rx="3" fill="#e8e8e8" stroke="#0a0a0a"/>
+          <text x="200" y="315" text-anchor="start" fill="#cdd6e8" font-size="11" font-weight="700">SE</text>
+        </g>
+
+        <g class="switch-zone" data-sw="SA" onclick="openSwitchModal('SA')">
+          <circle cx="95" cy="335" r="10" fill="url(#bush-grad)" stroke="#0a0a0a"/>
+          <circle cx="95" cy="335" r="5"  fill="#0a0a0a"/>
+          <rect x="92" y="275" width="6" height="60" rx="2" fill="url(#lever-grad)" stroke="#0a0a0a" stroke-width="0.5"/>
+          <rect x="88" y="269" width="14" height="14" rx="3" fill="#e8e8e8" stroke="#0a0a0a"/>
+          <text x="95" y="358" text-anchor="middle" fill="#cdd6e8" font-size="11" font-weight="700">SA</text>
+        </g>
+
+        <g class="switch-zone" data-sw="SB" onclick="openSwitchModal('SB')">
+          <circle cx="225" cy="335" r="10" fill="url(#bush-grad)" stroke="#0a0a0a"/>
+          <circle cx="225" cy="335" r="5"  fill="#0a0a0a"/>
+          <rect x="222" y="275" width="6" height="60" rx="2" fill="url(#lever-grad)" stroke="#0a0a0a" stroke-width="0.5"/>
+          <rect x="218" y="269" width="14" height="14" rx="3" fill="#e8e8e8" stroke="#0a0a0a"/>
+          <text x="225" y="358" text-anchor="middle" fill="#cdd6e8" font-size="11" font-weight="700">SB</text>
+        </g>
+
+        <g class="switch-zone" data-sw="SH" onclick="openSwitchModal('SH')">
+          <circle cx="865" cy="282" r="11" fill="url(#bush-grad)" stroke="#0a0a0a"/>
+          <circle cx="865" cy="282" r="6"  fill="#0a0a0a"/>
+          <rect x="862" y="195" width="6" height="87" rx="2" fill="url(#lever-grad)" stroke="#0a0a0a" stroke-width="0.5"/>
+          <rect x="858" y="187" width="14" height="14" rx="3" fill="#e8e8e8" stroke="#0a0a0a"/>
+          <text x="845" y="287" text-anchor="end" fill="#cdd6e8" font-size="11" font-weight="700">SH</text>
+        </g>
+
+        <g class="switch-zone" data-sw="SG" onclick="openSwitchModal('SG')">
+          <circle cx="820" cy="310" r="10" fill="url(#bush-grad)" stroke="#0a0a0a"/>
+          <circle cx="820" cy="310" r="5"  fill="#0a0a0a"/>
+          <rect x="817" y="240" width="6" height="70" rx="2" fill="url(#lever-grad)" stroke="#0a0a0a" stroke-width="0.5"/>
+          <rect x="813" y="234" width="14" height="14" rx="3" fill="#e8e8e8" stroke="#0a0a0a"/>
+          <text x="800" y="315" text-anchor="end" fill="#cdd6e8" font-size="11" font-weight="700">SG</text>
+        </g>
+
+        <g class="switch-zone" data-sw="SD" onclick="openSwitchModal('SD')">
+          <circle cx="905" cy="335" r="10" fill="url(#bush-grad)" stroke="#0a0a0a"/>
+          <circle cx="905" cy="335" r="5"  fill="#0a0a0a"/>
+          <rect x="902" y="275" width="6" height="60" rx="2" fill="url(#lever-grad)" stroke="#0a0a0a" stroke-width="0.5"/>
+          <rect x="898" y="269" width="14" height="14" rx="3" fill="#e8e8e8" stroke="#0a0a0a"/>
+          <text x="905" y="358" text-anchor="middle" fill="#cdd6e8" font-size="11" font-weight="700">SD</text>
+        </g>
+
+        <g class="switch-zone" data-sw="SC" onclick="openSwitchModal('SC')">
+          <circle cx="775" cy="335" r="10" fill="url(#bush-grad)" stroke="#0a0a0a"/>
+          <circle cx="775" cy="335" r="5"  fill="#0a0a0a"/>
+          <rect x="772" y="275" width="6" height="60" rx="2" fill="url(#lever-grad)" stroke="#0a0a0a" stroke-width="0.5"/>
+          <rect x="768" y="269" width="14" height="14" rx="3" fill="#e8e8e8" stroke="#0a0a0a"/>
+          <text x="775" y="358" text-anchor="middle" fill="#cdd6e8" font-size="11" font-weight="700">SC</text>
+        </g>
+
+        <!-- ── SI / SJ momentary buttons ── -->
+        <g class="switch-zone" data-sw="SI" onclick="openSwitchModal('SI')">
+          <rect x="254" y="348" width="22" height="22" rx="5" fill="#1a1a2e" stroke="#3a3a6a"/>
+          <circle cx="265" cy="359" r="7" fill="url(#cap-grad)" stroke="#1a1a1a"/>
+          <text x="265" y="384" text-anchor="middle" fill="#cdd6e8" font-size="11" font-weight="700">SI</text>
+        </g>
+
+        <g class="switch-zone" data-sw="SJ" onclick="openSwitchModal('SJ')">
+          <rect x="724" y="348" width="22" height="22" rx="5" fill="#1a1a2e" stroke="#3a3a6a"/>
+          <circle cx="735" cy="359" r="7" fill="url(#cap-grad)" stroke="#1a1a1a"/>
+          <text x="735" y="384" text-anchor="middle" fill="#cdd6e8" font-size="11" font-weight="700">SJ</text>
+        </g>
+
+        <!-- ── LS / RL side sliders ── -->
+        <g class="knob-zone" data-knob="LS" onclick="openKnobModal('LS')">
+          <rect x="76" y="430" width="10" height="120" rx="5" fill="#0a0a0a" stroke="#1a2a4a"/>
+          <line x1="73" y1="490" x2="89" y2="490" stroke="#2a3a5a" stroke-width="1.5"/>
+          <rect x="70" y="482" width="22" height="16" rx="4" fill="url(#knob-grad)" stroke="#ffffff" stroke-width="0.6"/>
+          <text x="81" y="570" text-anchor="middle" fill="#cdd6e8" font-size="11" font-weight="700">LS</text>
+        </g>
+
+        <g class="knob-zone" data-knob="RS" onclick="openKnobModal('RS')">
+          <rect x="914" y="430" width="10" height="120" rx="5" fill="#0a0a0a" stroke="#1a2a4a"/>
+          <line x1="911" y1="490" x2="927" y2="490" stroke="#2a3a5a" stroke-width="1.5"/>
+          <rect x="908" y="482" width="22" height="16" rx="4" fill="url(#knob-grad)" stroke="#ffffff" stroke-width="0.6"/>
+          <text x="919" y="570" text-anchor="middle" fill="#cdd6e8" font-size="11" font-weight="700">RS</text>
+        </g>
+
+        <!-- ── Knobs S1 + S2 ── -->
+        <g class="knob-zone" data-knob="S1" onclick="openKnobModal('S1')">
+          <circle cx="430" cy="390" r="28" fill="#08101e" stroke="#1a2a4a"/>
+          <circle cx="430" cy="390" r="23" fill="url(#knob-grad)" stroke="#ffffff" stroke-width="0.6"/>
+          <line x1="430" y1="370" x2="430" y2="378" stroke="#fff" stroke-width="2" stroke-linecap="round"/>
+          <text x="430" y="438" text-anchor="middle" fill="#cdd6e8" font-size="11" font-weight="700">S1</text>
+        </g>
+
+        <g class="knob-zone" data-knob="S2" onclick="openKnobModal('S2')">
+          <circle cx="570" cy="390" r="28" fill="#08101e" stroke="#1a2a4a"/>
+          <circle cx="570" cy="390" r="23" fill="url(#knob-grad)" stroke="#ffffff" stroke-width="0.6"/>
+          <line x1="570" y1="370" x2="570" y2="378" stroke="#fff" stroke-width="2" stroke-linecap="round"/>
+          <text x="570" y="438" text-anchor="middle" fill="#cdd6e8" font-size="11" font-weight="700">S2</text>
+        </g>
+
+        <!-- Power button -->
+        <circle cx="500" cy="475" r="24" fill="#08101e" stroke="#1a2a4a"/>
+        <circle cx="500" cy="475" r="19" fill="#0d0d0d" stroke="#2a2a2a"/>
+        <path d="M 500 465 L 500 479 M 491 470 A 13 13 0 1 0 509 470"
+              stroke="#888" stroke-width="2.2" fill="none" stroke-linecap="round"/>
+
+        <rect x="488" y="510" width="24" height="16" rx="4" fill="#0a0a0a" stroke="#1a1a1a"/>
+        <rect x="495" y="514" width="10" height="8"  rx="1" fill="#3a3a3a"/>
+
+        <!-- Left gimbal -->
+        <rect x="150" y="395" width="180" height="180" rx="22" fill="#000" stroke="#1a1a1a" stroke-width="2"/>
+        <rect x="162" y="407" width="156" height="156" rx="14" fill="#0a0a0a"/>
+        <line x1="240" y1="410" x2="240" y2="424" stroke="#5a5a5a" stroke-width="1.5"/>
+        <line x1="240" y1="546" x2="240" y2="560" stroke="#5a5a5a" stroke-width="1.5"/>
+        <line x1="166" y1="485" x2="180" y2="485" stroke="#5a5a5a" stroke-width="1.5"/>
+        <line x1="300" y1="485" x2="314" y2="485" stroke="#5a5a5a" stroke-width="1.5"/>
+        <rect x="208" y="453" width="64" height="64" rx="8" fill="#000" stroke="#252525"/>
+        <circle id="leftGimbalCap-x20" cx="240" cy="485" r="15" fill="url(#cap-grad)" stroke="#1a1a1a"/>
+        <circle id="leftGimbalDot-x20" cx="240" cy="485" r="6"  fill="#0a0a0a"/>
+
+        <!-- 3-axis indicator: rotation arc around the left gimbal cap.
+             Visible only when body.three-axis-on (per-build flag). -->
+        <circle class="three-axis-only" cx="240" cy="485" r="22"
+                fill="none" stroke="#7acdf6" stroke-width="1.5"
+                stroke-dasharray="6 3" opacity="0.7"/>
+        <!-- Stick-click momentary (matrix slot 19 = "SK", was "L-Stick Click").
+             Larger transparent rect over the cap so the click target
+             is comfortable; the visible cap is drawn above this. -->
+        <g class="btn-zone three-axis-only" data-btn="19" onclick="openModal(19)">
+          <rect x="218" y="463" width="44" height="44" rx="22" fill="transparent" stroke="none"/>
+        </g>
+        <!-- J5 twist-axis live slider — horizontal rail just below the left
+             gimbal block (mirrors the SBUSController layout so the two apps
+             look the same).  Thumb position is animated from the live channel
+             value by moveTwistSlider() in the channel-render loop; clicking
+             anywhere on the group still opens the J5 channel-picker modal.
+             Visible only when the per-build threeAxisGimbals flag is on. -->
+        <g class="knob-zone three-axis-only" data-knob="J5" onclick="openKnobModal('J5')">
+          <rect x="150" y="587" width="180" height="6" rx="3" fill="#0a0a0a" stroke="#1a2a4a"/>
+          <line x1="240" y1="582" x2="240" y2="598" stroke="#2a3a5a" stroke-width="1.5"/>
+          <rect id="j5Thumb-x20" x="233" y="582" width="14" height="16" rx="3"
+                fill="url(#knob-grad)" stroke="#ffffff" stroke-width="0.6"/>
+          <text x="142" y="596" text-anchor="end" fill="#7acdf6" font-size="11" font-weight="700">J5</text>
+        </g>
+
+        <!-- Joystick axis pickers — left gimbal: J3 (X/RUD) left of cap, J4 (Y/THR) above cap.
+             Position convention: above-cap = Y axis indicator, beside-cap = X axis indicator.
+             Matches right gimbal where J1 (X/AIL) sits beside cap and J2 (Y/ELE) above. -->
+        <g class="knob-zone" data-knob="J3" onclick="openKnobModal('J3')">
+          <circle cx="180" cy="485" r="10" fill="#08101e" stroke="#1a2a4a"/>
+          <text x="180" y="489" text-anchor="middle" fill="#7acdf6" font-size="10" font-weight="700">J3</text>
+        </g>
+        <g class="knob-zone" data-knob="J4" onclick="openKnobModal('J4')">
+          <circle cx="240" cy="425" r="10" fill="#08101e" stroke="#1a2a4a"/>
+          <text x="240" y="429" text-anchor="middle" fill="#7acdf6" font-size="10" font-weight="700">J4</text>
+        </g>
+
+        <!-- Right gimbal -->
+        <rect x="670" y="395" width="180" height="180" rx="22" fill="#000" stroke="#1a1a1a" stroke-width="2"/>
+        <rect x="682" y="407" width="156" height="156" rx="14" fill="#0a0a0a"/>
+        <line x1="760" y1="410" x2="760" y2="424" stroke="#5a5a5a" stroke-width="1.5"/>
+        <line x1="760" y1="546" x2="760" y2="560" stroke="#5a5a5a" stroke-width="1.5"/>
+        <line x1="686" y1="485" x2="700" y2="485" stroke="#5a5a5a" stroke-width="1.5"/>
+        <line x1="820" y1="485" x2="834" y2="485" stroke="#5a5a5a" stroke-width="1.5"/>
+        <rect x="728" y="453" width="64" height="64" rx="8" fill="#000" stroke="#252525"/>
+        <circle id="rightGimbalCap-x20" cx="760" cy="485" r="15" fill="url(#cap-grad)" stroke="#1a1a1a"/>
+        <circle id="rightGimbalDot-x20" cx="760" cy="485" r="6"  fill="#0a0a0a"/>
+
+        <!-- 3-axis indicator: rotation arc around the right gimbal cap. -->
+        <circle class="three-axis-only" cx="760" cy="485" r="22"
+                fill="none" stroke="#7acdf6" stroke-width="1.5"
+                stroke-dasharray="6 3" opacity="0.7"/>
+        <!-- Stick-click momentary (matrix slot 20 = "SL", was "R-Stick Click"). -->
+        <g class="btn-zone three-axis-only" data-btn="20" onclick="openModal(20)">
+          <rect x="738" y="463" width="44" height="44" rx="22" fill="transparent" stroke="none"/>
+        </g>
+        <!-- J6 twist-axis live slider — horizontal rail just below the right
+             gimbal block.  Mirror of the J5 rail; animated by moveTwistSlider()
+             in the channel-render loop.  Click still opens the J6 modal. -->
+        <g class="knob-zone three-axis-only" data-knob="J6" onclick="openKnobModal('J6')">
+          <rect x="670" y="587" width="180" height="6" rx="3" fill="#0a0a0a" stroke="#1a2a4a"/>
+          <line x1="760" y1="582" x2="760" y2="598" stroke="#2a3a5a" stroke-width="1.5"/>
+          <rect id="j6Thumb-x20" x="753" y="582" width="14" height="16" rx="3"
+                fill="url(#knob-grad)" stroke="#ffffff" stroke-width="0.6"/>
+          <text x="858" y="596" text-anchor="start" fill="#7acdf6" font-size="11" font-weight="700">J6</text>
+        </g>
+
+        <!-- Joystick axis pickers — right gimbal: J2 (Y/ELE) above cap, J1 (X/AIL) right of cap -->
+        <g class="knob-zone" data-knob="J2" onclick="openKnobModal('J2')">
+          <circle cx="760" cy="425" r="10" fill="#08101e" stroke="#1a2a4a"/>
+          <text x="760" y="429" text-anchor="middle" fill="#7acdf6" font-size="10" font-weight="700">J2</text>
+        </g>
+        <g class="knob-zone" data-knob="J1" onclick="openKnobModal('J1')">
+          <circle cx="820" cy="485" r="10" fill="#08101e" stroke="#1a2a4a"/>
+          <text x="820" y="489" text-anchor="middle" fill="#7acdf6" font-size="10" font-weight="700">J1</text>
+        </g>
+
+        <!-- ── Trim switches T1-T6 ── -->
+        <!-- T3 (vertical right of L-gimbal) -->
+        <g class="btn-zone" data-btn="11" onclick="openModal(11)">
+          <rect x="358" y="435" width="26" height="22" rx="3" fill="#0a0a0a" stroke="#3a3a3a"/>
+          <rect x="367" y="438" width="8"  height="10" rx="2" fill="#aaa"/>
+          <polygon points="371,430 366,436 376,436" fill="#cdd6e8"/>
+        </g>
+        <g class="btn-zone" data-btn="12" onclick="openModal(12)">
+          <rect x="358" y="515" width="26" height="22" rx="3" fill="#0a0a0a" stroke="#3a3a3a"/>
+          <rect x="367" y="525" width="8"  height="10" rx="2" fill="#aaa"/>
+          <polygon points="371,545 366,539 376,539" fill="#cdd6e8"/>
+        </g>
+        <text x="371" y="485" text-anchor="middle" fill="#cdd6e8" font-size="11" font-weight="700">T3</text>
+
+        <!-- T2 (vertical left of R-gimbal) -->
+        <g class="btn-zone" data-btn="13" onclick="openModal(13)">
+          <rect x="616" y="435" width="26" height="22" rx="3" fill="#0a0a0a" stroke="#3a3a3a"/>
+          <rect x="625" y="438" width="8"  height="10" rx="2" fill="#aaa"/>
+          <polygon points="629,430 624,436 634,436" fill="#cdd6e8"/>
+        </g>
+        <g class="btn-zone" data-btn="14" onclick="openModal(14)">
+          <rect x="616" y="515" width="26" height="22" rx="3" fill="#0a0a0a" stroke="#3a3a3a"/>
+          <rect x="625" y="525" width="8"  height="10" rx="2" fill="#aaa"/>
+          <polygon points="629,545 624,539 634,539" fill="#cdd6e8"/>
+        </g>
+        <text x="629" y="485" text-anchor="middle" fill="#cdd6e8" font-size="11" font-weight="700">T2</text>
+
+        <!-- T4 (horizontal, bottom-LEFT) -->
+        <g class="btn-zone" data-btn="7" onclick="openModal(7)">
+          <rect x="160" y="600" width="22" height="20" rx="3" fill="#0a0a0a" stroke="#3a3a3a"/>
+          <rect x="163" y="606" width="9"  height="8"  rx="2" fill="#aaa"/>
+          <polygon points="156,610 162,606 162,614" fill="#cdd6e8"/>
+        </g>
+        <g class="btn-zone" data-btn="8" onclick="openModal(8)">
+          <rect x="195" y="600" width="22" height="20" rx="3" fill="#0a0a0a" stroke="#3a3a3a"/>
+          <rect x="205" y="606" width="9"  height="8"  rx="2" fill="#aaa"/>
+          <polygon points="221,610 215,606 215,614" fill="#cdd6e8"/>
+        </g>
+        <text x="188" y="640" text-anchor="middle" fill="#cdd6e8" font-size="11" font-weight="700">T4</text>
+
+        <!-- T5 (horizontal, bottom-LEFT inner) -->
+        <g class="btn-zone" data-btn="9" onclick="openModal(9)">
+          <rect x="295" y="600" width="22" height="20" rx="3" fill="#0a0a0a" stroke="#3a3a3a"/>
+          <rect x="298" y="606" width="9"  height="8"  rx="2" fill="#aaa"/>
+          <polygon points="291,610 297,606 297,614" fill="#cdd6e8"/>
+        </g>
+        <g class="btn-zone" data-btn="10" onclick="openModal(10)">
+          <rect x="330" y="600" width="22" height="20" rx="3" fill="#0a0a0a" stroke="#3a3a3a"/>
+          <rect x="340" y="606" width="9"  height="8"  rx="2" fill="#aaa"/>
+          <polygon points="356,610 350,606 350,614" fill="#cdd6e8"/>
+        </g>
+        <text x="323" y="640" text-anchor="middle" fill="#cdd6e8" font-size="11" font-weight="700">T5</text>
+
+        <!-- T6 (horizontal, bottom-RIGHT inner) -->
+        <g class="btn-zone" data-btn="15" onclick="openModal(15)">
+          <rect x="648" y="600" width="22" height="20" rx="3" fill="#0a0a0a" stroke="#3a3a3a"/>
+          <rect x="651" y="606" width="9"  height="8"  rx="2" fill="#aaa"/>
+          <polygon points="644,610 650,606 650,614" fill="#cdd6e8"/>
+        </g>
+        <g class="btn-zone" data-btn="16" onclick="openModal(16)">
+          <rect x="683" y="600" width="22" height="20" rx="3" fill="#0a0a0a" stroke="#3a3a3a"/>
+          <rect x="693" y="606" width="9"  height="8"  rx="2" fill="#aaa"/>
+          <polygon points="709,610 703,606 703,614" fill="#cdd6e8"/>
+        </g>
+        <text x="676" y="640" text-anchor="middle" fill="#cdd6e8" font-size="11" font-weight="700">T6</text>
+
+        <!-- T1 (horizontal, bottom-RIGHT) -->
+        <g class="btn-zone" data-btn="17" onclick="openModal(17)">
+          <rect x="783" y="600" width="22" height="20" rx="3" fill="#0a0a0a" stroke="#3a3a3a"/>
+          <rect x="786" y="606" width="9"  height="8"  rx="2" fill="#aaa"/>
+          <polygon points="779,610 785,606 785,614" fill="#cdd6e8"/>
+        </g>
+        <g class="btn-zone" data-btn="18" onclick="openModal(18)">
+          <rect x="818" y="600" width="22" height="20" rx="3" fill="#0a0a0a" stroke="#3a3a3a"/>
+          <rect x="828" y="606" width="9"  height="8"  rx="2" fill="#aaa"/>
+          <polygon points="844,610 838,606 838,614" fill="#cdd6e8"/>
+        </g>
+        <text x="811" y="640" text-anchor="middle" fill="#cdd6e8" font-size="11" font-weight="700">T1</text>
+
+        <!-- Centre logo + speaker -->
+        <text x="500" y="640" text-anchor="middle" fill="#3a5a8a" font-size="24" font-family="sans-serif" font-weight="700" font-style="italic">X20R</text>
+        <rect x="465" y="650" width="70" height="13" rx="6" fill="#08101e" stroke="#1a2a4a"/>
+        <g fill="#1a3a6a">
+          <circle cx="475" cy="656" r="1.4"/>
+          <circle cx="485" cy="656" r="1.4"/>
+          <circle cx="495" cy="656" r="1.4"/>
+          <circle cx="505" cy="656" r="1.4"/>
+          <circle cx="515" cy="656" r="1.4"/>
+          <circle cx="525" cy="656" r="1.4"/>
+        </g>
+        <text x="500" y="680" text-anchor="middle" fill="#5a7aa8" font-size="9" font-weight="700" letter-spacing="1">900M/2.4G DUAL BAND</text>
+
+        <!-- S3 slider (X20-specific, formerly "MS") — vertical centre-detent
+             slider sitting between the two nav dials.  Wired to the S3 knob
+             entry in TX_MODELS[X20].knobs (CH20 default).  Liveness is driven
+             by the SLIDERS animation table below alongside LS/RS. -->
+        <g class="knob-zone" data-knob="S3" onclick="openKnobModal('S3')">
+          <rect x="486" y="700" width="28" height="68" rx="6" fill="#0a0a0a" stroke="#1a2a4a" stroke-width="1.5"/>
+          <rect x="494" y="725" width="12" height="18" rx="3" fill="url(#cap-grad)" stroke="#1a1a1a"/>
+          <!-- tick marks on the right side of the track -->
+          <g stroke="#3a3a4a" stroke-width="1">
+            <line x1="516" y1="705" x2="520" y2="705"/>
+            <line x1="516" y1="722" x2="520" y2="722"/>
+            <line x1="516" y1="734" x2="520" y2="734"/>
+            <line x1="516" y1="746" x2="520" y2="746"/>
+            <line x1="516" y1="763" x2="520" y2="763"/>
+          </g>
+          <text x="500" y="784" text-anchor="middle" fill="#cdd6e8" font-size="10" font-weight="700">S3</text>
+        </g>
+
+        <!-- Nav dials (decorative) -->
+        <circle cx="185" cy="700" r="36" fill="#08101e" stroke="#1a2a4a"/>
+        <circle cx="185" cy="700" r="31" fill="#0d0d0d" stroke="#2a2a2a"/>
+        <circle cx="185" cy="700" r="15" fill="#1a1a1a" stroke="#0a0a0a"/>
+        <text x="185" y="675" text-anchor="middle" fill="#a0a8b8" font-size="8" font-weight="700">MDL</text>
+        <text x="217" y="703" text-anchor="middle" fill="#a0a8b8" font-size="8" font-weight="700">DISP</text>
+        <text x="185" y="732" text-anchor="middle" fill="#a0a8b8" font-size="8" font-weight="700">RTN</text>
+        <text x="153" y="703" text-anchor="middle" fill="#a0a8b8" font-size="8" font-weight="700">SYS</text>
+
+        <circle cx="815" cy="700" r="36" fill="#08101e" stroke="#1a2a4a"/>
+        <circle cx="815" cy="700" r="31" fill="#0d0d0d" stroke="#2a2a2a"/>
+        <circle cx="815" cy="700" r="20" fill="#1a1a1a"/>
+        <g stroke="#0a0a0a" stroke-width="1.5">
+          <line x1="815" y1="680" x2="815" y2="686"/>
+          <line x1="835" y1="700" x2="829" y2="700"/>
+          <line x1="815" y1="720" x2="815" y2="714"/>
+          <line x1="795" y1="700" x2="801" y2="700"/>
+          <line x1="829" y1="686" x2="825" y2="690"/>
+          <line x1="829" y1="714" x2="825" y2="710"/>
+          <line x1="801" y1="686" x2="805" y2="690"/>
+          <line x1="801" y1="714" x2="805" y2="710"/>
+        </g>
+
+        <!-- Six programmable buttons B1-B6 -->
+        <g class="btn-zone" data-btn="1" onclick="openModal(1)">
+          <circle cx="320" cy="668" r="12" fill="#0a0a0a" stroke="#4a4a4a" stroke-width="2"/>
+          <circle cx="320" cy="668" r="7"  fill="#1a1a1a"/>
+          <text x="320" y="671" text-anchor="middle" fill="#a0a8b8" font-size="9" font-weight="700">1</text>
+        </g>
+        <g class="btn-zone" data-btn="2" onclick="openModal(2)">
+          <circle cx="350" cy="695" r="12" fill="#0a0a0a" stroke="#4a4a4a" stroke-width="2"/>
+          <circle cx="350" cy="695" r="7"  fill="#1a1a1a"/>
+          <text x="350" y="698" text-anchor="middle" fill="#a0a8b8" font-size="9" font-weight="700">2</text>
+        </g>
+        <g class="btn-zone" data-btn="3" onclick="openModal(3)">
+          <circle cx="320" cy="722" r="12" fill="#0a0a0a" stroke="#4a4a4a" stroke-width="2"/>
+          <circle cx="320" cy="722" r="7"  fill="#1a1a1a"/>
+          <text x="320" y="725" text-anchor="middle" fill="#a0a8b8" font-size="9" font-weight="700">3</text>
+        </g>
+
+        <g class="btn-zone" data-btn="4" onclick="openModal(4)">
+          <circle cx="680" cy="668" r="12" fill="#0a0a0a" stroke="#4a4a4a" stroke-width="2"/>
+          <circle cx="680" cy="668" r="7"  fill="#1a1a1a"/>
+          <text x="680" y="671" text-anchor="middle" fill="#a0a8b8" font-size="9" font-weight="700">4</text>
+        </g>
+        <g class="btn-zone" data-btn="5" onclick="openModal(5)">
+          <circle cx="650" cy="695" r="12" fill="#0a0a0a" stroke="#4a4a4a" stroke-width="2"/>
+          <circle cx="650" cy="695" r="7"  fill="#1a1a1a"/>
+          <text x="650" y="698" text-anchor="middle" fill="#a0a8b8" font-size="9" font-weight="700">5</text>
+        </g>
+        <g class="btn-zone" data-btn="6" onclick="openModal(6)">
+          <circle cx="680" cy="722" r="12" fill="#0a0a0a" stroke="#4a4a4a" stroke-width="2"/>
+          <circle cx="680" cy="722" r="7"  fill="#1a1a1a"/>
+          <text x="680" y="725" text-anchor="middle" fill="#a0a8b8" font-size="9" font-weight="700">6</text>
+        </g>
+
+        </g><!-- /tx-x20 -->
 
       </svg>
 
@@ -1561,7 +2019,7 @@
         <img src="../Images/r2logo.png" alt="R2 logo"
              style="width:72px;height:72px;object-fit:contain;opacity:0.9">
         <div style="font-size:11px;color:var(--muted);font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;letter-spacing:0.3px">
-          RC Controller Config Tool &nbsp;·&nbsp; <span id="footer-dtg">222316QMAY26</span>
+          RC Controller Config Tool &nbsp;·&nbsp; <span id="footer-dtg">261534QMAY26</span>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap">
@@ -1743,6 +2201,7 @@
               <select id="tx-model-select" onchange="onTxModelChange(+this.value)">
                 <option value="0">FrSky Tandem X18</option>
                 <option value="1">FrSky Twin X-Lite</option>
+                <option value="2">FrSky Twin X20</option>
               </select>
               <small style="color:var(--muted);font-size:11px;margin-left:10px" id="tx-model-help"></small>
             </div>
@@ -1752,6 +2211,26 @@
               each control.  Calibration still overrides per-control channels
               individually, so a custom TX mixer setup still works — the model
               just provides sensible starting points.
+            </div>
+          </div>
+
+          <!-- ── X20 hardware options.  Hidden for X18 / X-Lite via the
+                  'tx-x20-only' helper class (toggled in onTxModelChange). ── -->
+          <div class="sb-section" id="cfg-x20-options" style="display:none">
+            <h3>X20 hardware options</h3>
+            <div class="wcb-send-row" style="margin-top:8px">
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+                <input type="checkbox" id="cfg-three-axis-gimbals"
+                       onchange="onThreeAxisGimbalsChange(this.checked)">
+                <span>Enable 3-axis gimbals</span>
+              </label>
+            </div>
+            <div class="noconn" style="margin-top:8px">
+              Check this if your X20 has the optional <b>3-axis gimbal upgrade</b>
+              — adds the J5 (left-stick twist) / J6 (right-stick twist) axes
+              and the two stick-click momentary buttons (matrix slots 19 / 20)
+              to the axes table, assignment list, and calibration walk.
+              Leave unchecked on a standard 2-axis X20.
             </div>
           </div>
         </section>
@@ -2155,6 +2634,7 @@ const NUM_MAESTRO_SLOTS = 8;
 // working without per-call lookups.
 const TX_MODEL_X18         = 0;
 const TX_MODEL_TWIN_X_LITE = 1;
+const TX_MODEL_X20         = 2;
 
 const TX_MODELS = {
   [TX_MODEL_X18]: {
@@ -2221,6 +2701,51 @@ const TX_MODELS = {
       SE: {channel: 12, positions: 2}, SF: {channel: 13, positions: 2},
     },
   },
+
+  [TX_MODEL_X20]: {
+    id:    TX_MODEL_X20,
+    name:  'FrSky Twin X20',
+    short: 'X20',
+    // Dedicated tx-x20 SVG group cloned from tx-x18 with -x20 suffixed
+    // element IDs (leftGimbalCap-x20, rightGimbalCap-x20, etc.) so the
+    // X18, X-Lite, and X20 groups all coexist in the DOM without ID
+    // collisions.  The X20 visual currently MIRRORS the X18 — Phase 2
+    // tweaks (bigger landscape screen, S3 slider visual between B1-B6,
+    // optional 3-axis gimbal indicators) come next.
+    cssSlug:   'x20',           // → body.tx-show-x20 + <g class="tx-x20">
+    svgClass:  'tx-x20',
+    // The X20 is the X18 layout with three extras:
+    //   • S3 slider (was "MS") — sits between the B1-B6 face buttons (CH20 default)
+    //   • Optional 3-axis gimbals — adds J5/J6 twist axes (CH21/CH22) and
+    //     two stick-click momentary buttons SK/SL (matrix slots 19/20).
+    // The optional 3-axis controls are always present in the data model;
+    // the X20's Transmitter-tab toggle just shows/hides their SVG
+    // elements.  Slots 19/20 sit unused (channel=0 inactive) for buyers
+    // who didn't get the 3-axis upgrade.
+    buttons:   [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18, 19,20],
+    switches:  ['SA','SB','SC','SD','SE','SF','SG','SH','SI','SJ'],
+    knobs:     ['S1','S2','LS','RS','S3','J1','J2','J3','J4','J5','J6'],
+    knobDefaults: {
+      S1: { channel:  5, function: 0, reverse: false, outputs: [], kind: 'knob',     friendly: 'S1 knob' },
+      S2: { channel:  6, function: 0, reverse: false, outputs: [], kind: 'knob',     friendly: 'S2 knob' },
+      LS: { channel: 18, function: 0, reverse: false, outputs: [], kind: 'slider',   friendly: 'LS slider' },
+      RS: { channel: 19, function: 0, reverse: false, outputs: [], kind: 'slider',   friendly: 'RS slider' },
+      S3: { channel: 20, function: 0, reverse: false, outputs: [], kind: 'slider',   friendly: 'S3 — middle slider (was MS)' },
+      J1: { channel:  1, function: 0, reverse: false, outputs: [], kind: 'joystick', friendly: 'J1 — R-stick X (AIL)' },
+      J2: { channel:  2, function: 0, reverse: false, outputs: [], kind: 'joystick', friendly: 'J2 — R-stick Y (ELE)' },
+      J3: { channel:  3, function: 0, reverse: false, outputs: [], kind: 'joystick', friendly: 'J3 — L-stick X (RUD)' },
+      J4: { channel:  4, function: 0, reverse: false, outputs: [], kind: 'joystick', friendly: 'J4 — L-stick Y (THR)' },
+      J5: { channel: 21, function: 0, reverse: false, outputs: [], kind: 'joystick', friendly: 'J5 — L-stick twist (3-axis option)' },
+      J6: { channel: 22, function: 0, reverse: false, outputs: [], kind: 'joystick', friendly: 'J6 — R-stick twist (3-axis option)' },
+    },
+    switchDefaults: {
+      SA: {channel:  8, positions: 3}, SB: {channel:  9, positions: 3},
+      SC: {channel: 10, positions: 3}, SD: {channel: 11, positions: 3},
+      SE: {channel: 12, positions: 3}, SF: {channel: 13, positions: 2},
+      SG: {channel: 14, positions: 3}, SH: {channel: 15, positions: 2},
+      SI: {channel: 16, positions: 2}, SJ: {channel: 17, positions: 2},
+    },
+  },
 };
 
 // Live defaults — initialised to X18 and reassigned by applyTxModel().
@@ -2259,8 +2784,17 @@ function applyTxModel(modelId, persist = true) {
   // transmitter SVG carries a class like "tx-x18" / "tx-twinxlite".  We
   // toggle a top-level CSS class on <body> so a single rule per model
   // controls visibility.
-  document.body.classList.remove('tx-show-x18', 'tx-show-twinxlite');
+  document.body.classList.remove('tx-show-x18', 'tx-show-twinxlite', 'tx-show-x20');
   document.body.classList.add('tx-show-' + m.cssSlug);
+
+  // Show / hide model-specific options in the Config → Transmitter
+  // tab (currently just the X20's 3-axis-gimbals checkbox).  Initialize
+  // the checkbox state from the current config value.
+  const x20Opts = document.getElementById('cfg-x20-options');
+  if (x20Opts) x20Opts.style.display = (m.id === TX_MODEL_X20) ? '' : 'none';
+  const x20Cb = document.getElementById('cfg-three-axis-gimbals');
+  if (x20Cb) x20Cb.checked = !!(config && config.threeAxisGimbals);
+  document.body.classList.toggle('three-axis-on', !!(config && config.threeAxisGimbals));
 
   // Re-render every panel that bakes in model-specific defaults.  Order
   // matters only loosely — these don't depend on each other, but doing
@@ -2318,6 +2852,8 @@ function hcrAudioChanOptions(selected) {
 // `applyTxModel()` reassigns it on model change.
 
 let config = {
+  txModel:          0,        // TX_MODEL_X18 default
+  threeAxisGimbals: false,    // X20 hardware option (off by default)
   tapWindowMs:   500,
   matrixChannel: 7,
   matrixDebounceFrames: 1,
@@ -2358,10 +2894,15 @@ const modeLabels = ['', 'SW Down (Mode 1)', 'SW Mid (Mode 2)', 'SW Up (Mode 3)']
 const BTN_LABELS_DEFAULT = ['', 'B1', 'B2', 'B3', 'B4', 'B5', 'B6',
                         'T4 Left', 'T4 Right', 'T5 Left', 'T5 Right',
                         'T3 Up', 'T3 Down', 'T2 Up', 'T2 Down',
-                        'T6 Left', 'T6 Right', 'T1 Left', 'T1 Right', 'Unassigned'];
+                        'T6 Left', 'T6 Right', 'T1 Left', 'T1 Right',
+                        'SK', 'SL', 'Unassigned'];
 let btnLabels = [...BTN_LABELS_DEFAULT];
-// Number of real, user-facing matrix buttons (excludes the inert slot 19).
-const RC_VISIBLE_BUTTONS = 18;
+// Number of real, user-facing matrix buttons (excludes the inert slot 21
+// "Unassigned" sentinel).  Slots 19/20 are SK / SL — the X20's L/R stick-click
+// momentary buttons (formerly labelled "L-Stick Click" / "R-Stick Click") that
+// come with the optional 3-axis gimbal upgrade.  On X18 and X-Lite they sit
+// unused (channel=0).
+const RC_VISIBLE_BUTTONS = 20;
 
 // RC Controller action types. Maestros are addressed by ID 1-8 regardless of
 // wiring — the location of each is configured in the Maestro Locations panel.
@@ -2483,6 +3024,10 @@ document.getElementById('btn-connect').addEventListener('click', async () => {
     // Push current debug-chip state to the firmware so it knows which
     // categories to emit. Default = all off → firmware stays quiet.
     sendDebugFlagsToBoard();
+    // If Via WCB was already enabled from a previous session (restored
+    // from localStorage on page load), kick off the keep-alive PING timer
+    // now — onViaWcbToggle() only fires when the checkbox actually flips.
+    if (viaWcbActive) onViaWcbToggle(true);
   } catch(e) {
     console.error(e);
     alert('Could not open serial port:\n' + e.message);
@@ -2521,6 +3066,17 @@ async function disconnect() {
     port = null;
     disconnecting = false;
     setConnected(false);
+    // Force the next connection to re-Load before allowing a Save — the
+    // config in memory is now stale w.r.t. whatever board we reconnect to.
+    _configLoaded = false;
+    // Drop the diff baseline too — saving against a baseline from a
+    // different board (or a different boot of the same board) would
+    // produce nonsense diffs.  applyConfig re-establishes it after the
+    // next CONFIG arrives.
+    _configBaseline = null;
+    // Stop the Via-WCB keep-alive PING timer so it doesn't keep firing
+    // sendJSON() on a torn-down port.
+    if (_wcbKeepaliveTimer) { clearInterval(_wcbKeepaliveTimer); _wcbKeepaliveTimer = null; }
   }
 }
 
@@ -2531,12 +3087,14 @@ function setConnected(v) {
   // Clear the firmware-version readouts on disconnect — they're stale until
   // the next PONG.  (When v=true we leave them alone; PONG will populate them.)
   if (!v) {
-    const fwScreen   = document.getElementById('tx-screen-fw-version');
-    const fwScreenXL = document.getElementById('tx-screen-fw-version-xl');
-    const fwTab      = document.getElementById('fw-current-version');
-    if (fwScreen)   fwScreen.textContent   = '—';
-    if (fwScreenXL) fwScreenXL.textContent = '—';
-    if (fwTab)      fwTab.textContent      = '—';
+    const fwScreen    = document.getElementById('tx-screen-fw-version');
+    const fwScreenXL  = document.getElementById('tx-screen-fw-version-xl');
+    const fwScreenX20 = document.getElementById('tx-screen-fw-version-x20');
+    const fwTab       = document.getElementById('fw-current-version');
+    if (fwScreen)    fwScreen.textContent    = '—';
+    if (fwScreenXL)  fwScreenXL.textContent  = '—';
+    if (fwScreenX20) fwScreenX20.textContent = '—';
+    if (fwTab)       fwTab.textContent       = '—';
   }
   ['btn-refresh','btn-save','btn-hwsetup-save','btn-defaults','btn-qs-send','btn-wcb-reboot'].forEach(id => {
     const el = document.getElementById(id);
@@ -2643,8 +3201,160 @@ async function sendLine(msg, silent = false) {
   await writer.write(encoded);
 }
 
+// ── Via WCB bridge state ────────────────────────────────────────────────────
+// When the user checks the "Via WCB" toggle on the topbar, this tool is
+// plugged into a WCB instead of an RC-Controller.  All outbound JSON gets
+// wrapped `;20,<json>` so the WCB relays it via ESP-NOW to the RC at the
+// fixed WCB special-peer slot.  All inbound rc_* messages are filtered by
+// `id == RC_WCB_DEVICE_ID` so other peers on the network don't bleed in.
+//
+// Pinning the RC to slot 20 by convention (see wcb_config.h) means the
+// tool doesn't need to ask "which RC?" — there's always one and it's
+// always at 20.  Multi-RC deployments would need to revert to an explicit
+// id picker, but that's an unusual case.
+const RC_WCB_DEVICE_ID = 20;
+let viaWcbActive = false;   // false = Direct USB mode; true = bridging via tethered WCB
+let _rcTrigReleaseTimer = null;   // setTimeout handle for rc_trig auto-release
+// Via WCB: SBUS RECEIVER block freshness tracking.  PWM_UPDATE carries
+// the RC's local SBUS metrics inline (Direct USB path).  Over WCB we
+// stash the latest fps / lost / failsafe values from rc_hb (which
+// reports the RC's TRUE local SBUS reader stats — typically 70–100 Hz —
+// not our 5 Hz rc_ch broadcast cadence), then rc_ch arrivals refresh
+// the green dot using those cached values.
+let _rcLastChMs    = 0;
+let _rcLastHbSbus  = null;   // { fps, ageMs, lost, failsafe } from last rc_hb
+let _rcSbusTimer   = null;
+
+function onViaWcbToggle(checked) {
+  viaWcbActive = !!checked;
+  try { localStorage.setItem('rc_via_wcb_on', viaWcbActive ? '1' : '0'); } catch (_) {}
+  const status = document.getElementById('status-text');
+  if (port && status) {
+    status.textContent = viaWcbActive
+      ? `Connected via WCB → RC #${RC_WCB_DEVICE_ID}`
+      : 'Connected ✓';
+  }
+  // Keep the RC's rc_ch subscription alive while passively monitoring.
+  // The RC gates 5-Hz channel broadcasts on "received inbound JSON within
+  // the last 15 s" so it doesn't burn ESP-NOW airtime when no one's
+  // listening (see rcTelemetry::_hasWcbSubscriber).  When Via WCB is on
+  // we send a low-cost PING every 10 s — if the user does anything (Save,
+  // Refresh, Trigger), that's free traffic that renews the subscription
+  // and our keep-alive becomes a no-op.  When Via WCB is off (or there's
+  // no port), the timer idles harmlessly.
+  if (_wcbKeepaliveTimer) { clearInterval(_wcbKeepaliveTimer); _wcbKeepaliveTimer = null; }
+  if (viaWcbActive) {
+    _wcbKeepaliveTimer = setInterval(() => {
+      if (!viaWcbActive || !port) return;
+      // silent=true so the PING/PONG roundtrip doesn't spam the terminal
+      sendJSON({ type: 'PING' }, true).catch(() => {});
+    }, 10000);
+  }
+}
+let _wcbKeepaliveTimer = null;
+
+// Restore Via WCB state on page load (checkbox + module-level cache).
+(function restoreViaWcbState() {
+  try {
+    const saved = localStorage.getItem('rc_via_wcb_on') === '1';
+    if (saved) {
+      viaWcbActive = true;
+      const el = document.getElementById('via-wcb-toggle');
+      if (el) el.checked = true;
+    }
+  } catch (_) {}
+})();
+
+// ── Via WCB fragmentation ─────────────────────────────────────────────────
+// ESP-NOW packets cap at 252 bytes; SET_CONFIG / GET_CONFIG payloads run to
+// several KB.  When the wrapped wire line would exceed the cap, slice the
+// underlying JSON into ~80-byte chunks and wrap each in a fragment envelope
+// matching rcTelemetry::handle()'s expected shape:
+//
+//     {"f":<n>,"of":<N>,"sid":<S>,"s":"<chunk>"}
+//
+// The RC reassembles by sid and dispatches the full payload.  Direct USB
+// mode (viaWcbActive=false) never fragments — Web Serial has no packet
+// limit and the firmware's USB path parses the full line in one go.
+//
+// 80 (not 160): the WCB bridge forwards `<envelope>` as an ETM packet,
+// where WCB.ino's outbound ETM path snprintfs "|CRC%08X" (12 bytes) onto
+// the end of a 200-byte structCommand[200] buffer.  Envelopes > 187 bytes
+// get their CRC truncated, and the RC's WCB_Client rejects them with
+// "Missing CRC".  An 80-byte raw slice JSON-escapes to ~120 bytes inside
+// a `{"f":N,"of":M,"sid":S,"s":"…"}` envelope of ~30 bytes overhead —
+// total ~150 bytes, comfortably under 187.  Must match
+// rcTelemetry::FRAG_CHUNK_BYTES so reassembly logic stays balanced.
+const FRAG_CHUNK_BYTES = 80;
+const FRAG_MAX_PARTS   = 192;   // matches RC firmware (rc_telemetry.h); 192 × 80 = 15 KB
+// Hard cap on the envelope JSON length (sans the ;w<id>, prefix).  Bridge
+// will silently strip the CRC suffix and the RC will drop the packet if
+// this is exceeded.  Bail loudly client-side so we notice if the chunk
+// math drifts.
+const FRAG_MAX_ENV_BYTES = 187;
+let   _nextOutSid      = 1;
+
 async function sendJSON(obj, silent = false) {
-  await sendLine(JSON.stringify(obj), silent);
+  if (!viaWcbActive) {
+    await sendLine(JSON.stringify(obj), silent);
+    return;
+  }
+  const inner  = JSON.stringify(obj);
+  // WCB's local-serial command syntax for "relay this to another WCB" is
+  //     ;w<id>,<command>          (NOT just ;<id>,<command> — that path
+  //                                 hits processCommandCharcter which
+  //                                 dispatches by first character and
+  //                                 returns "Invalid Serial Command" on
+  //                                 anything other than s/w/c/m/p/a/h)
+  // See processWCBMessage in WCB.ino — splits on the first comma for the
+  // greedy-digit target id, sends the remainder via ESP-NOW.  For target
+  // id 20 (the RC's special-peer slot) the bridge WCB must have
+  // `specialPeerEnabled` true / `WCB_SPECIAL_PEER_ID == 20`.
+  const prefix = ';w' + RC_WCB_DEVICE_ID + ',';
+  const ESP_NOW_MAX = 250;
+
+  // Single-packet fast path — common case for PING / TRIGGER / SET_MODE.
+  if (prefix.length + inner.length <= ESP_NOW_MAX) {
+    await sendLine(prefix + inner, silent);
+    return;
+  }
+
+  // Fragment.  Sender-chosen sid wraps at 65535 → 1 (never 0; the RC uses
+  // sid==0 as the "free slot" sentinel in its session pool).
+  const sid = _nextOutSid++;
+  if (_nextOutSid > 65535) _nextOutSid = 1;
+  const total = Math.ceil(inner.length / FRAG_CHUNK_BYTES);
+  if (total > FRAG_MAX_PARTS) {
+    console.error(`sendJSON: payload would need ${total} fragments (max ${FRAG_MAX_PARTS})`);
+    return;
+  }
+  for (let i = 0; i < total; i++) {
+    const slice = inner.substring(i * FRAG_CHUNK_BYTES, (i + 1) * FRAG_CHUNK_BYTES);
+    const env   = JSON.stringify({ f: i + 1, of: total, sid, s: slice });
+    // Guard against envelope drift past the bridge's CRC-suffix budget.
+    // If this ever fires the RC side will see "Missing CRC" — see the
+    // FRAG_MAX_ENV_BYTES note above for the root cause.
+    if (env.length > FRAG_MAX_ENV_BYTES) {
+      console.error(`sendJSON: fragment ${i + 1}/${total} envelope ${env.length} > ${FRAG_MAX_ENV_BYTES}-byte cap — reduce FRAG_CHUNK_BYTES`);
+      return;
+    }
+    await sendLine(prefix + env, silent);
+    // Inter-fragment pacing: must be longer than the bridge's ESP-NOW
+    // MAC-layer + ETM round-trip (send → MAC ACK → app ACK → done).
+    // Empirically 50 ms was NOT enough — WiFi TX queue overflowed mid-
+    // burst on a 38-fragment SET_CONFIG, producing "[SEND CB] MAC-layer
+    // FAILED" interspersed with successful sends, then 100% failure once
+    // the receiver got overwhelmed.  150 ms gives plenty of headroom and
+    // a 38-fragment SET_CONFIG still completes in ~5.7 s — acceptable
+    // for an explicit Save (which is rare and user-initiated).
+    //
+    // If this proves still unreliable in the field we may need to:
+    //   1. Implement application-level ACK per fragment (RC sends a
+    //      `{"type":"FRAG_ACK","sid":N,"f":X}` after each, sender waits)
+    //   2. Move bridge-side outbound to a true queue with rate limiting
+    // For now, simple source-side rate limiting is the right tradeoff.
+    await new Promise(r => setTimeout(r, 150));
+  }
 }
 
 // ── Terminal debug filter ────────────────────────────────────────────────
@@ -2957,11 +3667,51 @@ async function startReading() {
   }
 }
 
+// ── Via WCB fragment reassembly buffer (receive-side) ───────────────────────
+// Mirrors rcTelemetry::FragSession on the RC side.  Keyed by sid; entries
+// auto-expire after 5 s to bound memory if a session never completes (e.g.
+// the RC reboots mid-transmission).  Reassembled payloads recurse into
+// handleBoardMessage so they dispatch through the normal switch below.
+const _fragSessions = new Map();   // sid → {parts:[], total, got, expireAt}
+const FRAG_TIMEOUT_MS = 5000;
+
+function _gcExpiredFragments() {
+  const now = Date.now();
+  for (const [sid, sess] of _fragSessions) {
+    if (now >= sess.expireAt) _fragSessions.delete(sid);
+  }
+}
+
 function handleBoardMessage(line) {
   let msg;
   try { msg = JSON.parse(line); } catch(e) {
     appendTerminalLine('< ' + line, 'rx');
     console.log('Board>', line);
+    return;
+  }
+
+  // ── Fragment envelope (Via WCB transport) ─────────────────────────────
+  // {"f":<n>,"of":<N>,"sid":<S>,"s":"<chunk>"} — slice of a multi-packet
+  // payload (typically a CONFIG response from the RC).  Buffer by sid,
+  // concatenate `s` fields in order when all N parts arrive, then recurse
+  // with the reassembled JSON so the normal dispatch handles it.
+  if (typeof msg.f === 'number' && typeof msg.of === 'number' && typeof msg.sid === 'number') {
+    _gcExpiredFragments();
+    let sess = _fragSessions.get(msg.sid);
+    if (!sess) {
+      sess = { parts: new Array(msg.of), total: msg.of, got: 0, expireAt: Date.now() + FRAG_TIMEOUT_MS };
+      _fragSessions.set(msg.sid, sess);
+    }
+    if (sess.parts[msg.f - 1] === undefined) {
+      sess.parts[msg.f - 1] = msg.s || '';
+      sess.got++;
+      sess.expireAt = Date.now() + FRAG_TIMEOUT_MS;
+    }
+    if (sess.got >= sess.total) {
+      _fragSessions.delete(msg.sid);
+      const full = sess.parts.join('');
+      handleBoardMessage(full);   // recurse with the reassembled payload
+    }
     return;
   }
 
@@ -2997,6 +3747,150 @@ function handleBoardMessage(line) {
     return;
   }
 
+  // ── Via WCB bridge: rc_* telemetry from a remote RC-Controller ──────────
+  // The RC firmware (rc_telemetry.h) broadcasts these over the WCB ESP-NOW
+  // network; the USB-tethered WCB relays them to USB Serial; we parse them
+  // here.  Filter on the fixed RC_WCB_DEVICE_ID (20) so other devices on
+  // the network (other RCs in odd multi-RC setups, or the WCBs themselves
+  // chattering) don't drive our UI.  In Direct USB mode the messages
+  // don't arrive at all; the guard is belt-and-braces only.
+  if (msg.type === 'rc_ch' && Array.isArray(msg.ch)) {
+    if (msg.id !== RC_WCB_DEVICE_ID) return;
+    try {
+      updateChannelsGrid(msg.ch);
+      markActiveChannels(msg.ch);
+      updateTransmitterAnimation(msg.ch);
+      // Drive the BIG matrix-channel PWM widget the same way PWM_UPDATE
+      // does over Direct USB.  Without this it stays NaN because the only
+      // direct-USB write to live-ch6 happens inside updatePWMDisplay,
+      // which has no caller in Via WCB mode otherwise.  _liveMatrixCh /
+      // _liveModeCh are set by rc_hb / config-load.  ch[] is 1-indexed
+      // in our terminology (channel 7 → ch[6]).
+      const matrixIdx = (typeof _liveMatrixCh === 'number') ? _liveMatrixCh - 1 : 6;
+      const modeIdx   = (typeof _liveModeCh   === 'number') ? _liveModeCh   - 1 : 11;
+      const matrixVal = (matrixIdx >= 0 && matrixIdx < msg.ch.length) ? msg.ch[matrixIdx] : undefined;
+      const modeVal   = (modeIdx   >= 0 && modeIdx   < msg.ch.length) ? msg.ch[modeIdx]   : undefined;
+      // _liveBtn / _liveMode persist between calls (rc_trig pulses them,
+      // rc_mode updates mode).  Pass-through so the trigger-highlight
+      // logic in updatePWMDisplay stays consistent across rc_ch updates.
+      updatePWMDisplay(matrixVal, modeVal, _liveBtn, _liveMode);
+      // Track the last channel-frame arrival for the SBUS RECEIVER
+      // status block's freshness gate (see rc_hb handler).
+      _rcLastChMs = Date.now();
+      // Refresh SBUS status so the green dot stays lit between heartbeats
+      // (rc_hb fires at 0.5 Hz; rc_ch at 5 Hz keeps the indicator alive).
+      // fps / lost / failsafe come from the LAST rc_hb the RC sent — those
+      // reflect the RC's true ~70-100 Hz SBUS reader rate, not our 5 Hz
+      // broadcast cadence.  Until the first rc_hb arrives we leave fps at
+      // 0 (display says "0 fps") rather than lying with a synthesized 5.
+      const hb = _rcLastHbSbus;
+      updateSbusStatus({
+        ok:       hb ? (!hb.lost && !hb.failsafe) : true,
+        lost:     hb ? hb.lost     : false,
+        failsafe: hb ? hb.failsafe : false,
+        chCount:  msg.ch.length,
+        fps:      hb ? hb.fps      : 0,
+        ageMs:    hb ? hb.ageMs    : 0,
+      });
+    } catch (e) {
+      console.error('rc_ch handler threw:', e, msg);
+    }
+    return;
+  }
+  if (msg.type === 'rc_hb') {
+    if (msg.id !== RC_WCB_DEVICE_ID) return;
+    // Heartbeat carries firmware version + active mode + model.  Treat as
+    // an inline PONG so the status line + screen FW readouts populate.
+    document.getElementById('status-text').textContent =
+      viaWcbActive ? `Connected via WCB → RC #${RC_WCB_DEVICE_ID}` : 'Connected ✓';
+    if (typeof msg.fw === 'string' && msg.fw.length) {
+      const fwScreen    = document.getElementById('tx-screen-fw-version');
+      const fwScreenXL  = document.getElementById('tx-screen-fw-version-xl');
+      const fwScreenX20 = document.getElementById('tx-screen-fw-version-x20');
+      const fwTab       = document.getElementById('fw-current-version');
+      if (fwScreen)    fwScreen.textContent    = msg.fw;
+      if (fwScreenXL)  fwScreenXL.textContent  = msg.fw;
+      if (fwScreenX20) fwScreenX20.textContent = msg.fw;
+      if (fwTab)       fwTab.textContent       = msg.fw;
+    }
+    if (msg.mode) applyLiveMode(msg.mode);
+    // Capture the RC's local SBUS reader stats so subsequent rc_ch
+    // arrivals can display the real frame rate (msg.sbusFps is the
+    // actual hardware frame rate the RC sees, typically 70-100 Hz —
+    // NOT our 5 Hz broadcast cadence).  Stash for the rc_ch handler
+    // and the watchdog to use.
+    if (typeof msg.sbusFps === 'number') {
+      _rcLastHbSbus = {
+        fps:      msg.sbusFps | 0,
+        ageMs:    (msg.sbusAge | 0),
+        lost:     !!msg.sbusLost,
+        failsafe: !!msg.sbusFail,
+      };
+      // Push immediately so the SBUS RECEIVER block reflects the truth
+      // right when rc_hb arrives, even if rc_ch hasn't fired in this
+      // interval yet (or if SBUS is genuinely lost — fps will read 0).
+      updateSbusStatus({
+        ok:       !_rcLastHbSbus.lost && !_rcLastHbSbus.failsafe,
+        lost:     _rcLastHbSbus.lost,
+        failsafe: _rcLastHbSbus.failsafe,
+        chCount:  0,                  // unknown until next rc_ch
+        fps:      _rcLastHbSbus.fps,
+        ageMs:    _rcLastHbSbus.ageMs,
+      });
+    }
+    // SBUS RECEIVER block watchdog — flips the dot red if rc_ch goes
+    // silent for > 1.5s (RC broadcasts at 5 Hz / 200 ms, so 1.5 s ≈ 7
+    // missed packets — well past normal jitter).  This handles loss of
+    // the WCB link itself; SBUS-side loss is reported directly by the
+    // RC via sbusLost/sbusFail in rc_hb (handled above).
+    if (!_rcSbusTimer) {
+      _rcSbusTimer = setInterval(() => {
+        if (!viaWcbActive) return;
+        const ageMs = Date.now() - _rcLastChMs;
+        if (_rcLastChMs === 0) return;   // no rc_ch yet — leave initial state
+        if (ageMs > 1500) {
+          updateSbusStatus({
+            ok: false, lost: true, failsafe: false,
+            chCount: 0, fps: 0, ageMs,
+          });
+        }
+      }, 500);
+    }
+    return;
+  }
+  if (msg.type === 'rc_trig') {
+    if (msg.id !== RC_WCB_DEVICE_ID) return;
+    // Surface the trigger in the live button-highlight system.  We don't
+    // have matrixVal/modeVal here (those come on the locally-detected
+    // PWM_UPDATE path); pass undefined so updatePWMDisplay just runs the
+    // btn-highlight branch.  rc_trig is event-driven (press-only — there
+    // is no release event), so schedule a soft auto-release after a short
+    // delay so trim/face-button highlights match the visual feel of a
+    // local press.  Pressing the same button again resets the timer.
+    try { updatePWMDisplay(undefined, undefined, msg.btn, msg.mode); } catch (_) {}
+    if (_rcTrigReleaseTimer) clearTimeout(_rcTrigReleaseTimer);
+    _rcTrigReleaseTimer = setTimeout(() => {
+      _rcTrigReleaseTimer = null;
+      // Pass btn=0 — updatePWMDisplay clears every .live-active outline
+      // because effectiveBtn ends up 0 (no slot matches).
+      try { updatePWMDisplay(undefined, undefined, 0, msg.mode); } catch (_) {}
+    }, 250);
+    return;
+  }
+  if (msg.type === 'rc_mode') {
+    if (msg.id !== RC_WCB_DEVICE_ID) return;
+    if (msg.mode) applyLiveMode(msg.mode);
+    return;
+  }
+  if (msg.type === 'rc_err') {
+    // RC explicitly rejected something (e.g. SET_CONFIG over WCB exceeds
+    // packet size).  Show it in the terminal so the user understands why
+    // a button greyed out / didn't take effect.
+    appendTerminalLine('< [RC#' + (msg.id || '?') + ' rc_err] ' +
+                       (msg.code || 'unknown') + ': ' + (msg.note || ''), 'rx');
+    return;
+  }
+
   // Silenced: WCB_STATUS replies arrive every 3s from the background poll.
   // Handle (and return) BEFORE the terminal echo so they don't spam the log.
   if (msg.type === 'WCB_STATUS') {
@@ -3011,21 +3905,33 @@ function handleBoardMessage(line) {
   if (msg.type === 'PONG') {
     document.getElementById('status-text').textContent = 'Connected ✓';
     // The board reports its firmware version (FW_VERSION = base_DTG)
-    // in the PONG reply; show it on the TX screen (both models' SVG
+    // in the PONG reply; show it on the TX screen (all model SVG
     // groups carry their own screen version readout) and on the
     // Firmware tab so the user knows what's currently flashed.
     if (typeof msg.version === 'string' && msg.version.length) {
-      const fwScreen   = document.getElementById('tx-screen-fw-version');     // X18 screen
-      const fwScreenXL = document.getElementById('tx-screen-fw-version-xl');  // X-Lite screen
-      const fwTab      = document.getElementById('fw-current-version');
-      if (fwScreen)   fwScreen.textContent   = msg.version;
-      if (fwScreenXL) fwScreenXL.textContent = msg.version;
-      if (fwTab)      fwTab.textContent      = msg.version;
+      const fwScreen    = document.getElementById('tx-screen-fw-version');      // X18 screen
+      const fwScreenXL  = document.getElementById('tx-screen-fw-version-xl');   // X-Lite screen
+      const fwScreenX20 = document.getElementById('tx-screen-fw-version-x20');  // X20 screen
+      const fwTab       = document.getElementById('fw-current-version');
+      if (fwScreen)    fwScreen.textContent    = msg.version;
+      if (fwScreenXL)  fwScreenXL.textContent  = msg.version;
+      if (fwScreenX20) fwScreenX20.textContent = msg.version;
+      if (fwTab)       fwTab.textContent       = msg.version;
     }
     return;
   }
   if (msg.type === 'CONFIG') {
     applyConfig(msg.data);
+    // Mark config as loaded so saveConfigToBoard() knows it's safe to
+    // SET_CONFIG without clobbering fields that came back as defaults
+    // because GET_CONFIG hadn't completed yet.  See _configLoaded guard
+    // in saveConfigToBoard().
+    _configLoaded = true;
+    // Snapshot the on-board state as the diff baseline.  Subsequent
+    // Saves will only ship the top-level branches that changed since
+    // this snapshot — typically a single section (mappings or thresholds)
+    // instead of all ~3 KB of config.  See _diffConfigBranches.
+    _configBaseline = _deepClone(config);
     return;
   }
   if (msg.type === 'ACK') {
@@ -3044,6 +3950,13 @@ function applyConfig(data) {
   // correct per-model defaults.  applyTxModel(_, false) keeps the
   // config.txModel update local — we just received this value FROM the
   // board, no need to bounce it back.
+  // Assign the X20 3-axis flag FIRST so the renders triggered by
+  // applyTxModel() below see the correct filter state on their first
+  // pass (no stale-render-then-fix-up dance).  When applyTxModel() runs
+  // it'll sync the checkbox + body class from this value.
+  if (data.threeAxisGimbals !== undefined) {
+    config.threeAxisGimbals = !!data.threeAxisGimbals;
+  }
   if (data.txModel !== undefined) {
     config.txModel = +data.txModel | 0;
     applyTxModel(config.txModel, false);
@@ -3399,8 +4312,12 @@ function updateSbusStatus(s) {
   state.style.color    = color;
   const variant = (s.chCount && s.frameLen)
     ? `${s.chCount}ch (${s.frameLen}-byte frame) · `
-    : '';
-  detail.textContent   = `${variant}${s.fps} fps · ${s.frames} frames · age ${s.ageMs} ms`;
+    : (s.chCount ? `${s.chCount}ch · ` : '');
+  // Frames count removed — users only care about live throughput (fps)
+  // and freshness (age), not a monotonic counter that rolls over and
+  // resets on every connect.  Keep age so we can see "transmitter just
+  // dropped" lag separately from the no-signal label above.
+  detail.textContent = `${variant}${s.fps} fps · age ${s.ageMs} ms`;
 }
 
 let _liveCh6 = 0, _liveCh16 = 0, _liveBtn = 0, _liveMode = 1;
@@ -3497,7 +4414,10 @@ function updateTransmitterAnimation(channels) {
   // only one visible via CSS.  Use querySelectorAll so every matching
   // knob gets its rotation applied — the hidden ones are invisible so
   // there's no visual cost, and the visible one actually animates.
-  ['S1', 'S2'].forEach(name => {
+  //
+  // J5 / J6 (X20 3-axis twist knobs) ride this same loop — they're also
+  // small circular pickers whose line indicates the twist angle.
+  ['S1', 'S2', 'J5', 'J6'].forEach(name => {
     const ch = knChan(name);
     if (!ch) return;
     const v = knVal(name, channels[ch - 1]);
@@ -3514,12 +4434,19 @@ function updateTransmitterAnimation(channels) {
     });
   });
 
-  // ── SLIDERS LS / RS — translate handle rect vertically along track ───
-  // Track y range 430..550 (120 tall). Handle is 16 tall, baseline y=482.
-  // SBUS 172 → bottom (y=534), 1811 → top (y=430).  Same multi-element
-  // pattern as the knobs — only the X18 has LS/RS but querySelectorAll
-  // is safe even when the X-Lite is active (no matches → no-op).
-  ['LS', 'RS'].forEach(name => {
+  // ── SLIDERS LS / RS / S3 — translate handle rect vertically along track ─
+  //
+  // LS/RS are the X18's two side sliders (track y=430..550, 120 tall;
+  // handle 16 tall, baseline y=482).  S3 (formerly "MS") is the X20's middle
+  // slider (different track dimensions).  Each entry below names the track
+  // top/bottom Y so the same loop can animate them all with the right
+  // per-slider geometry.
+  const SLIDERS = [
+    { name: 'LS', topY: 430, botY: 534 },
+    { name: 'RS', topY: 430, botY: 534 },
+    { name: 'S3', topY: 700, botY: 754 },   // X20 S3 slider (rect at y=700-768, handle 18 tall; formerly "MS")
+  ];
+  SLIDERS.forEach(({ name, topY, botY }) => {
     const ch = knChan(name);
     if (!ch) return;
     const v = knVal(name, channels[ch - 1]);
@@ -3527,7 +4454,7 @@ function updateTransmitterAnimation(channels) {
     const norm = Math.max(0, Math.min(1, (v - 172) / (1811 - 172)));
     document.querySelectorAll(`.knob-zone[data-knob="${name}"]`).forEach(zone => {
       const handle = zone.querySelectorAll('rect')[1];   // [0]=track, [1]=handle
-      if (handle) handle.setAttribute('y', 534 - norm * 104);
+      if (handle) handle.setAttribute('y', botY - norm * (botY - topY));
     });
   });
 
@@ -3554,6 +4481,25 @@ function updateTransmitterAnimation(channels) {
     if (cap) { cap.setAttribute('cx', cx + ox); cap.setAttribute('cy', cy + oy); }
     if (dot) { dot.setAttribute('cx', cx + ox); dot.setAttribute('cy', cy + oy); }
   };
+  // X20 J5/J6 horizontal twist-axis slider animation.  Maps the SBUS channel
+  // value (172..1811, centre 992) onto thumb x within the rail's usable range.
+  // Mirrors the gimbal cap animation in spirit — joystick-style centred axis,
+  // but expressed as a 1-D horizontal handle so users can see deflection at a
+  // glance.  Must live inside updateTransmitterAnimation() so it can reach the
+  // local knChan / knVal / channels closure (same scope rule as moveGimbal).
+  const moveTwistSlider = (thumbId, name, leftX, rightX, thumbWidth) => {
+    const ch = knChan(name);
+    if (!ch) return;                                  // channel unassigned
+    const v = knVal(name, channels[ch - 1]);
+    if (!Number.isFinite(v)) return;
+    const norm = Math.max(0, Math.min(1, (v - 172) / (1811 - 172)));
+    const usableLeft  = leftX;
+    const usableRight = rightX - thumbWidth;
+    const x = usableLeft + norm * (usableRight - usableLeft);
+    const thumb = document.getElementById(thumbId);
+    if (thumb) thumb.setAttribute('x', x);
+  };
+
   // Each transmitter model has its own gimbal cap/dot elements (different IDs
   // and centre coordinates).  The active model is selected via activeTxModel,
   // and the inactive group is hidden via CSS — but its DOM elements are still
@@ -3562,6 +4508,16 @@ function updateTransmitterAnimation(channels) {
   if (activeTxModel === TX_MODEL_TWIN_X_LITE) {
     moveGimbal('leftGimbalCap-xl',  'leftGimbalDot-xl',  'J3', 'J4', 240, 400);
     moveGimbal('rightGimbalCap-xl', 'rightGimbalDot-xl', 'J1', 'J2', 760, 400);
+  } else if (activeTxModel === TX_MODEL_X20) {
+    // X20 SVG group uses the same gimbal centres as X18 (it was cloned)
+    // but with -x20 suffixed element IDs.
+    moveGimbal('leftGimbalCap-x20',  'leftGimbalDot-x20',  'J3', 'J4', 240, 485);
+    moveGimbal('rightGimbalCap-x20', 'rightGimbalDot-x20', 'J1', 'J2', 760, 485);
+    // J5 / J6 horizontal twist-axis sliders just below the gimbal blocks.
+    // Rail geometry MUST match the SVG markup above (x=150..330 / 670..850,
+    // thumb w=14).  No-op if the channel is unassigned.
+    moveTwistSlider('j5Thumb-x20', 'J5', 150, 330, 14);
+    moveTwistSlider('j6Thumb-x20', 'J6', 670, 850, 14);
   } else {
     moveGimbal('leftGimbalCap',     'leftGimbalDot',     'J3', 'J4', 240, 485);
     moveGimbal('rightGimbalCap',    'rightGimbalDot',    'J1', 'J2', 760, 485);
@@ -3747,8 +4703,21 @@ function updatePWMTooltips() {
 function renderThresholds() {
   const tbody = document.querySelector('#thresh-table tbody');
   tbody.innerHTML = '';
+  // Hide rows that are physically impossible on the active model:
+  //   • Always hide the inert sentinel slot (index >= RC_VISIBLE_BUTTONS).
+  //   • Hide slots NOT in the active model's `buttons` list
+  //     (e.g. slots 5-6 on X-Lite are unused, 19/20 are X20-only).
+  //   • Within X20, also hide slots 19/20 when the 3-axis gimbals option
+  //     is off — those matrix bits don't physically exist on a build
+  //     without the 3-axis upgrade.
+  const model = TX_MODELS[activeTxModel] || TX_MODELS[TX_MODEL_X18];
+  const allowedBtns = new Set(model.buttons || []);
+  const threeAxisOn = !!(config && config.threeAxisGimbals);
   config.thresholds.forEach((t, i) => {
-    if (i >= RC_VISIBLE_BUTTONS) return;   // hide inert slot 19 ("Unassigned")
+    if (i >= RC_VISIBLE_BUTTONS) return;          // inert sentinel (slot 21)
+    const slot = i + 1;                            // thresholds[i] = matrix slot i+1
+    if (!allowedBtns.has(slot)) return;            // not on this model
+    if ((slot === 19 || slot === 20) && !threeAxisOn) return;
     const row = document.createElement('tr');
     const center = Math.round((t.minPwm + t.maxPwm) / 2);
     row.innerHTML = `
@@ -3817,9 +4786,15 @@ function renderAxesTable() {
   if (!config.knobs) config.knobs = {};
   // Iterate over the active model's knobs so the table only shows
   // axes that actually exist on the hardware (the X-Lite has no
-  // LS/RS sliders, for example).
+  // LS/RS sliders, for example).  On the X20, J5/J6 (twist axes) are
+  // gated by the per-build threeAxisGimbals flag — skip them when the
+  // user hasn't enabled the 3-axis gimbal upgrade.
   const model = TX_MODELS[activeTxModel] || TX_MODELS[TX_MODEL_X18];
-  (model.knobs || []).forEach(name => {
+  const threeAxisOn = !!(config && config.threeAxisGimbals);
+  (model.knobs || []).filter(name => {
+    if ((name === 'J5' || name === 'J6') && !threeAxisOn) return false;
+    return true;
+  }).forEach(name => {
     const cur = config.knobs[name] || {};
     const dflt = knobDefaults[name] || { channel: 0 };
     const ch = (cur.channel | 0) || dflt.channel;
@@ -3864,9 +4839,15 @@ function renderAssignmentList() {
   list.innerHTML = '';
   // Iterate over the active model's matrix buttons so the assignment
   // list only shows cards for slots that physically exist on this TX
-  // (no ghost cards for slots 5-8 / 17-18 on the X-Lite, etc.).
+  // (no ghost cards for slots 5-8 / 17-18 on the X-Lite, etc.).  On
+  // the X20, slots 19/20 (SK / SL stick-click momentaries) are gated by
+  // the per-build threeAxisGimbals flag.
   const model = TX_MODELS[activeTxModel] || TX_MODELS[TX_MODEL_X18];
-  (model.buttons || []).forEach(btn => {
+  const threeAxisOn = !!(config && config.threeAxisGimbals);
+  (model.buttons || []).filter(btn => {
+    if ((btn === 19 || btn === 20) && !threeAxisOn) return false;
+    return true;
+  }).forEach(btn => {
     const key = String(currentMode * 100 + btn);
     const m   = config.mappings[key];
     const card = document.createElement('div');
@@ -5047,9 +6028,110 @@ document.querySelectorAll('.mode-tab').forEach(tab => {
 // ════════════════════════════════════════════════════════════════════════════
 document.getElementById('btn-refresh').addEventListener('click', () => sendJSON({ type: 'GET_CONFIG' }));
 
+// ─── Save guard rails ──────────────────────────────────────────────────────
+// `_configLoaded` flips true the first time a CONFIG response arrives from
+// the board (Direct USB or via reassembled WCB fragments).  Before that,
+// `config.*` holds the static defaults at the top of this file — saving
+// would clobber the board with those defaults (deviceId=3, txModel=0, etc).
+// Symptom you JUST hit: deviceId=3 over Via WCB cut the bridge cord on Save.
+let _configLoaded = false;
+
+// ─── Diff-based save baseline ──────────────────────────────────────────────
+// Set to a deep clone of `config` every time CONFIG arrives from the board
+// (see applyConfig).  saveConfigToBoard diffs the live `config` against
+// this baseline and ships only the changed top-level branches — typically
+// 5-10x smaller than the full config, which makes fragmented Via-WCB Saves
+// dramatically more reliable and faster.  Refreshed after each successful
+// Save so subsequent edits diff against the new on-board state.  Null when
+// no Load has happened yet → falls back to full-config send.
+let _configBaseline = null;
+
+// Deep-clone + deep-equal helpers for the diff.  JSON.stringify is fine
+// here — config values are plain JSON-serialisable (no Dates, RegExes,
+// circular refs, etc).
+function _deepClone(obj) {
+  try { return JSON.parse(JSON.stringify(obj)); } catch (_) { return null; }
+}
+function _stringifyStable(v) {
+  // Top-level keys are already in a fixed declaration order in this file,
+  // and we only compare value-equality (not stringify order), so plain
+  // JSON.stringify suffices.  If config keys ever get programmatically
+  // shuffled, switch to a canonical sort.
+  try { return JSON.stringify(v); } catch (_) { return ''; }
+}
+
+// Returns an object containing only the top-level keys of `current` whose
+// value differs from `baseline`.  If baseline is null, returns a clone of
+// the full current config (fallback for the first save after a defaults
+// reset, etc).
+function _diffConfigBranches(current, baseline) {
+  if (!baseline) return _deepClone(current);
+  const out = {};
+  for (const key of Object.keys(current)) {
+    if (_stringifyStable(current[key]) !== _stringifyStable(baseline[key])) {
+      out[key] = current[key];
+    }
+  }
+  return out;
+}
+
 async function saveConfigToBoard() {
+  if (!_configLoaded) {
+    const proceed = confirm(
+      'No config has been loaded from the board yet — saving now will overwrite ' +
+      'the board with the tool\'s default values (including WCB network settings).\n\n' +
+      'Click Load (or Refresh) first to pull the current config, then Save your edits.\n\n' +
+      'Save anyway?'
+    );
+    if (!proceed) return;
+  }
   config.tapWindowMs = +(document.getElementById('tapwin-input').value) || 500;
-  await sendJSON({ type: 'SET_CONFIG', data: config });
+
+  // ─── Diff against the on-board baseline ─────────────────────────────────
+  // Only ship the top-level branches that actually changed since Load.
+  // A single button-label edit touches `mappings` or `thresholds`; the
+  // rest (switches, knobs, hcrDest, maestros, ...) doesn't need to go
+  // over the wire at all.  Typical savings: 70-80% smaller payload, which
+  // over Via WCB means 8-15 fragments instead of 38-40 → dramatically
+  // less radio congestion / chance of crashing the RC on apply.
+  //
+  // Firmware-side note: rcConfigFromJSON treats missing top-level keys
+  // as "preserve existing value" — present arrays/objects are rebuilt
+  // wholesale, missing ones are left alone.  That's why this diff is
+  // valid at top-level granularity (changing one button in `mappings`
+  // does ship the WHOLE `mappings` object, but nothing else).
+  let payload = _diffConfigBranches(config, _configBaseline);
+
+  // ─── Strip transport-defining fields in Via WCB mode ────────────────────
+  // The firmware also strips these in rc_telemetry.h's _applyReassembled,
+  // but doing it here too keeps the wire payload smaller and surfaces the
+  // policy in one place the user can see.  Same reasoning as on the
+  // firmware side: changing wcbNetwork over the WCB transport breaks the
+  // very transport we just sent the message on.
+  if (viaWcbActive && payload.wcbNetwork) {
+    const { deviceId, macOct2, macOct3, password, quantity, ...rest } = payload.wcbNetwork;
+    payload.wcbNetwork = rest;   // preserve any non-transport fields
+    // If everything was transport-related, drop the empty object entirely
+    if (Object.keys(payload.wcbNetwork).length === 0) delete payload.wcbNetwork;
+  }
+
+  // No changes? Skip the round-trip entirely — saves wire time AND avoids
+  // confusing the user with an apparent "save" that does nothing.
+  if (Object.keys(payload).length === 0) {
+    console.log('saveConfigToBoard: no changes since last load — skipping');
+    appendTerminalLine('< [config] No changes to save', 'rx');
+    return;
+  }
+
+  const branches = Object.keys(payload).join(', ');
+  console.log(`saveConfigToBoard: sending diff (${branches})`);
+  await sendJSON({ type: 'SET_CONFIG', data: payload });
+
+  // Refresh baseline so the NEXT save diffs against current state, not
+  // the original Load.  Done optimistically — if the firmware rejects
+  // the save we'd need a NACK path to revert; currently we trust the
+  // ACK that comes back from the RC.
+  _configBaseline = _deepClone(config);
 }
 document.getElementById('btn-save').addEventListener('click', saveConfigToBoard);
 document.getElementById('btn-hwsetup-save').addEventListener('click', saveConfigToBoard);
@@ -5103,6 +6185,28 @@ function onTxModelChange(modelId) {
   applyTxModel(modelId, /*persist=*/true);
   const help = document.getElementById('tx-model-help');
   if (help) help.textContent = 'Click Save (top bar) to push this to the board.';
+  // Show/hide the X20-specific options pane.
+  const x20Opts = document.getElementById('cfg-x20-options');
+  if (x20Opts) x20Opts.style.display = (modelId === TX_MODEL_X20) ? '' : 'none';
+}
+
+// 3-axis gimbal toggle (X20 only).  Updates config + re-renders the
+// affected panels so the new visibility takes effect immediately.
+function onThreeAxisGimbalsChange(checked) {
+  if (!config) return;
+  config.threeAxisGimbals = !!checked;
+  // The X20's J5/J6 axes and matrix slots 19/20 (stick-click buttons)
+  // are filtered by this flag in renderAxesTable / renderAssignmentList /
+  // buildCalibrationSteps, so we need to re-render those panels.  The
+  // SVG indicators (rotation arcs around the gimbal caps) also key off
+  // this — toggled by a body class so a single CSS rule shows/hides
+  // every 3-axis-only element at once.
+  document.body.classList.toggle('three-axis-on', !!checked);
+  if (typeof renderAxesTable        === 'function') renderAxesTable();
+  if (typeof renderAssignmentList   === 'function') renderAssignmentList();
+  if (typeof renderThresholds       === 'function') renderThresholds();
+  if (typeof updateButtonHighlights === 'function') updateButtonHighlights();
+  if (typeof renderKnobHighlights   === 'function') renderKnobHighlights();
 }
 function closeHwSetup() {
   document.getElementById('hwsetup-modal').classList.remove('open');
@@ -5282,23 +6386,31 @@ function buildCalibrationSteps() {
   // Use the active TX model's control lists so calibration walks through
   // exactly the controls that physically exist on the user's transmitter
   // (no LS/RS step for an X-Lite, no B5-B18 steps for an X-Lite, etc.).
+  // On the X20, the J5/J6 twist axes and matrix slots 19/20 (SK / SL
+  // stick-click momentaries) are gated by the per-build threeAxisGimbals
+  // flag — skip them when the user hasn't enabled the 3-axis gimbal upgrade.
   const model = TX_MODELS[activeTxModel] || TX_MODELS[TX_MODEL_X18];
+  const threeAxisOn = !!(config && config.threeAxisGimbals);
 
-  const buttonSteps = model.buttons.map(btnId => ({
-    type: 'button',
-    btn:  btnId,
-    label: btnLabels[btnId]
-  }));
+  const buttonSteps = model.buttons
+    .filter(btnId => !((btnId === 19 || btnId === 20) && !threeAxisOn))
+    .map(btnId => ({
+      type: 'button',
+      btn:  btnId,
+      label: btnLabels[btnId]
+    }));
 
   const switchSteps = model.switches.map(swName => ({
     type: 'switch', swName, label: swName
   }));
 
   // All knob-like sources for this model: knobs + sliders + joystick axes.
-  const knobSteps = model.knobs.map(knobName => ({
-    type: 'knob', knobName,
-    label: (knobDefaults[knobName] && knobDefaults[knobName].friendly) || knobName
-  }));
+  const knobSteps = model.knobs
+    .filter(knobName => !((knobName === 'J5' || knobName === 'J6') && !threeAxisOn))
+    .map(knobName => ({
+      type: 'knob', knobName,
+      label: (knobDefaults[knobName] && knobDefaults[knobName].friendly) || knobName
+    }));
 
   // ── Info steps (no capture — just instructions + Next) ────────────────
   // Inserted at section boundaries so the user gets a "set up your TX
@@ -5342,6 +6454,32 @@ function buildCalibrationSteps() {
 function openCalibrationModal() {
   if (!port) {
     alert('Connect to the board first.');
+    return;
+  }
+  // ─── Via WCB transport block ─────────────────────────────────────────────
+  // Calibration uses live PWM samples to auto-detect which channel each
+  // control is wired to.  Detection needs MANY closely-spaced samples to
+  // measure swing magnitude — Direct USB's PWM_UPDATE stream runs at
+  // ~30 Hz which is plenty, but Via WCB's rc_ch broadcasts run at only
+  // 5 Hz (one sample every 200 ms).  A user flicking a switch through
+  // its travel in 100 ms can easily produce ZERO samples on the moving
+  // channel at that rate → wrong channel auto-detected, or no detection
+  // at all.  Calibration is also a rare one-time setup task, and the
+  // user is necessarily physically present with the transmitter — USB
+  // is right there.  Block + redirect rather than ship a flaky feature.
+  if (viaWcbActive) {
+    alert(
+      'Calibration requires a direct USB connection to the RC controller.\n\n' +
+      'The Via WCB transport updates channels at 5 Hz, which is too slow to ' +
+      'reliably detect quick stick / switch movements.  Direct USB streams ' +
+      'channel data at ~30 Hz, giving accurate auto-detection.\n\n' +
+      'To calibrate:\n' +
+      '  1. Click Disconnect\n' +
+      '  2. Uncheck "Via WCB" in the topbar\n' +
+      '  3. Plug a USB cable into the RC controller\'s OTG port\n' +
+      '  4. Click Connect, then Calibrate again\n\n' +
+      'After calibration you can switch back to Via WCB for normal use.'
+    );
     return;
   }
   const autoAdvance = localStorage.getItem('rcCalibAutoAdvance') !== '0';
@@ -5726,8 +6864,9 @@ function calibrationPrevStep() {
 function finishCalibration() {
   closeCalibrationModal();
   if (port) {
-    config.tapWindowMs = +(document.getElementById('tapwin-input').value) || 500;
-    sendJSON({ type: 'SET_CONFIG', data: config });
+    // Route through saveConfigToBoard() so calibration saves get the same
+    // _configLoaded guard + Via-WCB wcbNetwork strip as user-initiated saves.
+    saveConfigToBoard();
   }
 }
 

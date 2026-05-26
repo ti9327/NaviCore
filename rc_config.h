@@ -78,7 +78,7 @@ struct RcAction {
   // 96 bytes (95 chars + null) accommodates chained WCB commands like
   // ";h,play,a,1,fadein,4^;t6000^;h,fadeout,a,4" (44+ chars) plus headroom
   // for 3-4 ;-separated segments. Increase carefully — every byte here is
-  // multiplied by RC_NUM_MAPPINGS × 3 tiers × RC_ACTIONS_PER_TIER = 855.
+  // multiplied by RC_NUM_MAPPINGS × 3 tiers × RC_ACTIONS_PER_TIER = 945.
   char    cmd[96];
   uint16_t delayMs;       // optional pre-fire delay (ms)
   char    note[20];       // human-readable label shown in GUI (19 chars + null)
@@ -112,10 +112,10 @@ struct RcMapping {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  PWM threshold bands for the 19 virtual matrix-channel buttons
+//  PWM threshold bands for the 21 virtual matrix-channel buttons
 // ─────────────────────────────────────────────────────────────────────────────
 struct RcThreshold {
-  int  id;          // 1–19
+  int  id;          // 1–21
   char label[24];
   int  minPwm;
   int  maxPwm;
@@ -168,7 +168,7 @@ static const uint8_t RC_SWITCH_DEFAULT_POS[RC_NUM_SWITCHES] = {  3,   3,   3,   
 //  does one or the other (not both at once). All outputs[] share the parent
 //  knob's function.
 // ─────────────────────────────────────────────────────────────────────────────
-#define RC_NUM_KNOBS         8
+#define RC_NUM_KNOBS         11  // 8 X18 knobs (S1/S2 + LS/RS + J1-J4) + 3 X20 additions (MS slider + J5/J6 gimbal 3rd axes)
 #define RC_KNOB_MAX_OUTPUTS  8
 
 enum RcKnobFunction : uint8_t {
@@ -206,11 +206,17 @@ struct RcKnob {
 //   J2 = CH2 (ELE = R-stick Y)   J4 = CH4 (RUD = L-stick X)
 //   S1 = CH5, S2 = CH6  (Kyber-aligned knobs)
 //   LS/RS sliders disabled by default (channel 0); user assigns in tool.
-static const char*   RC_KNOB_LABELS[RC_NUM_KNOBS]    = {"S1","S2","LS","RS","J1","J2","J3","J4"};
-static const int     RC_KNOB_DEFAULT_CH[RC_NUM_KNOBS] = {  5,   6,   0,   0,   1,   2,   3,   4 };
+// X20 additions (off by default — channel 0 — for X18/X-Lite):
+//   MS = middle slider (sits between B1-B6 face buttons on the X20)
+//   J5/J6 = 3rd-axis twist channels on the L/R sticks of an X20
+//           build with the optional 3-axis gimbal upgrade.
+static const char*   RC_KNOB_LABELS[RC_NUM_KNOBS]    = {"S1","S2","LS","RS","MS","J1","J2","J3","J4","J5","J6"};
+static const int     RC_KNOB_DEFAULT_CH[RC_NUM_KNOBS] = {  5,   6,   0,   0,   0,   1,   2,   3,   4,   0,   0 };
 static const uint8_t RC_KNOB_DEFAULT_FN[RC_NUM_KNOBS] = {
   KF_NONE, KF_NONE, KF_NONE, KF_NONE,
-  KF_NONE, KF_NONE, KF_NONE, KF_NONE
+  KF_NONE,                                     // MS
+  KF_NONE, KF_NONE, KF_NONE, KF_NONE,          // J1-J4
+  KF_NONE, KF_NONE                             // J5/J6 (X20 3-axis)
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -265,7 +271,11 @@ struct RcWcbNetwork {
   uint8_t macOct3;        // 3rd octet of shared WCB MAC scheme
   char    password[40];   // ESP-NOW network password (≤39 chars)
   uint8_t quantity;       // total WCBs in the system
-  uint8_t deviceId;       // this RC controller's unique ID (1-19, or 20 for special slot)
+  uint8_t deviceId;       // this RC controller's ID on the WCB network.  By
+                          // convention RCs always claim WCB special-peer
+                          // slot 20 so the config tool's "Via WCB" bridge
+                          // has a single known target.  Field is left
+                          // writable for unusual multi-RC deployments.
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -300,29 +310,43 @@ struct RcMaestroSlot {
 //  Transmitter model — drives the GUI's SVG, default channel assignments,
 //  switch/trim/knob/button labels, and which controls appear in the
 //  calibration wizard.  The firmware-side struct slots are FIXED at their
-//  maximums (RC_NUM_SWITCHES = 10, RC_NUM_KNOBS = 8, etc.) regardless of
+//  maximums (RC_NUM_SWITCHES = 10, RC_NUM_KNOBS = 11, etc.) regardless of
 //  model — unused slots just sit at channel=0 ("inactive") for models with
 //  fewer physical controls.  This lets the firmware stay model-agnostic at
 //  the dispatch layer while the GUI presents the right physical layout.
 // ─────────────────────────────────────────────────────────────────────────────
 enum RcTxModel : uint8_t {
-  TX_MODEL_X18          = 0,  // FrSky Tandem X18 — full-size, 10 switches, 2 knobs, 2 sliders
+  TX_MODEL_X18          = 0,  // FrSky Tandem X18 — full-size, 10 switches, 2 knobs (S1/S2), 2 sliders (LS/RS)
   TX_MODEL_TWIN_X_LITE  = 1,  // FrSky Twin X-Lite — handheld, 6 switches (SE/SF momentary), 2 knobs, no sliders, 4 face buttons
-  // Future: TX_MODEL_X20 = 2 (with optional 3-axis gimbals via J5/J6).
+  TX_MODEL_X20          = 2,  // FrSky Twin X20 — X18 layout + MS middle slider + optional 3-axis gimbals (J5/J6 + 2 stick-click momentaries on matrix slots 19/20)
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Full runtime config block
 //  buttonId  = (mode * 100) + btn  →  e.g. mode=1, btn=5 → 105
-//  flat index = (mode-1)*19 + (btn-1)  → 0–56
+//  flat index = (mode-1)*RC_NUM_THRESHOLDS + (btn-1)  → 0..(RC_NUM_MAPPINGS-1)
+//
+//  RC_NUM_THRESHOLDS bumped from 19 → 21 to fit the X20's two extra matrix
+//  slots (slots 19/20 = L-stick and R-stick click momentaries that come with
+//  the optional 3-axis gimbal upgrade).  Slot 21 stays as the inert
+//  "Unassigned" sentinel.  X18/X-Lite configs load fine because the two new
+//  slots are persisted by name (JSON keys) and default to channel=0 when
+//  the model doesn't use them.
 // ─────────────────────────────────────────────────────────────────────────────
-#define RC_NUM_THRESHOLDS 19
-#define RC_NUM_MAPPINGS   57   // 3 modes × 19 buttons
+#define RC_NUM_THRESHOLDS 21
+#define RC_NUM_MAPPINGS   63   // 3 modes × 21 buttons
 
-inline int rcMapIndex(int mode, int btn) { return (mode - 1) * 19 + (btn - 1); }
+inline int rcMapIndex(int mode, int btn) { return (mode - 1) * RC_NUM_THRESHOLDS + (btn - 1); }
 
 struct RcConfig {
   uint8_t        txModel;        // RcTxModel — drives GUI layout + defaults
+  // Per-build hardware option flag — meaningful only when txModel == TX_MODEL_X20.
+  // When false, the X20 GUI hides the J5/J6 twist axes and the L-Stick/R-Stick
+  // click matrix buttons (slots 19/20); when true, it shows and walks them
+  // through calibration.  Firmware-side this is mostly cosmetic — the dispatch
+  // layer already gates each knob/button on its `channel` field, so a build
+  // without 3-axis hardware just leaves J5/J6/slot-19/slot-20 at channel=0.
+  bool           threeAxisGimbals;
   int            tapWindowMs;
   int            matrixChannel;   // SBUS channel carrying the multiplexed button matrix
   // Consecutive in-band SBUS frames a matrix button must hold before a press
@@ -419,40 +443,47 @@ static inline void setTier3(RcTier& tier, RcAction a0, RcAction a1, RcAction a2)
 //  Switch channel assignments mirror the Kyber ELRS layout (SA-SH on CH8-CH15).
 // ─────────────────────────────────────────────────────────────────────────────
 void rcConfigLoadDefaults() {
-  rcConfig.txModel       = TX_MODEL_X18;  // GUI default; user picks via Config → Transmitter
-  rcConfig.tapWindowMs   = 500;
-  rcConfig.matrixChannel = 7;            // button matrix on CH7
+  rcConfig.txModel          = TX_MODEL_X18;  // GUI default; user picks via Config → Transmitter
+  rcConfig.threeAxisGimbals = false;         // X20 hardware option, off by default
+  rcConfig.tapWindowMs      = 500;
+  rcConfig.matrixChannel    = 7;            // button matrix on CH7
   rcConfig.matrixDebounceFrames = 1;     // digital SBUS source — fastest; bump for analog matrix
   rcConfig.funcBindings.modeSwitch = SW_SE;  // SE (CH12) drives mode 1/2/3
 
   // Default PWM threshold bands — measured SBUS values from the live X18
   // (matrix channel), center ±12 (~17-count neutral deadband between buttons;
   // SBUS noise is only ±1-2). T3/T2 are vertical trim buttons → Up/Down.
-  // Slot 19 ("Unassigned") is INERT (0/0 can never match) and hidden in the
-  // config tool; it is kept only so the 19-slot mapping/NVS index math
+  // Slots 19/20 (L-Stick Click / R-Stick Click) are X20-only momentary
+  // matrix buttons that come with the 3-axis gimbal upgrade — values
+  // extrapolated from the X18 band cadence (~41 per slot) and will be
+  // refined when the first real X20 is calibrated.  Slot 21
+  // ("Unassigned") is INERT (0/0 can never match) and hidden in the
+  // config tool; it is kept only so the 21-slot mapping/NVS index math
   // (RC_NUM_THRESHOLDS / RC_NUM_MAPPINGS / rcMapIndex) is unchanged.
-  struct { const char* label; int mn; int mx; } bands[19] = {
-    { "B1",          1799, 1823 },
-    { "B2",          1758, 1782 },
-    { "B3",          1718, 1742 },
-    { "B4",          1676, 1700 },
-    { "B5",          1634, 1658 },
-    { "B6",          1594, 1618 },
-    { "T4 Left",     1553, 1577 },
-    { "T4 Right",    1512, 1536 },
-    { "T5 Left",     1471, 1495 },
-    { "T5 Right",    1430, 1454 },
+  struct { const char* label; int mn; int mx; } bands[RC_NUM_THRESHOLDS] = {
+    { "B1",            1799, 1823 },
+    { "B2",            1758, 1782 },
+    { "B3",            1718, 1742 },
+    { "B4",            1676, 1700 },
+    { "B5",            1634, 1658 },
+    { "B6",            1594, 1618 },
+    { "T4 Left",       1553, 1577 },
+    { "T4 Right",      1512, 1536 },
+    { "T5 Left",       1471, 1495 },
+    { "T5 Right",      1430, 1454 },
     { "T3 Up",         1389, 1413 },
-    { "T3 Down",         1348, 1372 },
+    { "T3 Down",       1348, 1372 },
     { "T2 Up",         1308, 1332 },
-    { "T2 Down",         1266, 1290 },
-    { "T6 Left",     1225, 1249 },
-    { "T6 Right",    1184, 1208 },
-    { "T1 Left",     1143, 1167 },
-    { "T1 Right",    1103, 1127 },
-    { "Unassigned",     0,    0 },
+    { "T2 Down",       1266, 1290 },
+    { "T6 Left",       1225, 1249 },
+    { "T6 Right",      1184, 1208 },
+    { "T1 Left",       1143, 1167 },
+    { "T1 Right",      1103, 1127 },
+    { "L-Stick Click", 1062, 1086 },   // X20 3-axis gimbal momentary (left stick press)
+    { "R-Stick Click", 1021, 1045 },   // X20 3-axis gimbal momentary (right stick press)
+    { "Unassigned",       0,    0 },
   };
-  for (int i = 0; i < 19; i++) {
+  for (int i = 0; i < RC_NUM_THRESHOLDS; i++) {
     rcConfig.thresholds[i].id = i + 1;
     strlcpy(rcConfig.thresholds[i].label, bands[i].label, 24);
     rcConfig.thresholds[i].minPwm = bands[i].mn;
@@ -640,6 +671,7 @@ String rcConfigToJSON() {
   DynamicJsonDocument doc(32768);
 
   doc["txModel"]              = rcConfig.txModel;          // RcTxModel — GUI uses this to swap SVG / labels
+  doc["threeAxisGimbals"]     = rcConfig.threeAxisGimbals; // X20 hardware option (shows/hides J5/J6 + stick-click matrix slots)
   doc["tapWindowMs"]          = rcConfig.tapWindowMs;
   doc["matrixChannel"]        = rcConfig.matrixChannel;
   doc["matrixDebounceFrames"] = rcConfig.matrixDebounceFrames;
@@ -658,7 +690,7 @@ String rcConfigToJSON() {
 
   JsonObject mapObj = doc.createNestedObject("mappings");
   for (int mode = 1; mode <= 3; mode++) {
-    for (int btn = 1; btn <= 19; btn++) {
+    for (int btn = 1; btn <= RC_NUM_THRESHOLDS; btn++) {
       int idx = rcMapIndex(mode, btn);
       const RcMapping& m = rcConfig.mappings[idx];
       bool hasAny = false;
@@ -763,6 +795,7 @@ String rcConfigToJSON() {
 // ─────────────────────────────────────────────────────────────────────────────
 bool rcConfigFromJSON(const JsonObject& doc) {
   if (doc.containsKey("txModel"))       rcConfig.txModel       = (uint8_t)(doc["txModel"] | (int)TX_MODEL_X18);
+  if (doc.containsKey("threeAxisGimbals")) rcConfig.threeAxisGimbals = doc["threeAxisGimbals"] | false;
   if (doc.containsKey("tapWindowMs"))   rcConfig.tapWindowMs   = doc["tapWindowMs"];
   if (doc.containsKey("matrixChannel")) rcConfig.matrixChannel = doc["matrixChannel"];
   if (doc.containsKey("matrixDebounceFrames")) {
@@ -793,7 +826,7 @@ bool rcConfigFromJSON(const JsonObject& doc) {
     for (JsonPair kv : mapObj) {
       int buttonId = String(kv.key().c_str()).toInt();
       int mode = buttonId / 100, btn = buttonId % 100;
-      if (mode < 1 || mode > 3 || btn < 1 || btn > 19) continue;
+      if (mode < 1 || mode > 3 || btn < 1 || btn > RC_NUM_THRESHOLDS) continue;
       int idx = rcMapIndex(mode, btn);
       RcMapping& m = rcConfig.mappings[idx];
       memset(&m, 0, sizeof(m));
@@ -947,6 +980,7 @@ void rcConfigSaveNVS() {
   prefs.begin("rcfg", false);
 
   prefs.putUChar("tx",     rcConfig.txModel);   // transmitter model (RcTxModel)
+  prefs.putBool("3xg",     rcConfig.threeAxisGimbals);   // X20 3-axis hw option
   prefs.putInt("cfg",      rcConfig.tapWindowMs);
   prefs.putInt("matrixCh", rcConfig.matrixChannel);
   prefs.putInt("mtxDeb",   rcConfig.matrixDebounceFrames);
@@ -967,12 +1001,17 @@ void rcConfigSaveNVS() {
     prefs.putString("th", s);
   }
 
-  // Mode mappings (one key per mode)
+  // Mode mappings (one key per mode).  Buffer was 4096 when RC_NUM_THRESHOLDS
+  // was 19; with 21 buttons the worst case grows to ~8.4 KB, so use 8192.
+  // NVS itself is still capped at 4000 bytes per value — if the resulting
+  // JSON string exceeds that, the putString silently fails (caller should
+  // log).  In practice mappings are usually sparse (most slots empty), so
+  // the serialized size stays well under the NVS cap.
   const char* modeKeys[3] = { "m1", "m2", "m3" };
   for (int mode = 1; mode <= 3; mode++) {
-    DynamicJsonDocument doc(4096);
+    DynamicJsonDocument doc(8192);
     JsonObject root = doc.to<JsonObject>();
-    for (int btn = 1; btn <= 19; btn++) {
+    for (int btn = 1; btn <= RC_NUM_THRESHOLDS; btn++) {
       int idx = rcMapIndex(mode, btn);
       const RcMapping& m = rcConfig.mappings[idx];
       bool hasAny = false;
@@ -1016,10 +1055,13 @@ void rcConfigSaveNVS() {
     prefs.putString("sw", s);
   }
 
-  // Knobs — 8 knobs × up to 8 outputs × ~50 bytes + overhead.
-  // Worst case ~3.5 KB; use 4 KB buffer to stay under NVS 4000-byte value cap.
+  // Knobs — now 11 knobs (X20 added MS, J5, J6) × up to 8 outputs × ~50
+  // bytes + overhead.  Worst case ~4.8 KB; use 8 KB buffer.  NVS itself
+  // is still capped at 4000 bytes per value — putString will fail
+  // silently if the serialized JSON exceeds that, but realistic configs
+  // (most knobs disabled, few outputs each) stay well under.
   {
-    DynamicJsonDocument doc(4096);
+    DynamicJsonDocument doc(8192);
     JsonObject root = doc.to<JsonObject>();
     for (int i = 0; i < RC_NUM_KNOBS; i++) {
       const RcKnob& kn = rcConfig.knobs[i];
@@ -1110,7 +1152,8 @@ void rcConfigLoadNVS() {
   Preferences prefs;
   prefs.begin("rcfg", true);
 
-  if (prefs.isKey("tx"))       rcConfig.txModel       = prefs.getUChar("tx",     rcConfig.txModel);
+  if (prefs.isKey("tx"))       rcConfig.txModel          = prefs.getUChar("tx", rcConfig.txModel);
+  if (prefs.isKey("3xg"))      rcConfig.threeAxisGimbals = prefs.getBool("3xg", rcConfig.threeAxisGimbals);
   if (prefs.isKey("cfg"))      rcConfig.tapWindowMs   = prefs.getInt("cfg",      rcConfig.tapWindowMs);
   if (prefs.isKey("matrixCh")) rcConfig.matrixChannel = prefs.getInt("matrixCh", rcConfig.matrixChannel);
   if (prefs.isKey("mtxDeb")) {
@@ -1140,13 +1183,15 @@ void rcConfigLoadNVS() {
   for (int mode = 1; mode <= 3; mode++) {
     if (!prefs.isKey(modeKeys[mode - 1])) continue;
     String s = prefs.getString(modeKeys[mode - 1], "");
-    DynamicJsonDocument doc(4096);
+    // Buffer sized to match the writer (see save path) — 8 KB to hold
+    // worst-case 21-button mode mappings.
+    DynamicJsonDocument doc(8192);
     if (deserializeJson(doc, s) != DeserializationError::Ok) continue;
     JsonObject root = doc.as<JsonObject>();
     for (JsonPair kv : root) {
       int buttonId = String(kv.key().c_str()).toInt();
       int m_ = buttonId / 100, b_ = buttonId % 100;
-      if (m_ < 1 || m_ > 3 || b_ < 1 || b_ > 19) continue;
+      if (m_ < 1 || m_ > 3 || b_ < 1 || b_ > RC_NUM_THRESHOLDS) continue;
       int idx = rcMapIndex(m_, b_);
       RcMapping& m = rcConfig.mappings[idx];
       memset(&m, 0, sizeof(m));
@@ -1193,7 +1238,9 @@ void rcConfigLoadNVS() {
 
   if (prefs.isKey("kn")) {
     String s = prefs.getString("kn", "");
-    DynamicJsonDocument doc(4096);
+    // Buffer sized to match the writer — 8 KB to hold worst-case 11-knob
+    // payload (MS / J5 / J6 added for X20).
+    DynamicJsonDocument doc(8192);
     if (deserializeJson(doc, s) == DeserializationError::Ok) {
       JsonObject root = doc.as<JsonObject>();
       for (int i = 0; i < RC_NUM_KNOBS; i++) {

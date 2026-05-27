@@ -59,6 +59,8 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <WCB_Client.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 
 #include "rc_config.h"
 #include "fw_version.h"
@@ -120,10 +122,17 @@ constexpr uint32_t FRAG_TIMEOUT_MS   = 5000;
 struct FragSession {
   uint16_t sid;          // 0 = slot free
   uint8_t  total;        // expected fragment count
-  uint8_t  got;          // received so far (set bits in `mask`)
+  uint8_t  got;          // received so far
   uint8_t  senderID;     // who sent the fragments (for the SET_CONFIG ack)
   uint32_t expireAt;     // millis() when this session is reclaimed
   String   parts[FRAG_MAX_PARTS];
+  // Explicit "have we received this fragment yet?" flags.  Previously we
+  // used parts[i].length() == 0 as the proxy, but if a sender ever
+  // produced an empty `s` field (legitimately empty slice) the duplicate
+  // check would treat every duplicate as new, inflate `got`, and
+  // potentially complete the session with garbage.  Separate flag array
+  // is unambiguous.  192 bools = 192 bytes — fine.
+  bool     received[FRAG_MAX_PARTS];
 };
 
 inline FragSession _fragPool[FRAG_POOL_SIZE] = {};
@@ -132,11 +141,19 @@ inline uint16_t    _nextOutSid = 1;            // sender-side sid generator
 inline FragSession* _findOrAllocSession(uint16_t sid, uint8_t total, uint8_t senderID) {
   const uint32_t now = millis();
   FragSession* freeSlot = nullptr;
+  // First pass: reclaim expired slots BEFORE the sid-match check.  If we
+  // checked sid first, a stale session whose `expireAt` is in the past
+  // but whose sid happens to equal the new sid (likely after _nextOutSid
+  // wraps from 65535 → 1) would be returned with old `parts[]` content,
+  // causing the new fragments to merge into stale data.  Reclaim-first
+  // guarantees that any returned slot is either fresh-claimed or genuine.
   for (auto& s : _fragPool) {
-    if (s.sid == sid)             return &s;
-    if (s.sid != 0 && now >= s.expireAt) {     // reclaim expired in passing
+    if (s.sid != 0 && (int32_t)(now - s.expireAt) >= 0) {
       s = FragSession{};
     }
+  }
+  for (auto& s : _fragPool) {
+    if (s.sid == sid)             return &s;
     if (!freeSlot && s.sid == 0)  freeSlot = &s;
   }
   if (!freeSlot) return nullptr;                // pool exhausted — drop
@@ -145,6 +162,10 @@ inline FragSession* _findOrAllocSession(uint16_t sid, uint8_t total, uint8_t sen
   freeSlot->got      = 0;
   freeSlot->senderID = senderID;
   freeSlot->expireAt = now + FRAG_TIMEOUT_MS;
+  // FragSession{} default-construction already zeroed `received[]`, but
+  // when we re-claim a slot that previously had a different sid we want
+  // to be sure no stale flags carry over.  Cheap belt-and-braces.
+  for (uint8_t i = 0; i < FRAG_MAX_PARTS; i++) freeSlot->received[i] = false;
   return freeSlot;
 }
 
@@ -273,6 +294,27 @@ inline bool _hasWcbSubscriber(uint32_t now) {
 // because the StaticJsonDocument<512> in handle() can't parse multi-KB
 // JSON — tick() does the parse with a properly-sized DynamicJsonDocument
 // instead.
+// ── Cross-core synchronization for the deferred queues ──────────────────────
+// `handle()` runs in the WCB_Client receive-callback context (WiFi task
+// on Core 0).  `tick()` runs in the main loop (Core 1).  Both read AND
+// write `_pendingReassembled` (an Arduino String).  String assignment is
+// multi-step (allocate buffer → set length → copy bytes), and an
+// interleaved read between steps can yield a length pointing past the
+// end of the buffer — `_applyReassembled` then parses garbage or crashes
+// in deserializeJson.
+//
+// The mutex is acquired briefly on each side around the read/write of
+// the slot.  Cost is microseconds; safety is absolute.  Initialized
+// lazily by `init()` (called from RC-Controller.ino setup() before
+// WCB_Client init brings the receive callback online).
+inline SemaphoreHandle_t _pendingMutex = nullptr;
+
+// Call from RC-Controller.ino setup() BEFORE wcb->begin() so the mutex
+// is ready when the first ESP-NOW packet arrives.  Idempotent.
+inline void init() {
+  if (!_pendingMutex) _pendingMutex = xSemaphoreCreateMutex();
+}
+
 inline String  _pendingReassembled;          // full JSON of a reassembled fragmented payload
 inline uint8_t _pendingReassembledSender = 0;
 
@@ -343,6 +385,12 @@ inline void _applyReassembled(uint8_t senderID, const String& json) {
       if (wnet.containsKey("macOct3"))  wnet.remove("macOct3");
       if (wnet.containsKey("password")) wnet.remove("password");
       if (wnet.containsKey("quantity")) wnet.remove("quantity");
+      // If we stripped every field, drop the empty `wcbNetwork: {}` so
+      // rcConfigFromJSON's containsKey("wcbNetwork") check short-circuits
+      // and we skip the whole "apply each field from JSON with fallback"
+      // loop.  Tiny perf win; avoids touching strlcpy(password) etc.
+      // with the same values they already hold.
+      if (wnet.size() == 0) data.remove("wcbNetwork");
     }
     // Pass the JsonObject directly instead of re-serializing → re-parsing.
     // The old String round-trip allocated 3 KB for `dataJson` AND another
@@ -382,12 +430,24 @@ inline void tick() {
   // rather skip one heartbeat than risk a watchdog by mixing flash and
   // ESP-NOW TX in the same tick.  Clearing the slot before the apply
   // means a new reassembly can start landing while the apply runs.
-  if (_pendingReassembled.length() > 0) {
-    String   payload = _pendingReassembled;
-    uint8_t  sender  = _pendingReassembledSender;
-    _pendingReassembled       = String();   // free heap before apply
-    _pendingReassembledSender = 0;
-    _applyReassembled(sender, payload);
+  // ── Drain pending reassembled payload (mutex-guarded) ─────────────────
+  // We take the mutex, swap out the slot contents, release the mutex,
+  // THEN call _applyReassembled outside the lock — the apply runs flash
+  // I/O for 100+ ms and we don't want to block handle() (Core 0 WiFi
+  // task) waiting on the lock for that long.
+  String  drainedPayload;
+  uint8_t drainedSender = 0;
+  if (_pendingMutex && xSemaphoreTake(_pendingMutex, portMAX_DELAY) == pdTRUE) {
+    if (_pendingReassembled.length() > 0) {
+      drainedPayload            = _pendingReassembled;
+      drainedSender             = _pendingReassembledSender;
+      _pendingReassembled       = String();   // free heap before apply
+      _pendingReassembledSender = 0;
+    }
+    xSemaphoreGive(_pendingMutex);
+  }
+  if (drainedPayload.length() > 0) {
+    _applyReassembled(drainedSender, drainedPayload);
     return;   // skip heartbeat/channel emit this tick — next call resumes
   }
 
@@ -539,9 +599,13 @@ inline bool handle(uint8_t senderID, const char* command) {
       Serial.println("[RC] Fragment pool exhausted — dropping");
       return true;
     }
-    bool isNewFragment = (sess->parts[f - 1].length() == 0);
+    // Use the explicit received[] flag rather than parts[].length() so an
+    // empty slice (legitimately possible if the sender ever produces one)
+    // can't masquerade as "not yet received" on duplicate arrivals.
+    bool isNewFragment = !sess->received[f - 1];
     if (isNewFragment) {
-      sess->parts[f - 1] = String(s);
+      sess->parts[f - 1]    = String(s);
+      sess->received[f - 1] = true;
       sess->got++;
       sess->expireAt = millis() + FRAG_TIMEOUT_MS;
     }
@@ -569,10 +633,19 @@ inline bool handle(uint8_t senderID, const char* command) {
       // where blocking flash I/O is safe.  If a second large message
       // arrives before the first one applies, we drop the new one —
       // SET_CONFIG isn't expected to fire faster than ~1 Hz.
-      if (_pendingReassembled.length() == 0) {
-        _pendingReassembled       = full;
-        _pendingReassembledSender = fromId;
-      } else {
+      // Mutex-guarded write — see _pendingMutex declaration for why.
+      // We assign the String inside the critical section so a concurrent
+      // tick() can't observe a partial buffer.
+      bool accepted = false;
+      if (_pendingMutex && xSemaphoreTake(_pendingMutex, portMAX_DELAY) == pdTRUE) {
+        if (_pendingReassembled.length() == 0) {
+          _pendingReassembled       = full;
+          _pendingReassembledSender = fromId;
+          accepted = true;
+        }
+        xSemaphoreGive(_pendingMutex);
+      }
+      if (!accepted) {
         Serial.println("[RC] previous reassembled payload still pending — dropping new one");
       }
     }
@@ -664,9 +737,17 @@ inline bool handle(uint8_t senderID, const char* command) {
   // for a single-packet SET_CONFIG too (rare but possible if the config
   // ever shrinks below the ~200 byte threshold).
   if (!strcmp(type, "SET_CONFIG")) {
-    if (_pendingReassembled.length() == 0) {
-      _pendingReassembled       = String(command);
-      _pendingReassembledSender = senderID;
+    // Mutex-guarded — same reasoning as the fragment-complete branch.
+    bool accepted = false;
+    if (_pendingMutex && xSemaphoreTake(_pendingMutex, portMAX_DELAY) == pdTRUE) {
+      if (_pendingReassembled.length() == 0) {
+        _pendingReassembled       = String(command);
+        _pendingReassembledSender = senderID;
+        accepted = true;
+      }
+      xSemaphoreGive(_pendingMutex);
+    }
+    if (accepted) {
       Serial.println("[RC] SET_CONFIG → deferred to main loop");
     } else {
       Serial.println("[RC] SET_CONFIG dropped — apply queue full");

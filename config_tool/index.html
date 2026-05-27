@@ -2019,7 +2019,7 @@
         <img src="../Images/r2logo.png" alt="R2 logo"
              style="width:72px;height:72px;object-fit:contain;opacity:0.9">
         <div style="font-size:11px;color:var(--muted);font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;letter-spacing:0.3px">
-          RC Controller Config Tool &nbsp;·&nbsp; <span id="footer-dtg">261534QMAY26</span>
+          RC Controller Config Tool &nbsp;·&nbsp; <span id="footer-dtg">271542QMAY26</span>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap">
@@ -3074,9 +3074,22 @@ async function disconnect() {
     // produce nonsense diffs.  applyConfig re-establishes it after the
     // next CONFIG arrives.
     _configBaseline = null;
+    // Drop any pending save state — the ACK we were waiting for can
+    // never arrive now.  Avoids a stale watchdog firing seconds later
+    // on a torn-down session.
+    _pendingSaveBaseline = null;
+    if (_pendingSaveTimer) { clearTimeout(_pendingSaveTimer); _pendingSaveTimer = null; }
     // Stop the Via-WCB keep-alive PING timer so it doesn't keep firing
     // sendJSON() on a torn-down port.
     if (_wcbKeepaliveTimer) { clearInterval(_wcbKeepaliveTimer); _wcbKeepaliveTimer = null; }
+    // Stop the SBUS-staleness watchdog.  If we don't, the timer keeps
+    // running across reconnects with stale _rcLastChMs values, and the
+    // first rc_hb on the next connect won't recreate it (the guard
+    // `if (!_rcSbusTimer)` would be false), so the watchdog operates
+    // on the OLD timer handle / OLD state.  Reset everything.
+    if (_rcSbusTimer) { clearInterval(_rcSbusTimer); _rcSbusTimer = null; }
+    _rcLastChMs   = 0;
+    _rcLastHbSbus = null;
   }
 }
 
@@ -3329,6 +3342,14 @@ async function sendJSON(obj, silent = false) {
     return;
   }
   for (let i = 0; i < total; i++) {
+    // Bail mid-send if the user disconnected — sendLine would throw on a
+    // torn-down writer anyway, but catching it here avoids the spurious
+    // error spam and leaves the RC's reassembly to time out cleanly at
+    // its 5 s FRAG_TIMEOUT_MS.
+    if (!port || disconnecting) {
+      console.warn(`sendJSON: port closed mid-send, aborted at fragment ${i + 1}/${total}`);
+      return;
+    }
     const slice = inner.substring(i * FRAG_CHUNK_BYTES, (i + 1) * FRAG_CHUNK_BYTES);
     const env   = JSON.stringify({ f: i + 1, of: total, sid, s: slice });
     // Guard against envelope drift past the bridge's CRC-suffix budget.
@@ -3935,7 +3956,30 @@ function handleBoardMessage(line) {
     return;
   }
   if (msg.type === 'ACK') {
-    if (!msg.ok) console.warn('NACK:', msg.msg);
+    if (!msg.ok) {
+      console.warn('NACK:', msg.msg);
+      // Treat NACK as "save did not apply" — clear pending baseline so
+      // the user's subsequent Save will diff against the ORIGINAL
+      // baseline (last known good) instead of a baseline that includes
+      // the rejected edits.
+      if (msg.of === 'SET_CONFIG' && _pendingSaveBaseline) {
+        appendTerminalLine('< [config] Save NACK\'d by board — baseline NOT advanced', 'rx');
+        _pendingSaveBaseline = null;
+        if (_pendingSaveTimer) { clearTimeout(_pendingSaveTimer); _pendingSaveTimer = null; }
+      }
+      return;
+    }
+    // Save-specific ACK with ok:true → the board successfully applied
+    // and persisted the SET_CONFIG.  Advance the diff baseline to match
+    // the state we sent, so subsequent Saves diff against current
+    // on-board state (not the pre-Save Load baseline).
+    if (msg.of === 'SET_CONFIG' && _pendingSaveBaseline) {
+      _configBaseline = _pendingSaveBaseline;
+      _pendingSaveBaseline = null;
+      if (_pendingSaveTimer) { clearTimeout(_pendingSaveTimer); _pendingSaveTimer = null; }
+      const elapsed = Date.now() - _pendingSaveStartedAt;
+      appendTerminalLine(`< [config] Save ACK\'d (${elapsed} ms) — baseline advanced`, 'rx');
+    }
     return;
   }
 }
@@ -6052,24 +6096,47 @@ let _configBaseline = null;
 function _deepClone(obj) {
   try { return JSON.parse(JSON.stringify(obj)); } catch (_) { return null; }
 }
+
+// Canonical JSON stringifier: recursively sorts object keys so the output
+// is deterministic regardless of insertion order.  Plain JSON.stringify
+// preserves insertion order, which differs between (a) the config object
+// rebuilt by applyConfig() using `{...defaults, ...incoming}` spread
+// (incoming-key order) and (b) the baseline cloned right after — they
+// look equivalent but stringify differently → false-positive diff →
+// spurious wire traffic on every Save right after a Load.  This sort
+// fixes that.  Arrays preserve element order (semantic for our config).
 function _stringifyStable(v) {
-  // Top-level keys are already in a fixed declaration order in this file,
-  // and we only compare value-equality (not stringify order), so plain
-  // JSON.stringify suffices.  If config keys ever get programmatically
-  // shuffled, switch to a canonical sort.
-  try { return JSON.stringify(v); } catch (_) { return ''; }
+  try {
+    return JSON.stringify(v, (_key, val) => {
+      if (val === null || typeof val !== 'object' || Array.isArray(val)) return val;
+      // Sort keys of plain objects only.
+      const sorted = {};
+      for (const k of Object.keys(val).sort()) sorted[k] = val[k];
+      return sorted;
+    });
+  } catch (_) { return ''; }
 }
 
-// Returns an object containing only the top-level keys of `current` whose
-// value differs from `baseline`.  If baseline is null, returns a clone of
-// the full current config (fallback for the first save after a defaults
-// reset, etc).
+// Returns an object containing only the top-level keys whose value differs
+// between `current` and `baseline`.  Iterates the UNION of both keysets
+// so that a key present in baseline but missing from current is reported
+// as a change too — without this, deleting a branch (e.g. user clears
+// `config.maestros = undefined`) wouldn't propagate to the board.
+// Missing-in-current is represented by setting `out[key] = null` so the
+// firmware can choose to interpret null as "leave alone" or "clear".
+// In practice the GUI never deletes top-level branches in normal flow,
+// so this only matters as a defensive correctness fix.
 function _diffConfigBranches(current, baseline) {
   if (!baseline) return _deepClone(current);
   const out = {};
-  for (const key of Object.keys(current)) {
+  const keys = new Set([...Object.keys(current), ...Object.keys(baseline)]);
+  for (const key of keys) {
     if (_stringifyStable(current[key]) !== _stringifyStable(baseline[key])) {
-      out[key] = current[key];
+      // Only include if `current` actually has the key.  A baseline-only
+      // key means the GUI dropped the branch (unusual); send null and
+      // let the firmware decide.  In our current code paths this never
+      // fires, so it's a defensive default.
+      out[key] = (key in current) ? current[key] : null;
     }
   }
   return out;
@@ -6125,14 +6192,44 @@ async function saveConfigToBoard() {
 
   const branches = Object.keys(payload).join(', ');
   console.log(`saveConfigToBoard: sending diff (${branches})`);
-  await sendJSON({ type: 'SET_CONFIG', data: payload });
 
-  // Refresh baseline so the NEXT save diffs against current state, not
-  // the original Load.  Done optimistically — if the firmware rejects
-  // the save we'd need a NACK path to revert; currently we trust the
-  // ACK that comes back from the RC.
-  _configBaseline = _deepClone(config);
+  // Stash the proposed new baseline.  We DO NOT advance _configBaseline
+  // until the firmware ACKs the save — see _pendingSaveBaseline /
+  // ACK handler.  Otherwise a Save that's silently lost over Via WCB
+  // (fragment drop, RC offline, etc.) would leave the GUI thinking the
+  // board is in a state it isn't, and subsequent diff-Saves would
+  // compute deltas against fiction.
+  _pendingSaveBaseline = _deepClone(config);
+  _pendingSaveStartedAt = Date.now();
+
+  await sendJSON({ type: 'SET_CONFIG', data: payload });
+  appendTerminalLine(`< [config] Save sent (branches: ${branches}) — awaiting ACK`, 'rx');
+
+  // Watchdog: if no ACK in 12 s (longer than the worst-case 40-fragment
+  // send at 150 ms = 6 s plus apply time), surface a warning.  Don't
+  // discard the pending baseline though — a late ACK should still
+  // advance it.  User can manually retry Save if needed.
+  if (_pendingSaveTimer) clearTimeout(_pendingSaveTimer);
+  _pendingSaveTimer = setTimeout(() => {
+    if (_pendingSaveBaseline) {
+      appendTerminalLine(
+        '< [config] WARNING: no ACK received for SET_CONFIG within 12 s. ' +
+        'Save may not have completed.  Try Refresh to verify, or re-Save.',
+        'rx');
+      console.warn('SET_CONFIG ACK timeout — baseline NOT advanced');
+    }
+    _pendingSaveTimer = null;
+  }, 12000);
 }
+
+// Pending-save state — used to defer baseline advance to ACK arrival.
+// _pendingSaveBaseline: the clone of config taken at Save time; copied
+//                      into _configBaseline if/when the ACK arrives.
+// _pendingSaveStartedAt: timestamp for telemetry / debugging.
+// _pendingSaveTimer:   watchdog for missing ACK.
+let _pendingSaveBaseline  = null;
+let _pendingSaveStartedAt = 0;
+let _pendingSaveTimer     = null;
 document.getElementById('btn-save').addEventListener('click', saveConfigToBoard);
 document.getElementById('btn-hwsetup-save').addEventListener('click', saveConfigToBoard);
 

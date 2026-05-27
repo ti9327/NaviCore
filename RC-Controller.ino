@@ -1478,6 +1478,13 @@ void setup() {
   // ESP32-S3). One port = one device = one baud.
   applySerialBauds(true);
 
+  // Initialize rc_telemetry's deferred-queue mutex BEFORE WCB_Client
+  // brings the ESP-NOW receive callback online.  Otherwise the very
+  // first inbound packet's handle() call would find _pendingMutex==null
+  // and skip its critical section.  See rc_telemetry.h::init() for the
+  // race details.
+  rcTelemetry::init();
+
   // WCB Client — sets STA mode + custom MAC + inits ESP-NOW.
   // No WiFi AP or web server — ESP-NOW only.  Credentials come from NVS
   // (editable via the GUI's "WCB Network" sidebar); a reboot is required

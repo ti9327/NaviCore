@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="NaviCore badge">
+  <defs>
+    <linearGradient id="steelGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f4f7fb"></stop><stop offset=".5" stop-color="#aab3bf"></stop><stop offset="1" stop-color="#646d79"></stop></linearGradient>
+    <linearGradient id="steelGradH" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#cad2dd"></stop><stop offset=".5" stop-color="#8b94a1"></stop><stop offset="1" stop-color="#cad2dd"></stop></linearGradient>
+    <linearGradient id="blueGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#7cc0ff"></stop><stop offset="1" stop-color="#1547b0"></stop></linearGradient>
+    <radialGradient id="blueGlow" cx="50%" cy="50%" r="50%"><stop offset="0" stop-color="#eaf6ff"></stop><stop offset=".28" stop-color="#4f9dff"></stop><stop offset="1" stop-color="#2b86ff" stop-opacity="0"></stop></radialGradient>
+    <radialGradient id="eyeLens" cx="42%" cy="38%" r="65%"><stop offset="0" stop-color="#dcefff"></stop><stop offset=".4" stop-color="#2b86ff"></stop><stop offset="1" stop-color="#0e2147"></stop></radialGradient>
+    <linearGradient id="badgeBg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#141a24"></stop><stop offset="1" stop-color="#090c11"></stop></linearGradient>
+    <g id="tc-eye-src">
+      <circle cx="40" cy="40" r="30" fill="#0d1117" stroke="url(#steelGrad)" stroke-width="2.5"></circle>
+      <g stroke="#5d6573" stroke-width="1.4">
+        <g id="hx-ap"><line x1="40" y1="13" x2="40" y2="18"></line></g>
+        <use href="#hx-ap" transform="rotate(45 40 40)"></use><use href="#hx-ap" transform="rotate(90 40 40)"></use>
+        <use href="#hx-ap" transform="rotate(135 40 40)"></use><use href="#hx-ap" transform="rotate(180 40 40)"></use>
+        <use href="#hx-ap" transform="rotate(225 40 40)"></use><use href="#hx-ap" transform="rotate(270 40 40)"></use>
+        <use href="#hx-ap" transform="rotate(315 40 40)"></use>
+      </g>
+      <circle cx="40" cy="40" r="23" fill="none" stroke="url(#steelGrad)" stroke-width="3"></circle>
+      <circle cx="40" cy="40" r="20" fill="url(#blueGlow)" opacity=".9"></circle>
+      <circle cx="40" cy="40" r="13" fill="url(#eyeLens)" stroke="#cfe8ff" stroke-width="1.3"></circle>
+      <circle cx="40" cy="40" r="5" fill="#dff0ff"></circle>
+      <circle cx="34.5" cy="34.5" r="3" fill="#ffffff"></circle>
+    </g>
+  </defs>
+  <rect x="0" y="0" width="512" height="512" rx="112" fill="url(#badgeBg)"></rect>
+  <rect x="6" y="6" width="500" height="500" rx="107" fill="none" stroke="#2b86ff" stroke-opacity=".25" stroke-width="2"></rect>
+  <g transform="translate(76 76) scale(1.8)">
+    <g fill="none" stroke="url(#steelGrad)" stroke-width="2.2" stroke-linecap="round">
+      <path d="M22 100 H6"></path><path d="M22 86 H12 V79"></path><path d="M22 114 H12 V121"></path>
+      <path d="M178 100 H194"></path><path d="M178 86 H188 V79"></path><path d="M178 114 H188 V121"></path>
+    </g>
+    <g fill="#0d1117" stroke="url(#steelGrad)" stroke-width="2">
+      <circle cx="4" cy="100" r="3"></circle><circle cx="12" cy="75" r="2.6"></circle><circle cx="12" cy="125" r="2.6"></circle>
+      <circle cx="196" cy="100" r="3"></circle><circle cx="188" cy="75" r="2.6"></circle><circle cx="188" cy="125" r="2.6"></circle>
+    </g>
+    <polygon points="100,11 177.1,55.5 177.1,144.5 100,189 22.9,144.5 22.9,55.5" fill="none" stroke="#5d6573" stroke-width="1"></polygon>
+    <polygon points="100,16 172.7,58 172.7,142 100,184 27.3,142 27.3,58" fill="none" stroke="url(#steelGrad)" stroke-width="8" stroke-linejoin="round"></polygon>
+    <polygon points="100,21 168.3,60.5 168.3,139.5 100,179 31.7,139.5 31.7,60.5" fill="none" stroke="#5d6573" stroke-width="1"></polygon>
+    <polygon points="100,30 160.6,65 160.6,135 100,170 39.4,135 39.4,65" fill="none" stroke="#2b86ff" stroke-width="1.8" opacity=".7"></polygon>
+    <path d="M100 30 L39.4 65 L39.4 135" fill="none" stroke="#2b86ff" stroke-width="3" opacity=".9" stroke-linejoin="round"></path>
+    <g stroke="#5d6573" stroke-width="1.8">
+      <g id="hx-vtk"><line x1="100" y1="24" x2="100" y2="31"></line></g>
+      <use href="#hx-vtk" transform="rotate(60 100 100)"></use><use href="#hx-vtk" transform="rotate(120 100 100)"></use>
+      <use href="#hx-vtk" transform="rotate(180 100 100)"></use><use href="#hx-vtk" transform="rotate(240 100 100)"></use>
+      <use href="#hx-vtk" transform="rotate(300 100 100)"></use>
+    </g>
+    <g stroke="#5d6573" stroke-width="1.6">
+      <line x1="100" y1="56" x2="100" y2="61"></line><line x1="100" y1="144" x2="100" y2="139"></line>
+    </g>
+    <g fill="url(#steelGradH)" stroke="#5d6573" stroke-width=".8">
+      <rect x="88" y="40" width="24" height="4.6" rx="2.3"></rect><rect x="83" y="47" width="34" height="4.6" rx="2.3"></rect>
+      <rect x="88" y="155.4" width="24" height="4.6" rx="2.3"></rect><rect x="83" y="148.4" width="34" height="4.6" rx="2.3"></rect>
+    </g>
+    <circle cx="100" cy="69" r="2.8" fill="#5cb0ff"></circle><circle cx="100" cy="131" r="2.8" fill="#5cb0ff"></circle>
+    <line x1="40" y1="100" x2="160" y2="100" stroke="#2b86ff" stroke-width="1" opacity=".2" stroke-dasharray="2 6"></line>
+    <path d="M38 100 Q45 84 52 100 T66 100 T80 100" fill="none" stroke="url(#steelGrad)" stroke-width="3.2" stroke-linecap="round"></path>
+    <path d="M120 100 Q127 116 134 100 T148 100 T162 100" fill="none" stroke="#5cb0ff" stroke-width="3.2" stroke-linecap="round"></path>
+    <g fill="#8b94a1"><circle cx="45" cy="86" r="2"></circle><circle cx="59" cy="114" r="2"></circle></g>
+    <g fill="#5cb0ff"><circle cx="141" cy="86" r="2"></circle><circle cx="155" cy="114" r="2"></circle></g>
+    <use href="#tc-eye-src" transform="translate(65 65) scale(0.875)"></use>
+  </g>
+</svg>

@@ -1,6 +1,16 @@
-# RC Controller
+<div align="center">
+
+<img src="assets-navicore/navicore-icon-512.png" alt="NaviCore" width="130" />
+
+# NaviCore
+
+**Astromech Animation Controller**
 
 [**🚀 Launch the config tool →**](https://greghulette.github.io/RC-Controller/)
+
+</div>
+
+---
 
 WCB-based RC controller firmware for ESP32-S3 (WCB HW 3.2). Reads SBUS from an
 RC receiver, dispatches matrix buttons / switches / knobs to local and remote
@@ -27,6 +37,7 @@ rc_config.h          Config struct, JSON serialisation, NVS persistence
 wcb_config.h         WCB board ID / port definitions
 sbus_reader.h        SBUS decoder + passthrough tee
 config_tool/         Browser-based config GUI (Web Serial)
+assets-navicore/     NaviCore brand assets (logo, favicon, app icons)
 model/               FrSky X18 transmitter model file (download below)
 ```
 
@@ -47,7 +58,7 @@ Local libraries (drop into your sketchbook `libraries/` folder):
 
 ### FrSky X18 transmitter model
 
-The RC Controller assumes a specific channel map (SBUS channels 1–15 for
+NaviCore assumes a specific channel map (SBUS channels 1–15 for
 sticks/switches, CH7 for the button matrix, etc.). To save you setting all
 that up by hand on your X18, the matching transmitter model file is bundled
 in the [`model/`](model) folder.
@@ -81,6 +92,12 @@ Newline-delimited JSON on the USB Serial port:
 | `{"type":"RESET_DEFAULTS"}` | reloads factory defaults, replies ACK |
 | `{"type":"TRIGGER","mode":1,"btn":3,"tap":1}` | fires virtual button press |
 | `{"type":"WCB_SEND","target":2,"cmd":":PP100"}` | manually fires WCB command |
+
+## Brand
+
+NaviCore's mark is a machined hexagon housing a glowing photoreceptor, with the
+RC signal arriving as a waveform (steel in, blue out). Logo, favicon, mono, and
+app-icon assets live in [`assets-navicore/`](assets-navicore).
 
 ## License
 

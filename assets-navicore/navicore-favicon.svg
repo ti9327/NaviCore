@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 200 200" role="img" aria-label="NaviCore favicon">
+  <defs>
+    <linearGradient id="steelGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f4f7fb"></stop><stop offset=".5" stop-color="#aab3bf"></stop><stop offset="1" stop-color="#646d79"></stop></linearGradient>
+    <linearGradient id="blueGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#7cc0ff"></stop><stop offset="1" stop-color="#1547b0"></stop></linearGradient>
+    <radialGradient id="blueGlow" cx="50%" cy="50%" r="50%"><stop offset="0" stop-color="#eaf6ff"></stop><stop offset=".28" stop-color="#4f9dff"></stop><stop offset="1" stop-color="#2b86ff" stop-opacity="0"></stop></radialGradient>
+    <radialGradient id="eyeLens" cx="42%" cy="38%" r="65%"><stop offset="0" stop-color="#dcefff"></stop><stop offset=".4" stop-color="#2b86ff"></stop><stop offset="1" stop-color="#0e2147"></stop></radialGradient>
+  </defs>
+  <polygon points="100,16 172.7,58 172.7,142 100,184 27.3,142 27.3,58" fill="#0d1117" stroke="url(#steelGrad)" stroke-width="9" stroke-linejoin="round"></polygon>
+  <polygon points="100,32 159,66 159,134 100,168 41,134 41,66" fill="none" stroke="#2b86ff" stroke-width="2.5" opacity=".8"></polygon>
+  <circle cx="100" cy="100" r="38" fill="#0d1117" stroke="url(#steelGrad)" stroke-width="4"></circle>
+  <circle cx="100" cy="100" r="29" fill="url(#blueGlow)" opacity=".95"></circle>
+  <circle cx="100" cy="100" r="19" fill="url(#eyeLens)" stroke="#cfe8ff" stroke-width="2"></circle>
+  <circle cx="92" cy="92" r="6" fill="#ffffff"></circle>
+</svg>

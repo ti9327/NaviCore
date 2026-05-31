@@ -2,7 +2,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 //  rc_config.h — RC button / switch / knob mapping configuration
 //
-//  Adapted from Body_Controller_ESP32_GUI for the RC-Controller project.
+//  Adapted from Body_Controller_ESP32_GUI for the NaviCore project.
 //  Key changes vs. BC version:
 //    • Action types: RA_ESPNOW/RA_HCR/RA_ANIM → RA_WCB_UNICAST/RA_WCB_BROADCAST/
 //                   RA_MAESTRO_LOCAL/RA_MAESTRO_REMOTE

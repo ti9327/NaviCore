@@ -1,7 +1,7 @@
 // =============================================================================
 //  rc_telemetry.h
 //
-//  WCB-network-side bridge for remote management of the RC-Controller.  The
+//  WCB-network-side bridge for remote management of the NaviCore.  The
 //  user-facing UI stays in config_tool/index.html (the existing RC config
 //  tool); the WCB ESP-NOW network is just a TRANSPORT that lets the tool
 //  reach a remote RC through a USB-tethered "bridge" WCB.
@@ -12,7 +12,7 @@
 //          │
 //          │ Web Serial  (Direct USB)                 (Via WCB)
 //          ▼                                              ▼
-//    [USB RC-Controller]              [USB WCB] ─ ESP-NOW ─ [remote RC]
+//    [USB NaviCore]              [USB WCB] ─ ESP-NOW ─ [remote RC]
 //
 //  In "Via WCB" mode the config tool sends the SAME JSON messages it already
 //  uses over direct USB; the bridge WCB relays them as ESP-NOW packets to
@@ -47,7 +47,7 @@
 //       packet limit.  The config tool surfaces those as "use Direct USB
 //       for full-config push/pull" in its UI.
 //
-//  Required externs (defined in RC-Controller.ino):
+//  Required externs (defined in NaviCore.ino):
 //    extern WCB_Client*   wcb;
 //    extern int           FunctionSwState;
 //    extern int           sbusValues[24];     // signed int per the .ino's declaration
@@ -65,7 +65,7 @@
 #include "rc_config.h"
 #include "fw_version.h"
 
-// Forward declarations from RC-Controller.ino.  Type signature for
+// Forward declarations from NaviCore.ino.  Type signature for
 // sbusValues MUST match the .ino's `int sbusValues[24]` declaration or
 // the linker pulls the wrong symbol layout.
 extern WCB_Client*  wcb;
@@ -305,11 +305,11 @@ inline bool _hasWcbSubscriber(uint32_t now) {
 //
 // The mutex is acquired briefly on each side around the read/write of
 // the slot.  Cost is microseconds; safety is absolute.  Initialized
-// lazily by `init()` (called from RC-Controller.ino setup() before
+// lazily by `init()` (called from NaviCore.ino setup() before
 // WCB_Client init brings the receive callback online).
 inline SemaphoreHandle_t _pendingMutex = nullptr;
 
-// Call from RC-Controller.ino setup() BEFORE wcb->begin() so the mutex
+// Call from NaviCore.ino setup() BEFORE wcb->begin() so the mutex
 // is ready when the first ESP-NOW packet arrives.  Idempotent.
 inline void init() {
   if (!_pendingMutex) _pendingMutex = xSemaphoreCreateMutex();

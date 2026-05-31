@@ -1,6 +1,6 @@
 # Firmware Binaries
 
-This folder hosts the compiled RC-Controller firmware for the **WCB v3.2**
+This folder hosts the compiled NaviCore firmware for the **WCB v3.2**
 hardware (ESP32-S3). The browser-based flasher in `config_tool/index.html`
 (Config → Firmware tab) pulls the latest set from here on `main` via the
 GitHub Contents API.
@@ -26,7 +26,7 @@ The firmware version is stored in `fw_version.h` at the repo root:
   in the `PONG` reply and at boot.
 
 The build script reads both `#define`s and embeds them in the bin filename
-(e.g. `RC-Controller_v0.2.0_211520QMAY26_ESP32S3.bin`), so the file on disk,
+(e.g. `NaviCore_v0.2.0_211520QMAY26_ESP32S3.bin`), so the file on disk,
 the file's reported version at runtime, and the source header all match.
 
 ## File naming
@@ -43,9 +43,9 @@ The flasher matches by **suffix**, so the version prefix can change every
 build without touching the page. Example set:
 
 ```
-RC-Controller_201500RMAY26_ESP32S3.bin
-RC-Controller_201500RMAY26_ESP32S3_boot.bin
-RC-Controller_201500RMAY26_ESP32S3_part.bin
+NaviCore_201500RMAY26_ESP32S3.bin
+NaviCore_201500RMAY26_ESP32S3_boot.bin
+NaviCore_201500RMAY26_ESP32S3_part.bin
 ```
 
 The Config → Firmware tab offers two buttons:
@@ -65,7 +65,7 @@ The Config → Firmware tab offers two buttons:
 
 **Default: GitHub Actions does it automatically.**  Every push to any
 branch triggers `.github/workflows/build-firmware.yml`, which compiles
-`RC-Controller.ino` for ESP32-S3 with the `min_spiffs` partition scheme,
+`NaviCore.ino` for ESP32-S3 with the `min_spiffs` partition scheme,
 reads `FW_VERSION_BASE` + `FW_VERSION_DTG` out of `fw_version.h`, and
 commits the three resulting bins back to `firmware/` (overwriting older
 versioned files) under an auto-commit tagged `[skip ci]`.  Once that
@@ -77,20 +77,20 @@ producing a one-off bin without going through CI.
 
 ### Option A — Arduino IDE (zero scripting)
 
-1. Open `RC-Controller.ino` in Arduino IDE.
+1. Open `NaviCore.ino` in Arduino IDE.
 2. Tools → Board → **ESP32S3 Dev Module** (or whatever you normally use for WCB v3.2).
 3. Tools → Partition Scheme → **Minimal SPIFFS (1.9MB APP with OTA / 190KB SPIFFS)**.
 4. Sketch → **Export Compiled Binary** (Ctrl/Cmd+Alt+S).
 5. The IDE writes three files into `build/<fqbn>/`:
-   - `RC-Controller.ino.bin`
-   - `RC-Controller.ino.bootloader.bin`
-   - `RC-Controller.ino.partitions.bin`
+   - `NaviCore.ino.bin`
+   - `NaviCore.ino.bootloader.bin`
+   - `NaviCore.ino.partitions.bin`
 6. Copy them into `firmware/`, renaming with a version prefix + the suffixes
    in the table above. Example:
    ```
-   cp build/.../RC-Controller.ino.bin             firmware/RC-Controller_<DTG>_ESP32S3.bin
-   cp build/.../RC-Controller.ino.bootloader.bin  firmware/RC-Controller_<DTG>_ESP32S3_boot.bin
-   cp build/.../RC-Controller.ino.partitions.bin  firmware/RC-Controller_<DTG>_ESP32S3_part.bin
+   cp build/.../NaviCore.ino.bin             firmware/NaviCore_<DTG>_ESP32S3.bin
+   cp build/.../NaviCore.ino.bootloader.bin  firmware/NaviCore_<DTG>_ESP32S3_boot.bin
+   cp build/.../NaviCore.ino.partitions.bin  firmware/NaviCore_<DTG>_ESP32S3_part.bin
    ```
    (Old versioned files can be deleted or left as history — the flasher only
    looks at suffixes, so it always picks one of each.)

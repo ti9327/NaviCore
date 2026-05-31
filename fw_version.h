@@ -1,5 +1,5 @@
 // =============================================================================
-//  fw_version.h — RC-Controller firmware version string
+//  fw_version.h — NaviCore firmware version string
 //
 //  Single source of truth for the firmware version, formatted as:
 //      <BASE>_<DTG>     e.g.  v0.2.0_211520QMAY26
@@ -26,5 +26,5 @@
 #pragma once
 
 #define FW_VERSION_BASE  "v0.2.0"
-#define FW_VERSION_DTG   "310126QMAY26"
+#define FW_VERSION_DTG   "310145QMAY26"
 #define FW_VERSION       FW_VERSION_BASE "_" FW_VERSION_DTG

@@ -1,5 +1,5 @@
 // =============================================================================
-//  RC-Controller.ino — WCB-based RC Controller
+//  NaviCore.ino — WCB-based RC Controller (formerly RC-Controller / HyperCore)
 //  Target hardware: WCB HW 3.2 (ESP32-S3)
 //
 //  Features:
@@ -1315,7 +1315,7 @@ void handleSerialInput() {
           else
             fn = serialInputBuf[2] - '0';
           switch (fn) {
-            case 1:  Serial.println("RC-Controller — WCB HW 3.2"); break;
+            case 1:  Serial.println("NaviCore — WCB HW 3.2"); break;
             case 2:  ESP.restart(); break;
             case 9:  dumpSbusState(); break;
             case 10: sbusLiveDump = !sbusLiveDump;
@@ -1441,7 +1441,7 @@ void setup() {
   Serial.setTxTimeoutMs(50);
 #endif
   delay(1500);
-  Serial.println("\n\n=== RC-Controller (WCB HW 3.2) ===");
+  Serial.println("\n\n=== NaviCore (WCB HW 3.2) ===");
 
   // Status LED
   statusLed.begin();
@@ -1515,7 +1515,7 @@ void setup() {
   serialInputBuf.reserve(256);
 
   setStatusLed(C_BLUE, 10);
-  Serial.print  ("[RC-Controller] Firmware ");
+  Serial.print  ("[NaviCore] Firmware ");
   Serial.print  (FW_VERSION);
   Serial.println(" — setup complete.");
   Serial.println("  Connect config_tool/index.html via Web Serial for configuration.");

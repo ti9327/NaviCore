@@ -1,7 +1,7 @@
 # ─────────────────────────────────────────────────────────────────────────
 # build-firmware.ps1
 #
-# Compile RC-Controller.ino for the WCB v3.2 hardware (ESP32-S3) and copy
+# Compile NaviCore.ino for the WCB v3.2 hardware (ESP32-S3) and copy
 # the three resulting artifacts (app, bootloader, partition table) into
 # firmware/ with a DTG-stamped prefix so the in-browser flasher
 # (config_tool/index.html → Config → Firmware tab) picks them up.
@@ -9,7 +9,7 @@
 # Prereqs:
 #   - arduino-cli on PATH  (https://arduino.github.io/arduino-cli/)
 #   - esp32 core installed: arduino-cli core install esp32:esp32
-#   - Any RC-Controller library dependencies installed
+#   - Any NaviCore library dependencies installed
 #
 # Usage:
 #   pwsh tools\build-firmware.ps1                     # default: tag = FW_VERSION from fw_version.h
@@ -17,9 +17,9 @@
 #   pwsh tools\build-firmware.ps1 -KeepOld            # don't prune older bins
 #
 # Outputs (in firmware/):
-#   RC-Controller_<TAG>_ESP32S3.bin
-#   RC-Controller_<TAG>_ESP32S3_boot.bin
-#   RC-Controller_<TAG>_ESP32S3_part.bin
+#   NaviCore_<TAG>_ESP32S3.bin
+#   NaviCore_<TAG>_ESP32S3_boot.bin
+#   NaviCore_<TAG>_ESP32S3_part.bin
 #
 # Default <TAG> reads FW_VERSION_BASE and FW_VERSION_DTG from fw_version.h
 # and concatenates them with an underscore, e.g.  v0.1_211520QMAY26.
@@ -44,10 +44,10 @@ $ErrorActionPreference = 'Stop'
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot  = Split-Path -Parent $ScriptDir
 $FwDir     = Join-Path $RepoRoot 'firmware'
-$Sketch    = Join-Path $RepoRoot 'RC-Controller.ino'
+$Sketch    = Join-Path $RepoRoot 'NaviCore.ino'
 
 if (-not (Test-Path $Sketch)) {
-    Write-Error "Could not find RC-Controller.ino at $Sketch"
+    Write-Error "Could not find NaviCore.ino at $Sketch"
     exit 1
 }
 if (-not (Test-Path $FwDir)) { New-Item -ItemType Directory -Path $FwDir | Out-Null }
@@ -82,14 +82,14 @@ if (-not $Tag) {
     $FwDtg  = $mDtg.Groups[1].Value
     $Tag    = "${FwBase}_${FwDtg}"
     Write-Host ""
-    Write-Host "Building RC-Controller firmware"
+    Write-Host "Building NaviCore firmware"
     Write-Host "  base : $FwBase   (edit fw_version.h to bump)"
     Write-Host "  dtg  : $FwDtg   (auto-stamped on commit by pre-commit hook)"
     Write-Host "  tag  : $Tag"
     Write-Host ""
 } else {
     Write-Host ""
-    Write-Host "Building RC-Controller firmware — explicit tag: $Tag"
+    Write-Host "Building NaviCore firmware — explicit tag: $Tag"
     Write-Host ""
 }
 
@@ -119,12 +119,12 @@ if ($LASTEXITCODE -ne 0) {
 
 # ── Locate the three output bins ─────────────────────────────────────────
 # arduino-cli names them after the sketch directory:
-#   RC-Controller.ino.bin                   ← app
-#   RC-Controller.ino.bootloader.bin        ← second-stage bootloader
-#   RC-Controller.ino.partitions.bin        ← partition table
-$AppSrc  = Join-Path $BuildDir 'RC-Controller.ino.bin'
-$BootSrc = Join-Path $BuildDir 'RC-Controller.ino.bootloader.bin'
-$PartSrc = Join-Path $BuildDir 'RC-Controller.ino.partitions.bin'
+#   NaviCore.ino.bin                   ← app
+#   NaviCore.ino.bootloader.bin        ← second-stage bootloader
+#   NaviCore.ino.partitions.bin        ← partition table
+$AppSrc  = Join-Path $BuildDir 'NaviCore.ino.bin'
+$BootSrc = Join-Path $BuildDir 'NaviCore.ino.bootloader.bin'
+$PartSrc = Join-Path $BuildDir 'NaviCore.ino.partitions.bin'
 
 foreach ($f in @($AppSrc, $BootSrc, $PartSrc)) {
     if (-not (Test-Path $f)) {
@@ -135,7 +135,7 @@ foreach ($f in @($AppSrc, $BootSrc, $PartSrc)) {
 
 # ── Optionally prune older bins so firmware/ doesn't accumulate history ──
 if (-not $KeepOld) {
-    $existing = Get-ChildItem -Path $FwDir -Filter 'RC-Controller_*_ESP32S3*.bin' -ErrorAction SilentlyContinue
+    $existing = Get-ChildItem -Path $FwDir -Filter 'NaviCore_*_ESP32S3*.bin' -ErrorAction SilentlyContinue
     if ($existing) {
         Write-Host "→ Removing $($existing.Count) older bin(s) from firmware/ (use -KeepOld to retain)…"
         $existing | Remove-Item -Force
@@ -143,9 +143,9 @@ if (-not $KeepOld) {
 }
 
 # ── Copy with versioned names ────────────────────────────────────────────
-$AppDst  = Join-Path $FwDir "RC-Controller_${Tag}_ESP32S3.bin"
-$BootDst = Join-Path $FwDir "RC-Controller_${Tag}_ESP32S3_boot.bin"
-$PartDst = Join-Path $FwDir "RC-Controller_${Tag}_ESP32S3_part.bin"
+$AppDst  = Join-Path $FwDir "NaviCore_${Tag}_ESP32S3.bin"
+$BootDst = Join-Path $FwDir "NaviCore_${Tag}_ESP32S3_boot.bin"
+$PartDst = Join-Path $FwDir "NaviCore_${Tag}_ESP32S3_part.bin"
 
 Copy-Item $AppSrc  $AppDst  -Force
 Copy-Item $BootSrc $BootDst -Force

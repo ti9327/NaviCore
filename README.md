@@ -6,7 +6,7 @@
 
 **Astromech Animation Controller**
 
-[**🚀 Launch the config tool →**](https://greghulette.github.io/RC-Controller/)
+[**🚀 Launch the config tool →**](https://greghulette.github.io/NaviCore/)
 
 </div>
 
@@ -32,7 +32,7 @@ tool that talks to the board over Web Serial.
 ## Layout
 
 ```
-RC-Controller.ino    Main sketch
+NaviCore.ino         Main sketch
 rc_config.h          Config struct, JSON serialisation, NVS persistence
 wcb_config.h         WCB board ID / port definitions
 sbus_reader.h        SBUS decoder + passthrough tee

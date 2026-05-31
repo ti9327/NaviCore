@@ -896,7 +896,7 @@
     <button class="btn btn-primary" id="btn-connect">Connect</button>
     <!-- ── Via WCB (remote management bridge) ───────────────────────────
          Unchecked = Direct USB (this tool is plugged straight into an
-         RC-Controller).
+         NaviCore).
          Checked   = Via WCB: this tool is plugged into ANY WCB on the
          network and that WCB relays outbound JSON to the RC at the
          fixed special-peer slot (deviceId 20).  The tethered WCB's
@@ -905,7 +905,7 @@
          from the RC drive the same SVG / channel-grid / mode-indicator
          UI as a directly-connected RC.  Persisted to localStorage. -->
     <label style="display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--muted);margin-left:4px;cursor:pointer"
-           title="Bridge through a USB-tethered WCB to the remote RC-Controller (always at WCB special-peer slot 20).">
+           title="Bridge through a USB-tethered WCB to the remote NaviCore (always at WCB special-peer slot 20).">
       <input id="via-wcb-toggle" type="checkbox"
              style="margin:0;cursor:pointer"
              onchange="onViaWcbToggle(this.checked)">
@@ -2197,11 +2197,11 @@
         <img src="../Images/r2logo.png" alt="R2 logo"
              style="width:72px;height:72px;object-fit:contain;opacity:0.9">
         <div style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.3px">
-          RC Controller Config Tool &nbsp;·&nbsp; <span id="footer-dtg">310126QMAY26</span>
+          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">310145QMAY26</span>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap">
-        <a href="https://github.com/greghulette/RC-Controller" target="_blank" rel="noopener"
+        <a href="https://github.com/greghulette/NaviCore" target="_blank" rel="noopener"
            style="display:inline-flex;align-items:center;gap:7px;padding:7px 14px;
                   background:var(--card);border:1px solid var(--border);border-radius:6px;text-decoration:none;
                   font-size:12px;font-weight:600;color:var(--text);letter-spacing:0.3px;
@@ -2587,7 +2587,7 @@
 
         <!-- ════════════════════════════════════════════════════════════
              Firmware tab — over-the-USB flashing of the WCB v3.2 board.
-             Pulls the latest .bin from GitHub (greghulette/RC-Controller
+             Pulls the latest .bin from GitHub (greghulette/NaviCore
              on branch main, under /firmware/) and writes it via
              esptool-js + WebSerial.  NVS (saved config) is preserved
              on any normal update; only blank or partition-mismatched
@@ -2604,9 +2604,9 @@
               <code id="fw-current-version" style="font-size:12px">—</code>
             </div>
             <div class="noconn" style="margin-top:6px">
-              Flashes the latest RC-Controller firmware to a WCB v3.2 (ESP32-S3)
+              Flashes the latest NaviCore firmware to a WCB v3.2 (ESP32-S3)
               board. Pulls the binary from
-              <code>github.com/greghulette/RC-Controller/firmware</code>.
+              <code>github.com/greghulette/NaviCore/firmware</code>.
               Your saved configuration (NVS) is preserved unless the partition
               layout changed.
             </div>
@@ -3394,7 +3394,7 @@ async function sendLine(msg, silent = false) {
 
 // ── Via WCB bridge state ────────────────────────────────────────────────────
 // When the user checks the "Via WCB" toggle on the topbar, this tool is
-// plugged into a WCB instead of an RC-Controller.  All outbound JSON gets
+// plugged into a WCB instead of a NaviCore.  All outbound JSON gets
 // wrapped `;20,<json>` so the WCB relays it via ESP-NOW to the RC at the
 // fixed WCB special-peer slot.  All inbound rc_* messages are filtered by
 // `id == RC_WCB_DEVICE_ID` so other peers on the network don't bleed in.
@@ -3569,12 +3569,12 @@ async function sendJSON(obj, silent = false) {
 // prefix). The catch-all "system" matches anything not matched above —
 // keep it last. localStorage persists toggle state across reloads.
 // Each firmware-gated category has a `bit` matching the DBG_* constants in
-// RC-Controller.ino. The GUI computes a bitmask from enabled chips and
+// NaviCore.ino. The GUI computes a bitmask from enabled chips and
 // sends {type:"SET_DEBUG_FLAGS",flags:N} so the firmware skips formatting
 // and printing for disabled streams (real wire savings, not just hiding).
 // SBUS/SYSTEM have bit=0 — they're rare/essential lines emitted ungated;
 // their chips remain pure GUI-side display filters.
-// Each entry has `bit` matching the DBG_* constants in RC-Controller.ino.
+// Each entry has `bit` matching the DBG_* constants in NaviCore.ino.
 // The GUI computes a bitmask from enabled chips and sends SET_DEBUG_FLAGS
 // so the firmware skips formatting + printing for disabled streams (real
 // wire savings, not just hiding). Lines that don't match ANY category
@@ -3957,7 +3957,7 @@ function handleBoardMessage(line) {
     return;
   }
 
-  // ── Via WCB bridge: rc_* telemetry from a remote RC-Controller ──────────
+  // ── Via WCB bridge: rc_* telemetry from a remote NaviCore ──────────────
   // The RC firmware (rc_telemetry.h) broadcasts these over the WCB ESP-NOW
   // network; the USB-tethered WCB relays them to USB Serial; we parse them
   // here.  Filter on the fixed RC_WCB_DEVICE_ID (20) so other devices on

@@ -1,19 +1,19 @@
 // ════════════════════════════════════════════════════════════════
-//  RC-Controller Firmware Flasher
+//  NaviCore Firmware Flasher
 //
 //  Browser-based ESP32-S3 flasher for the WCB v3.2 hardware variant.
 //  This is a simplified port of the Wireless_Communication_Board-WCB
 //  Wizard flasher (same upstream library, same flash addresses,
 //  same NVS-preservation logic) — but stripped to a single board
-//  variant since the RC-Controller firmware only targets WCB v3.2.
+//  variant since the NaviCore firmware only targets WCB v3.2.
 //
 //  Uses esptool-js (Espressif's official browser flash library)
 //  loaded on-demand from CDN, plus CryptoJS for MD5 verification.
 //
-//  Firmware binaries are hosted in the RC-Controller repo under
+//  Firmware binaries are hosted in the NaviCore repo under
 //  /firmware/ on GitHub.  The Contents API is used to list the
 //  directory so a freshly built binary with a versioned filename
-//  (e.g. RC-Controller_201500RMAY26_ESP32S3.bin) is picked up
+//  (e.g. NaviCore_201500RMAY26_ESP32S3.bin) is picked up
 //  automatically — only the suffix needs to be stable.
 //
 //  Public surface:
@@ -36,7 +36,7 @@ const CRYPTOJS_CDN = 'https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/cry
 // we fall back to an app-only flash (works on already-programmed
 // boards; blank boards need a full set).
 const GITHUB_OWNER          = 'greghulette';
-const GITHUB_REPO           = 'RC-Controller';
+const GITHUB_REPO           = 'NaviCore';
 const GITHUB_BRANCH_DEFAULT = 'main';
 const GITHUB_BIN_PATH       = 'firmware';
 
@@ -284,7 +284,7 @@ async function flashFirmware(port, { onProgress, onLog, onStatus, eraseNvs = fal
   }
 
   // ── Step 3c: optionally prepend NVS + otadata erase images ────
-  // RC-Controller partition layout (PartitionScheme=min_spiffs):
+  // NaviCore partition layout (PartitionScheme=min_spiffs):
   //   nvs     @ 0x9000,  size 0x5000 (20 KB)
   //   otadata @ 0xE000,  size 0x2000  (8 KB — two 4 KB flash sectors)
   //   ota_0   @ 0x10000, size 0x1E0000 (~1.9 MB)

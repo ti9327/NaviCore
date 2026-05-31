@@ -7,18 +7,18 @@
 # on macOS / Linux / WSL.  Windows users should keep using the .ps1 script.
 #
 # Reads the firmware version from fw_version.h (FW_VERSION_BASE +
-# FW_VERSION_DTG), compiles RC-Controller.ino for the WCB v3.2 hardware
+# FW_VERSION_DTG), compiles NaviCore.ino for the WCB v3.2 hardware
 # (ESP32-S3), and drops the three artifacts into firmware/ with names
 # matching the version baked into the binary:
 #
-#   firmware/RC-Controller_<TAG>_ESP32S3.bin
-#   firmware/RC-Controller_<TAG>_ESP32S3_boot.bin
-#   firmware/RC-Controller_<TAG>_ESP32S3_part.bin
+#   firmware/NaviCore_<TAG>_ESP32S3.bin
+#   firmware/NaviCore_<TAG>_ESP32S3_boot.bin
+#   firmware/NaviCore_<TAG>_ESP32S3_part.bin
 #
 # Requirements:
 #   - arduino-cli on PATH
 #   - esp32:esp32 core installed (e.g. esp32:esp32@3.3.4)
-#   - All RC-Controller library deps installed (see the workflow file
+#   - All NaviCore library deps installed (see the workflow file
 #     for the canonical list)
 # ─────────────────────────────────────────────────────────────────────────
 
@@ -28,10 +28,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 FW_DIR="$REPO_ROOT/firmware"
 FW_VER_FILE="$REPO_ROOT/fw_version.h"
-SKETCH="$REPO_ROOT/RC-Controller.ino"
+SKETCH="$REPO_ROOT/NaviCore.ino"
 
 if [ ! -f "$SKETCH" ]; then
-  echo "✗ Cannot find RC-Controller.ino at $SKETCH" >&2
+  echo "✗ Cannot find NaviCore.ino at $SKETCH" >&2
   exit 1
 fi
 if [ ! -f "$FW_VER_FILE" ]; then
@@ -52,7 +52,7 @@ fi
 TAG="${FW_BASE}_${FW_DTG}"
 
 echo ""
-echo "Building RC-Controller firmware"
+echo "Building NaviCore firmware"
 echo "  base : $FW_BASE   (edit fw_version.h to bump)"
 echo "  dtg  : $FW_DTG   (auto-stamped on commit by pre-commit hook)"
 echo "  tag  : $TAG"
@@ -80,9 +80,9 @@ arduino-cli compile \
   "$REPO_ROOT"
 
 # ── Locate the three artifacts arduino-cli produced ─────────────────────
-APP_SRC="$BUILD_DIR/RC-Controller.ino.bin"
-BOOT_SRC="$BUILD_DIR/RC-Controller.ino.bootloader.bin"
-PART_SRC="$BUILD_DIR/RC-Controller.ino.partitions.bin"
+APP_SRC="$BUILD_DIR/NaviCore.ino.bin"
+BOOT_SRC="$BUILD_DIR/NaviCore.ino.bootloader.bin"
+PART_SRC="$BUILD_DIR/NaviCore.ino.partitions.bin"
 
 for f in "$APP_SRC" "$BOOT_SRC" "$PART_SRC"; do
   if [ ! -f "$f" ]; then
@@ -93,12 +93,12 @@ done
 
 # ── Clean older versioned bins so firmware/ doesn't accumulate history ──
 # The flasher only matches on suffix, so a single set is all that's needed.
-find "$FW_DIR" -maxdepth 1 -type f -name 'RC-Controller_*_ESP32S3*.bin' -delete 2>/dev/null || true
+find "$FW_DIR" -maxdepth 1 -type f -name 'NaviCore_*_ESP32S3*.bin' -delete 2>/dev/null || true
 
 # ── Copy with versioned names ───────────────────────────────────────────
-APP_DST="$FW_DIR/RC-Controller_${TAG}_ESP32S3.bin"
-BOOT_DST="$FW_DIR/RC-Controller_${TAG}_ESP32S3_boot.bin"
-PART_DST="$FW_DIR/RC-Controller_${TAG}_ESP32S3_part.bin"
+APP_DST="$FW_DIR/NaviCore_${TAG}_ESP32S3.bin"
+BOOT_DST="$FW_DIR/NaviCore_${TAG}_ESP32S3_boot.bin"
+PART_DST="$FW_DIR/NaviCore_${TAG}_ESP32S3_part.bin"
 
 cp "$APP_SRC"  "$APP_DST"
 cp "$BOOT_SRC" "$BOOT_DST"
@@ -106,6 +106,6 @@ cp "$PART_SRC" "$PART_DST"
 
 echo ""
 echo "✓ Built and staged:"
-ls -lh "$FW_DIR"/RC-Controller_${TAG}_ESP32S3*.bin
+ls -lh "$FW_DIR"/NaviCore_${TAG}_ESP32S3*.bin
 
 rm -rf "$BUILD_DIR"

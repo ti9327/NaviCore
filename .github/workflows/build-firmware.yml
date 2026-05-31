@@ -1,5 +1,5 @@
 # ─────────────────────────────────────────────────────────────────────────
-#  Build RC-Controller firmware (WCB v3.2 / ESP32-S3) and commit the
+#  Build NaviCore firmware (WCB v3.2 / ESP32-S3) and commit the
 #  resulting .bin files back to firmware/.  The browser-based flasher in
 #  config_tool/index.html (Config → Firmware tab) reads from firmware/ on
 #  main via the GitHub Contents API, so a fresh build is immediately
@@ -7,13 +7,13 @@
 #
 #  Pattern mirrors the WCB Wizard's build.yml (greghulette/Wireless_
 #  Communication_Board-WCB) but trimmed to the single ESP32-S3 variant
-#  that RC-Controller targets.
+#  that NaviCore targets.
 #
 #  Trigger: any push (except the workflow's own auto-commits, which carry
 #  "[skip ci]" in their message and are ignored by GitHub Actions).
 #  Manual re-run also available via workflow_dispatch.
 # ─────────────────────────────────────────────────────────────────────────
-name: Build RC-Controller firmware
+name: Build NaviCore firmware
 
 on:
   push:
@@ -48,16 +48,16 @@ jobs:
             --additional-urls https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
 
       - name: Install libraries
-        # Library list mirrors the #include set in RC-Controller.ino:
+        # Library list mirrors the #include set in NaviCore.ino:
         #   ArduinoJson, Adafruit NeoPixel, EspSoftwareSerial — Library Manager
         #   PololuMaestro                                    — Library Manager
         #   WCBClient + WCBStream (single repo)              — greghulette GitHub
         # WiFi and Preferences come bundled with the ESP32 core.
-        # HCRVocalizer is intentionally NOT a dependency — RC-Controller
+        # HCRVocalizer is intentionally NOT a dependency — NaviCore
         # formats its own HCR command strings via hcrFormatCommand() and
         # writes them straight to Serial3/Serial4 (or via wcb->sendRaw for
         # remote HCRs).  See the comment block above hcrFormatCommand in
-        # RC-Controller.ino for the rationale.
+        # NaviCore.ino for the rationale.
         # Versions pinned where the WCB workflow pins; floats elsewhere
         # so a fresh checkout always works.
         run: |

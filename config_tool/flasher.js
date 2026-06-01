@@ -216,82 +216,24 @@ async function flashFirmware(port, { onProgress, onLog, onStatus, eraseNvs = fal
   }
 
   // ── Step 3b: decide what to flash ──────────────────────────────
-  let imagesToFlash;
-
-  if (eraseNvs) {
-    // Full wipe / initial push: always write the full image, regardless of
-    // what's on the board. We'll prepend NVS + otadata erase blobs below.
-    imagesToFlash = flashImages.slice();
-    onLog('Full wipe — flashing bootloader + partitions + app (NVS will be erased).');
-  } else {
-    // Smart auto-detect: NVS-preserving update.
-    let forceFull = false;
-    let isBlankBoard = false;
-    // readFlash() can HANG indefinitely on some chip/stub states (notably
-    // when coming from a foreign sketch's bootloader — observed in the
-    // field). A bare `await` would wedge the whole flow forever with no
-    // error, because try/catch only catches rejections, not a promise that
-    // never settles. Race every read against a timeout; on timeout we fall
-    // through to the safe full-flash path (forceFull) just like a read error.
-    const readWithTimeout = (fn, addr, len, ms = 4000) => Promise.race([
-      fn.call(loader, addr, len),
-      new Promise((_, rej) => setTimeout(() => rej(new Error('readFlash timeout')), ms)),
-    ]);
-    try {
-      const readFlashFn = loader.readFlash ?? loader.read_flash;
-      if (typeof readFlashFn === 'function') {
-        const sample = await readWithTimeout(readFlashFn, 0x0, 4);
-        const view   = new DataView(sample.buffer ?? sample);
-        const magic  = view.getUint8(0);
-        // 0xFF = blank, 0xE9 = valid ESP image, anything else = corrupted
-        if (magic === 0xFF) {
-          isBlankBoard = true;
-          onLog('Blank board detected — will flash bootloader + partitions + app.');
-          onLog('(Tip: for blank/factory-fresh boards, the "Full Wipe" option also clears NVS.)');
-        } else if (magic === 0xE9) {
-          // Existing firmware. App-only is the fast path — but only if the on-flash
-          // partition table matches what we're about to write. Otherwise a layout
-          // change (e.g. min_spiffs vs. default) would overrun. Compare and, on
-          // mismatch, force a full flash. NVS at 0x9000 is never written here.
-          const partImg = flashImages.find(img => img.address === 0x8000);
-          if (!partImg) {
-            onLog('Existing firmware detected — app-only flash (NVS preserved).');
-          } else {
-            try {
-              const CMP_LEN = 0x200;  // covers all partition-table entries before MD5/padding
-              const want = new Uint8Array(partImg.buf, 0, Math.min(CMP_LEN, partImg.buf.byteLength));
-              const got0 = await readWithTimeout(readFlashFn, 0x8000, want.length);
-              const got  = got0 instanceof Uint8Array ? got0 : new Uint8Array(got0.buffer ?? got0);
-              let same = got.length >= want.length;
-              for (let i = 0; same && i < want.length; i++) if (got[i] !== want[i]) same = false;
-              if (same) {
-                onLog('Existing firmware, partition table matches — app-only flash (NVS preserved).');
-              } else {
-                forceFull = true;
-                onLog('⚠ Partition table changed — full flash required (NVS preserved).');
-              }
-            } catch (_) {
-              forceFull = true;
-              onLog('Could not read partition table — forcing a safe full flash (NVS preserved).');
-            }
-          }
-        } else {
-          forceFull = true;
-          onLog(`Corrupted bootloader (0x${magic.toString(16).padStart(2,'0')}) — will full-flash to recover.`);
-        }
-      } else {
-        forceFull = true;
-        onLog('Cannot read flash on this esptool-js version — forcing a safe full flash.');
-      }
-    } catch (_) {
-      forceFull = true;
-      onLog('Flash read check failed — forcing a safe full flash (NVS preserved).');
-    }
-
-    imagesToFlash = (isBlankBoard || forceFull)
-      ? flashImages.slice()
-      : flashImages.filter(img => img.address === 0x10000);
-  }
+  // We DELIBERATELY do not read the flash to choose app-only vs. full.
+  // readFlash() over the ESP32-S3 native USB is slow and flaky, and when it
+  // stalls it wedges the esptool stub so the SUBSEQUENT write times out
+  // (observed in the field: "Flash read check failed… → Flash write failed:
+  // Timeout"). Racing the read against a timeout doesn't help — it doesn't
+  // cancel the underlying operation, so the stub stays wedged.
+  //
+  // Instead: ALWAYS write bootloader + partition table + app. The bootloader
+  // (~20 KB) and partition table (~3 KB) are tiny next to the ~1 MB app and
+  // are identical on every build (fixed min_spiffs scheme), so always
+  // writing them costs almost nothing and is reliable on BOTH blank and
+  // already-programmed boards. The only difference between Update and Full
+  // Wipe is whether we also erase NVS/otadata (Step 3c below) — Update never
+  // touches NVS at 0x9000, so saved config is preserved.
+  let imagesToFlash = flashImages.slice();
+  onLog(eraseNvs
+    ? 'Full wipe — flashing bootloader + partitions + app (NVS will be erased).'
+    : 'Update — flashing bootloader + partitions + app (NVS preserved).');
 
   // ── Step 3c: optionally prepend NVS + otadata erase images ────
   // NaviCore partition layout (PartitionScheme=min_spiffs):

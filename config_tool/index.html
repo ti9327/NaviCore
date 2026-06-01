@@ -2197,7 +2197,7 @@
         <img src="../Images/r2logo.png" alt="R2 logo"
              style="width:72px;height:72px;object-fit:contain;opacity:0.9">
         <div style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.3px">
-          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">011216QJUN26</span>
+          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">011230QJUN26</span>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap">
@@ -3179,7 +3179,14 @@ const maestroCommands = {
 // Globals (port/writer) are set ONLY after both open() and getWriter()
 // succeed, so a failed attempt leaves no partial state for the caller to
 // clean up.  Throws if the port can't be opened (caller decides retry).
-async function openPortAndStart(p) {
+//
+// Returns true if the board actually ANSWERED (a PONG was seen) — i.e. the
+// session is live, not merely "port opened".  reopenAfterFlash uses this to
+// detect a dead/half-up CDC right after a reboot and retry cleanly.
+// `settleMs` is how long to wait after opening before pinging — long for a
+// cold initial connect, short for a post-flash reconnect that already waited
+// for the board to boot.
+async function openPortAndStart(p, settleMs = 4000) {
   window._loggedMissingSbus = false;
   await p.open({ baudRate: 115200 });
   let w;
@@ -3194,7 +3201,7 @@ async function openPortAndStart(p) {
   startReading();
   setConnected(true);
   document.getElementById('status-text').textContent = 'Waiting for board…';
-  await new Promise(r => setTimeout(r, 4000));
+  await new Promise(r => setTimeout(r, settleMs));
 
   let pongOk = false;
   for (let i = 0; i < 6 && !pongOk; i++) {
@@ -3217,6 +3224,7 @@ async function openPortAndStart(p) {
   // from localStorage on page load), kick off the keep-alive PING timer
   // now — onViaWcbToggle() only fires when the checkbox actually flips.
   if (viaWcbActive) onViaWcbToggle(true);
+  return pongOk;
 }
 
 document.getElementById('btn-connect').addEventListener('click', async () => {
@@ -6614,26 +6622,37 @@ let _fwFlashing = false;
 // Returns true if the session resumed, false if we gave up (caller tells the
 // user to click Connect).
 async function reopenAfterFlash(p) {
-  await new Promise(r => setTimeout(r, 1500));   // let the board boot + USB re-enumerate
-  for (let attempt = 0; attempt < 40; attempt++) {   // ~10 s of retries
+  // Let the board fully boot (setup() has a ~1.5 s delay) AND the native-USB
+  // device re-enumerate before the first attempt.
+  await new Promise(r => setTimeout(r, 3000));
+
+  // Each cycle is a FULL open + handshake.  Just opening the port isn't
+  // enough: right after a reboot the native-USB CDC often enumerates but the
+  // first open lands on a half-up endpoint that never carries data — the
+  // session looks "connected" but the board never answers.  That's exactly
+  // why a manual Disconnect→Connect fixes it.  So we verify liveness (did a
+  // PONG come back?) and, if not, tear the session down and retry the whole
+  // cycle — the programmatic equivalent of that manual fix.
+  for (let cycle = 0; cycle < 6; cycle++) {
     try {
-      await openPortAndStart(p);
-      return true;
+      // openPortAndStart already waited 3 s above; use a short post-open
+      // settle here so a dead cycle is detected quickly and retried.
+      const live = await openPortAndStart(p, 600);
+      if (live) return true;                 // board answered — real, working session
+      await disconnect();                    // opened but dead — clean teardown, then retry
     } catch (_) {
+      // open() itself failed — the port isn't back yet, or the SerialPort
+      // object was invalidated by the re-enumeration.  Refresh the handle
+      // from the granted list (the device may now be a different object).
       try { await p.close(); } catch (_) {}
-      await new Promise(r => setTimeout(r, 250));
+      try {
+        const granted = await navigator.serial.getPorts();
+        if (granted.length) p = granted[granted.length - 1];
+      } catch (_) {}
     }
+    await new Promise(r => setTimeout(r, 500));
   }
-  // Original handle never came back — the re-enumerated device may have been
-  // handed to us as a different object.  Try any other granted port.
-  try {
-    const granted = await navigator.serial.getPorts();
-    for (const g of granted) {
-      if (g === p) continue;
-      try { await openPortAndStart(g); return true; } catch (_) {}
-    }
-  } catch (_) {}
-  // Give up cleanly — leave no half-open state.
+  // Gave up — leave no half-open state so the user's manual Connect is clean.
   port = null; writer = null; setConnected(false);
   return false;
 }

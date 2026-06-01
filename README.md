@@ -19,9 +19,10 @@ tool that talks to the board over Web Serial.
 
 ## Features
 
-- SBUS input (16 or 24 channel, auto-detected) on Serial1
-- SBUS output passthrough on a dedicated pin (~110 µs latency)
-- Local Pololu Maestro on Serial2
+- SBUS input (16 or 24 channel, auto-detected) on Serial1 (UART1)
+- SBUS output passthrough on a dedicated hardware UART (UART0, GPIO9) — byte-tee
+  of the RX stream, sub-millisecond latency (~1 byte-time)
+- Local Pololu Maestro on Serial2 (UART2)
 - Up to 8 remote Maestros via WCBStream broadcast over ESP-NOW
 - WCB unicast and broadcast command dispatch
 - Multi-mode (3-position switch) button / switch / knob mapping, NVS-backed

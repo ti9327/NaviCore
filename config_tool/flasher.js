@@ -227,10 +227,20 @@ async function flashFirmware(port, { onProgress, onLog, onStatus, eraseNvs = fal
     // Smart auto-detect: NVS-preserving update.
     let forceFull = false;
     let isBlankBoard = false;
+    // readFlash() can HANG indefinitely on some chip/stub states (notably
+    // when coming from a foreign sketch's bootloader — observed in the
+    // field). A bare `await` would wedge the whole flow forever with no
+    // error, because try/catch only catches rejections, not a promise that
+    // never settles. Race every read against a timeout; on timeout we fall
+    // through to the safe full-flash path (forceFull) just like a read error.
+    const readWithTimeout = (fn, addr, len, ms = 4000) => Promise.race([
+      fn.call(loader, addr, len),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('readFlash timeout')), ms)),
+    ]);
     try {
       const readFlashFn = loader.readFlash ?? loader.read_flash;
       if (typeof readFlashFn === 'function') {
-        const sample = await readFlashFn.call(loader, 0x0, 4);
+        const sample = await readWithTimeout(readFlashFn, 0x0, 4);
         const view   = new DataView(sample.buffer ?? sample);
         const magic  = view.getUint8(0);
         // 0xFF = blank, 0xE9 = valid ESP image, anything else = corrupted
@@ -250,7 +260,7 @@ async function flashFirmware(port, { onProgress, onLog, onStatus, eraseNvs = fal
             try {
               const CMP_LEN = 0x200;  // covers all partition-table entries before MD5/padding
               const want = new Uint8Array(partImg.buf, 0, Math.min(CMP_LEN, partImg.buf.byteLength));
-              const got0 = await readFlashFn.call(loader, 0x8000, want.length);
+              const got0 = await readWithTimeout(readFlashFn, 0x8000, want.length);
               const got  = got0 instanceof Uint8Array ? got0 : new Uint8Array(got0.buffer ?? got0);
               let same = got.length >= want.length;
               for (let i = 0; same && i < want.length; i++) if (got[i] !== want[i]) same = false;

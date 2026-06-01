@@ -119,6 +119,15 @@ constexpr uint8_t  FRAG_MAX_PARTS    = 192;  // 192 × 80 = 15 KB max payload
 constexpr uint8_t  FRAG_POOL_SIZE    = 3;    // concurrent reassembly sessions
 constexpr uint32_t FRAG_TIMEOUT_MS   = 5000;
 
+// Verbose Core-0 logging gate.  handle() runs in the ESP-NOW receive
+// callback (WiFi task, Core 0).  Serial.printf there can (a) block up to
+// the HWCDC tx timeout if a USB host is attached but not draining, and
+// (b) interleave/garble with the main loop's Serial output on Core 1.
+// The per-fragment "frag sid=..." line is the highest-frequency offender
+// (~40 prints per config transfer, all on Core 0).  Keep it OFF by default;
+// flip to true only when actively debugging the fragment handshake.
+constexpr bool     RC_TELEM_VERBOSE  = false;
+
 struct FragSession {
   uint16_t sid;          // 0 = slot free
   uint8_t  total;        // expected fragment count
@@ -172,78 +181,166 @@ inline FragSession* _findOrAllocSession(uint16_t sid, uint8_t total, uint8_t sen
 // Forward declaration so handle() can recurse on the reassembled message.
 inline bool handle(uint8_t senderID, const char* command);
 
-// ── Outbound: fragment + unicast a (potentially large) JSON string ──────────
-// Ships a CONFIG response (rcConfigToJSON output) back to a specific
-// requester.  Single ESP-NOW packets carry one fragment each; the receiver
-// reassembles by sid.
+// ── Outbound: non-blocking GET_CONFIG fragment sender (state machine) ───────
+// Ships a CONFIG response (rcConfigToJSON output) back to a requester,
+// fragmented into ESP-NOW-sized unicast packets the receiver reassembles
+// by sid.
 //
-// Unicast (wcb->send) instead of broadcast because:
-//   • WCBClient's send() path uses ETM — every packet gets an ACK and is
-//     retried automatically if the ACK doesn't arrive.
-//   • Broadcast had ~90% loss on a 38-fragment payload in real testing
-//     (3/38 arrived).  Sessions silently timed out at 5 s, _configLoaded
-//     never flipped true, and the user got the "no config loaded" warning
-//     every time they tried to save.
-//   • Only the requester needs to see the response; other listeners on the
-//     network don't care about config dumps.
+// Unicast (wcb->send) not broadcast: WCBClient's send() path is ETM, so
+// every fragment gets an ACK and is retried automatically on loss.
+// Broadcast measured ~90% loss on a 38-fragment payload — sessions timed
+// out and the config never loaded.
 //
-// MUST be called from the main loop, NOT from the WCB_Client receive
-// callback — see the _pendingGetConfigSender comment.
-inline void fragmentAndSend(uint8_t targetID, const String& json, uint16_t sid) {
-  if (!wcb || targetID == 0) return;
-  const size_t total = (json.length() + FRAG_CHUNK_BYTES - 1) / FRAG_CHUNK_BYTES;
+// WHY A STATE MACHINE (the reliability core of this whole feature):
+// The previous version looped `delay(150)` x N fragments inside ONE tick()
+// call.  For a ~40-fragment config that froze loop() for ~6 SECONDS — and
+// since processSbus() lives in the same loop(), SBUS RX overflowed, the
+// SBUS-OUT passthrough went dead, and transmitter button presses were
+// dropped for the entire 6 s.  Now tick() sends AT MOST ONE fragment per
+// call and returns immediately; pacing is enforced by comparing millis()
+// to the last-send timestamp.  loop() keeps spinning between fragments, so
+// SBUS read / dispatch / passthrough stay fully live during a config pull.
+// loop()'s own wcb->update() (top of loop) drives ACK/retry processing
+// continuously — far more often than the old once-per-fragment pump.
+//
+// While a send is active, periodic rc_hb / rc_ch telemetry is suppressed
+// (tick() returns early).  This preserves the clean one-unicast-every-150ms
+// ESP-NOW traffic pattern the pacing was tuned around; mixing in broadcasts
+// would add MAC contention and risk the "[SEND CB] MAC-layer FAILED" drops.
+// The config tool's live panel just goes briefly stale during the load —
+// cosmetic, and the droid stays fully responsive throughout.
+
+// Requester slot — set by handle() (Core 0 WiFi-callback) when a GET_CONFIG
+// arrives, consumed/cleared by tick() (Core 1 main loop).  A plain uint8_t
+// is an atomic read/write on Xtensa, so no mutex is needed.  Stays set for
+// the ENTIRE duration of the send (request + in-progress) so handle()'s
+// "already busy?" guard rejects overlapping requests; cleared only when the
+// send completes or aborts (in _pumpGetConfigSend).  Worst-case collision
+// (a new request arriving in the same instant the old one clears) just
+// drops one request — the config tool re-issues after its 5 s timeout.
+inline uint8_t _pendingGetConfigSender = 0;
+
+// Inter-fragment pacing.  40 ms saturated the ESP-NOW MAC layer in testing
+// (queue-overflow drops on the receiving WCB); 150 ms gives the MAC + ETM
+// ACK round-trip comfortable headroom.  Matches the config tool's outbound
+// SET_CONFIG cadence.  A real config is ~40 fragments => ~6 s wall-clock,
+// now spread across thousands of non-blocking loop() iterations.
+constexpr uint32_t FRAG_PACING_MS = 150;
+
+// In-progress send state.  One outstanding send at a time — the requester
+// re-issues GET_CONFIG if it times out, so we never need to queue two.
+struct OutboundSend {
+  bool     active     = false;
+  uint8_t  targetID   = 0;
+  uint16_t sid        = 0;
+  uint16_t total      = 0;   // total fragment count
+  uint16_t next       = 0;   // index of the next fragment to send (0-based)
+  uint32_t lastSendMs = 0;   // millis() of the last fragment sent
+  String   payload;          // full wrapped CONFIG JSON, held for the send
+};
+inline OutboundSend _outSend;
+
+// Build + unicast fragment `idx` of the active job.  Returns false ONLY on a
+// fatal envelope-size error (caller aborts the job); MAC-layer loss is
+// handled by ETM retries, not reported here.
+inline bool _sendFragment(uint16_t idx) {
+  const size_t off = (size_t)idx * FRAG_CHUNK_BYTES;
+  if (off >= _outSend.payload.length()) return false;          // out of range — shouldn't happen
+  const size_t remaining = _outSend.payload.length() - off;
+  const size_t len = (remaining < FRAG_CHUNK_BYTES) ? remaining : FRAG_CHUNK_BYTES;
+  String slice = _outSend.payload.substring(off, off + len);
+
+  // ArduinoJson escapes quotes / backslashes / control chars in the slice.
+  StaticJsonDocument<300> env;
+  env["f"]   = (int)(idx + 1);
+  env["of"]  = (int)_outSend.total;
+  env["sid"] = _outSend.sid;
+  env["s"]   = slice;
+
+  char buf[252];
+  size_t n = serializeJson(env, buf, sizeof(buf));
+  // 187-byte cap: WCB_Client appends "|CRC%08X" (12 bytes) into a 200-byte
+  // structCommand buffer; >187 truncates the CRC and the bridge drops the
+  // fragment.  Keep in sync with FRAG_CHUNK_BYTES.
+  constexpr size_t MAX_ENV_BYTES = 187;
+  if (n == 0 || n > MAX_ENV_BYTES) {
+    Serial.printf("[RC] CONFIG send: fragment %u/%u envelope %u > %u-byte cap — aborting\n",
+                  (unsigned)(idx + 1), (unsigned)_outSend.total,
+                  (unsigned)n, (unsigned)MAX_ENV_BYTES);
+    return false;
+  }
+  if (wcb) wcb->send(_outSend.targetID, buf);
+  return true;
+}
+
+// Arm a fragmented CONFIG send to `target`.  Returns false if the payload
+// can't be sent (empty / too large for the fragment budget); true if armed.
+// Does NOT send the first fragment — _pumpGetConfigSend() does, same tick.
+inline bool _startGetConfigSend(uint8_t target) {
+  if (!wcb || target == 0) return false;
+  String body = rcConfigToJSON();
+  String wrapped;
+  wrapped.reserve(body.length() + 40);
+  wrapped += "{\"type\":\"CONFIG\",\"id\":";
+  wrapped += rcConfig.wcbNetwork.deviceId;
+  wrapped += ",\"data\":";
+  wrapped += body;
+  wrapped += "}";
+
+  const size_t total = (wrapped.length() + FRAG_CHUNK_BYTES - 1) / FRAG_CHUNK_BYTES;
   if (total == 0 || total > FRAG_MAX_PARTS) {
-    Serial.printf("[RC] fragmentAndSend bailed: payload %u bytes needs %u fragments (max %u). "
+    Serial.printf("[RC] CONFIG send bailed: %u bytes needs %u fragments (max %u). "
                   "Use Direct USB for this size.\n",
-                  (unsigned)json.length(), (unsigned)total, (unsigned)FRAG_MAX_PARTS);
-    return;
+                  (unsigned)wrapped.length(), (unsigned)total, (unsigned)FRAG_MAX_PARTS);
+    return false;
   }
-  Serial.printf("[RC] fragmentAndSend: %u bytes → %u fragments to W%u (sid=%u)\n",
-                (unsigned)json.length(), (unsigned)total, (unsigned)targetID, (unsigned)sid);
 
-  for (size_t i = 0; i < total; i++) {
-    const size_t off = i * FRAG_CHUNK_BYTES;
-    const size_t len = (off + FRAG_CHUNK_BYTES <= json.length())
-                         ? FRAG_CHUNK_BYTES
-                         : (json.length() - off);
-    String slice = json.substring(off, off + len);
+  uint16_t sid = _nextOutSid++;
+  if (_nextOutSid == 0) _nextOutSid = 1;
 
-    // Build envelope using ArduinoJson so the `s` field gets properly
-    // escaped (quotes, backslashes, control chars inside the slice).
-    StaticJsonDocument<300> env;
-    env["f"]   = (int)(i + 1);
-    env["of"]  = (int)total;
-    env["sid"] = sid;
-    env["s"]   = slice;
+  _outSend.active     = true;
+  _outSend.targetID   = target;
+  _outSend.sid        = sid;
+  _outSend.total      = (uint16_t)total;
+  _outSend.next       = 0;
+  // Bias the timestamp back one full interval so the first pump fires the
+  // first fragment immediately.  Unsigned subtraction makes this correct
+  // even if millis() < FRAG_PACING_MS (can't happen post-boot, but free).
+  _outSend.lastSendMs = millis() - FRAG_PACING_MS;
+  _outSend.payload    = wrapped;
 
-    char buf[252];
-    size_t n = serializeJson(env, buf, sizeof(buf));
-    // 187-byte cap (not 252!): WCB_Client appends "|CRC%08X" (12 bytes)
-    // when sending via _sendPacket() into a 200-byte structCommand[200]
-    // buffer.  If envelope > 187, the CRC suffix gets snprintf-truncated
-    // and the bridge silently drops the fragment with "missing CRC".
-    // Keep this cap in sync with FRAG_CHUNK_BYTES — see comment above.
-    constexpr size_t MAX_ENV_BYTES = 187;
-    if (n == 0 || n > MAX_ENV_BYTES) {
-      Serial.printf("[RC] fragmentAndSend: envelope %u > %u-byte cap "
-                    "(would lose CRC suffix in WCB_Client) — reduce "
-                    "FRAG_CHUNK_BYTES\n",
-                    (unsigned)n, (unsigned)MAX_ENV_BYTES);
-      return;
-    }
-    wcb->send(targetID, buf);
-    // Inter-fragment pacing: empirically 40 ms saturated the ESP-NOW MAC
-    // layer on bursts (we saw "[SEND CB] MAC-layer FAILED" / queue
-    // overflow on the receiving WCB).  150 ms gives the MAC + ETM ACK
-    // round-trip enough headroom and matches the config tool's
-    // outbound-fragment cadence on the SET_CONFIG path.  A 40-fragment
-    // CONFIG response now takes ~6 s — acceptable for a Load.
-    delay(150);
-    // Pump WCBClient's state machine so ACKs received during this delay
-    // get processed and retry timers advance.  Without this the pending
-    // table fills up and later fragments are sent without retry.
-    if (wcb) wcb->update();
+  Serial.printf("[RC] CONFIG send START: %u bytes → %u fragments to W%u (sid=%u)\n",
+                (unsigned)wrapped.length(), (unsigned)total, (unsigned)target, (unsigned)sid);
+  return true;
+}
+
+// Advance the in-progress send by at most one fragment, paced at
+// FRAG_PACING_MS.  Returns true while a send is active (tick() then
+// suppresses telemetry); false when idle or on the tick the send finishes.
+// Clears _pendingGetConfigSender when the send completes or aborts so
+// handle()'s "already busy" guard reopens for the next request.
+inline bool _pumpGetConfigSend() {
+  if (!_outSend.active) return false;
+  const uint32_t now = millis();
+  if ((now - _outSend.lastSendMs) < FRAG_PACING_MS) {
+    return true;   // pacing — active, but nothing to send this tick
   }
+  if (!_sendFragment(_outSend.next)) {
+    Serial.println("[RC] CONFIG send ABORTED (fragment build error)");
+    _outSend = OutboundSend{};        // free payload + reset
+    _pendingGetConfigSender = 0;
+    return false;
+  }
+  _outSend.lastSendMs = now;
+  _outSend.next++;
+  if (_outSend.next >= _outSend.total) {
+    Serial.printf("[RC] CONFIG send COMPLETE: %u fragments (sid=%u)\n",
+                  (unsigned)_outSend.total, (unsigned)_outSend.sid);
+    _outSend = OutboundSend{};        // free payload + reset
+    _pendingGetConfigSender = 0;
+    return false;
+  }
+  return true;   // more fragments remain
 }
 
 // ── Timing ───────────────────────────────────────────────────────────────────
@@ -318,20 +415,8 @@ inline void init() {
 inline String  _pendingReassembled;          // full JSON of a reassembled fragmented payload
 inline uint8_t _pendingReassembledSender = 0;
 
-// ── Deferred GET_CONFIG response queue (callback → main loop) ────────────────
-// Fragmenting + sending 30-40 packets back to the requester needs to happen
-// on the main loop, NOT in the WiFi-task receive callback, because:
-//
-//   1. WCBClient's pending-ACK table fills up if we fire fragments faster
-//      than ACKs can arrive (ACKs come in via the same callback we're
-//      blocking, so they queue and the retry logic starves).
-//   2. Even with bigger delays between fragments, blocking the WiFi task
-//      for >100 ms invites the same interrupt watchdog that ate us on
-//      SET_CONFIG.
-//
-// Pattern: handle() stashes the requester's senderID, tick() builds and
-// fragments the response with unicast + ACK-tracked retries.
-inline uint8_t _pendingGetConfigSender = 0;
+// (_pendingGetConfigSender is declared up in the outbound-send state-machine
+//  block above, since the pump functions there reference it.)
 
 // ── Deferred apply for reassembled fragmented payloads ──────────────────────
 // Called from tick() (main loop context) when _pendingReassembled is set.
@@ -342,15 +427,20 @@ inline uint8_t _pendingGetConfigSender = 0;
 // but the WiFi/ESP-NOW task on Core 0 stays unblocked.
 inline void _applyReassembled(uint8_t senderID, const String& json) {
   // 2x heuristic: ArduinoJson docs need roughly the input size plus overhead
-  // for the parsed-object tree.  2x is comfortable for our config shape and
-  // still small enough to fit in heap on the S3.  Cap at 8 KB just in case.
+  // for the parsed-object tree.  SET_CONFIG over WCB normally carries a
+  // DIFF (one or two changed branches → small), but a first-save with no
+  // baseline can ship a full config (~3 KB → ~6 KB doc).  Cap at 16 KB so
+  // a full config has headroom; the fragment layer can deliver up to 15 KB
+  // (FRAG_MAX_PARTS × FRAG_CHUNK_BYTES) so this matches the transport's
+  // ceiling.  On overflow deserializeJson returns NoMemory and we bail
+  // WITHOUT applying — we never persist a partially-parsed config.
   size_t cap = json.length() * 2;
-  if (cap < 1024) cap = 1024;
-  if (cap > 8192) cap = 8192;
+  if (cap < 1024)  cap = 1024;
+  if (cap > 16384) cap = 16384;
   DynamicJsonDocument doc(cap);
   DeserializationError err = deserializeJson(doc, json);
   if (err) {
-    Serial.printf("[RC] reassembled JSON parse failed: %s (size=%u cap=%u)\n",
+    Serial.printf("[RC] reassembled JSON parse failed: %s (size=%u cap=%u) — NOT applied\n",
                   err.c_str(), (unsigned)json.length(), (unsigned)cap);
     return;
   }
@@ -451,27 +541,19 @@ inline void tick() {
     return;   // skip heartbeat/channel emit this tick — next call resumes
   }
 
-  // Drain a pending GET_CONFIG response — runs entirely on the main loop
-  // so each wcb->send() can be followed by wcb->update() to process ACKs
-  // and fire retries.  fragmentAndSend internally delays + pumps update;
-  // total send time for a 40-fragment config is ~1.5 s, during which
-  // heartbeat/channel emits skip (they resume on the next tick).
-  if (_pendingGetConfigSender != 0) {
-    uint8_t target = _pendingGetConfigSender;
-    _pendingGetConfigSender = 0;
-    String body = rcConfigToJSON();
-    String wrapped;
-    wrapped.reserve(body.length() + 40);
-    wrapped += "{\"type\":\"CONFIG\",\"id\":";
-    wrapped += rcConfig.wcbNetwork.deviceId;
-    wrapped += ",\"data\":";
-    wrapped += body;
-    wrapped += "}";
-    uint16_t sid = _nextOutSid++;
-    if (_nextOutSid == 0) _nextOutSid = 1;
-    fragmentAndSend(target, wrapped, sid);
-    return;   // skip heartbeat/channel emit this tick
+  // CONFIG-send state machine.  Arm a requested send (if idle), then pump
+  // it — at most ONE fragment per tick(), paced internally.  tick() returns
+  // fast every iteration, so loop() keeps running processSbus() throughout
+  // and SBUS / passthrough stay live during a config pull (vs. the old
+  // ~6 s freeze).  While a send is active, _pumpGetConfigSend() returns true
+  // and we skip the periodic telemetry below to keep the airwaves clear for
+  // fragment ACKs.  See the OutboundSend block above for the full rationale.
+  if (_pendingGetConfigSender != 0 && !_outSend.active) {
+    if (!_startGetConfigSend(_pendingGetConfigSender)) {
+      _pendingGetConfigSender = 0;    // couldn't start (too big / empty) — clear so we don't wedge
+    }
   }
+  if (_pumpGetConfigSend()) return;   // a send is in progress this tick — suppress telemetry
 
   if (!wcb) return;
   const uint32_t now = millis();
@@ -510,20 +592,30 @@ inline void tick() {
     char buf[240];
     int  len = snprintf(buf, sizeof(buf),
       "{\"type\":\"rc_ch\",\"id\":%u,\"ch\":[", id);
-    // Always emit 24 channels.  sbusValues[] is sized for the full set; if
-    // the receiver hasn't detected that many yet the missing ones sit at
-    // their last value (0 at boot) — harmless filler for the config tool's
-    // visualizer, which only colours the channels its model claims.
-    for (int i = 0; i < 24 && len < (int)sizeof(buf) - 8; i++) {
-      len += snprintf(buf + len, sizeof(buf) - len, "%s%d",
-        (i ? "," : ""), sbusValues[i]);
+    if (len < 0 || len >= (int)sizeof(buf)) return;   // header itself overflowed — bail
+    // Always emit 24 channels.  sbusValues[] is normally 0..2047 (11-bit
+    // SBUS), but it's a signed int with no hard clamp, so guard against a
+    // glitched/garbage value blowing the buffer.  snprintf returns the
+    // would-have-written count, which can exceed the remaining space on
+    // truncation; checking that return BEFORE advancing `len` prevents the
+    // classic "len walks past the buffer, next sizeof(buf)-len underflows
+    // to a huge size_t" stack-smash.
+    bool ok = true;
+    for (int i = 0; i < 24; i++) {
+      int rem = (int)sizeof(buf) - len;
+      if (rem <= 8) { ok = false; break; }            // leave room for "]}\0"
+      int w = snprintf(buf + len, rem, "%s%d", (i ? "," : ""), sbusValues[i]);
+      if (w < 0 || w >= rem) { ok = false; break; }    // truncated — stop, don't advance past buf
+      len += w;
     }
-    if (len + 2 < (int)sizeof(buf)) {
+    if (ok && len + 2 < (int)sizeof(buf)) {
       buf[len++] = ']';
       buf[len++] = '}';
       buf[len]   = '\0';
+      wcb->broadcast(buf);
     }
-    wcb->broadcast(buf);
+    // If !ok (garbage channel data overflowed the buffer) we simply skip
+    // this rc_ch frame rather than emit a malformed/unterminated packet.
   }
 }
 
@@ -611,10 +703,13 @@ inline bool handle(uint8_t senderID, const char* command) {
     }
     // Visibility — log every fragment receive so the user can see in the
     // RC's serial monitor whether a SET_CONFIG / GET_CONFIG handshake is
-    // actually arriving over the WCB bridge.
-    Serial.printf("[RC] frag sid=%u f=%d/%d got=%d%s\n",
-                  (unsigned)sid, f, total, sess->got,
-                  isNewFragment ? "" : " (dup)");
+    // actually arriving over the WCB bridge.  Gated: this runs on Core 0
+    // and is the hottest print on that core (see RC_TELEM_VERBOSE).
+    if (RC_TELEM_VERBOSE) {
+      Serial.printf("[RC] frag sid=%u f=%d/%d got=%d%s\n",
+                    (unsigned)sid, f, total, sess->got,
+                    isNewFragment ? "" : " (dup)");
+    }
     if (sess->got >= sess->total) {
       // Reassemble — concatenate all parts in order.
       String full;
@@ -712,18 +807,29 @@ inline bool handle(uint8_t senderID, const char* command) {
   }
 
   // ── GET_CONFIG ────────────────────────────────────────────────────────────
-  // Defer the actual fragment+send to the main loop — see
-  // _pendingGetConfigSender comment.  Calling fragmentAndSend from here
-  // (WiFi-task callback context) blocks for ~1.5 s with delays + wcb->update
-  // calls, which prevents the very ACKs the retries depend on from being
-  // processed.  tick() will pick this up and ship it on the next iteration.
+  // Just record the requester here (we're in the WiFi-task callback context,
+  // Core 0).  tick() on the main loop (Core 1) arms a non-blocking fragment
+  // send and ships one fragment per iteration — see the OutboundSend state
+  // machine.  The single _pendingGetConfigSender slot is the "busy" guard:
+  // it stays set for the whole send and is cleared by the pump on
+  // completion, so a second GET_CONFIG arriving mid-send is rejected (the
+  // requester re-issues if its own 5 s reassembly window lapses).
+  //
+  // We deliberately guard on ONLY _pendingGetConfigSender here, NOT on
+  // _outSend.active.  _outSend is a struct containing an Arduino String and
+  // is owned exclusively by Core 1 (tick/pump write and reset it); reading
+  // it from this Core-0 callback would be an unsynchronized cross-core read
+  // of a non-atomic object.  Because _pendingGetConfigSender (an atomic
+  // uint8_t) remains set for the entire duration that _outSend.active is
+  // true, gating on it alone is equivalent AND keeps _outSend strictly
+  // single-core.
   if (!strcmp(type, "GET_CONFIG")) {
     if (_pendingGetConfigSender == 0) {
       _pendingGetConfigSender = senderID;
       Serial.printf("[RC] GET_CONFIG → queued for W%u, will send from main loop\n",
                     (unsigned)senderID);
     } else {
-      Serial.println("[RC] GET_CONFIG dropped — previous response still sending");
+      Serial.println("[RC] GET_CONFIG dropped — a CONFIG response is already pending/sending");
     }
     return true;
   }

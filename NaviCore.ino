@@ -3,9 +3,9 @@
 //  Target hardware: WCB HW 3.2 (ESP32-S3)
 //
 //  Features:
-//    • SBUS input (16 or 24 channel, auto-detected) on Serial1 RX (GPIO5)
-//    • SBUS output passthrough on GPIO9 (byte-streaming, ~110 µs latency) —
-//      lets a downstream device consume the same SBUS stream
+//    • SBUS input (16 or 24 channel, auto-detected) on Serial1/UART1 RX (GPIO5)
+//    • SBUS output passthrough on UART0 TX (GPIO9) — byte-streamed re-emit of
+//      the RX frame so a downstream device sees the same channel data
 //    • Local Pololu Maestro on Serial2 @ 115200 baud (GPIO6 TX)
 //    • Up to 8 remote Maestros via WCBStream broadcast over ESP-NOW
 //    • WCB unicast and broadcast command dispatch
@@ -56,14 +56,17 @@
 //  TX pins from wcb_pin_map.cpp v3.2 (matches SBUSController.ino comments).
 //  RX pins: GPIO5 confirmed by user; others assumed — verify against schematic.
 // =============================================================================
-#define SBUS_RX_PIN      5    // Serial1 RX — SBUS from RC receiver (confirmed)
-// SBUS OUT now routes through Serial1's hardware TX on SBUS_OUT_PIN below
-// (no bit-banging).  Previously this firmware bit-banged SBUS OUT via a
-// SoftwareSerial on GPIO9, which monopolised ~31% of one core (113 fps ×
-// 25 bytes × 110µs spin per byte) and starved the IDLE0 task → stack-canary
-// crashes after a few seconds of SBUS input.  Routing through Serial1's
-// hardware UART TX drops the per-byte cost from ~110µs to ~1µs (FIFO push)
-// and frees the core completely.  See 2026-05-22 crash discussion.
+#define SBUS_RX_PIN      5    // Serial1/UART1 RX — SBUS from RC receiver (confirmed)
+// SBUS OUT runs on its OWN hardware UART (UART0 / Serial0), TX-only on
+// SBUS_OUT_PIN below.  This is the third iteration:
+//   v1 bit-banged via SoftwareSerial on GPIO9 — blocking ~110µs/byte spin
+//      monopolised ~31% of a core and tripped the stack-canary watchdog.
+//   v2 teed into Serial1's TX (shared with SBUS RX) — still panicked.
+//   v3 (current) uses UART0, which freed up when the debug console moved
+//      to native USB CDC (USBMode=hwcdc / CDCOnBoot=cdc — Serial is no
+//      longer UART0).  Hardware UART = ~1µs FIFO push per byte, and a
+//      separate peripheral from SBUS RX = no FIFO contention.  Configured
+//      in setup(); see the SBUS OUT block there.
 
 #define MAESTRO_TX_PIN   6    // Serial2 TX — local Maestro command bus
 #define MAESTRO_RX_PIN   7    // Serial2 RX — optional Maestro feedback (verify pin)
@@ -74,10 +77,10 @@
 #define S4_RX_PIN       18    // Aux serial S4 RX
 
 // SBUS OUT — pure passthrough re-emission of the SBUS RX stream so downstream
-// devices can consume the same channel data. Bit-banged via SoftwareSerial at
-// 100k 8E2 inverted (TX-only); each byte is forwarded ~110 µs after it
-// arrives on Serial1 RX. See SbusReader::setPassthroughSink() for the tee.
-#define SBUS_OUT_PIN     9    // SoftwareSerial TX → downstream SBUS consumer
+// devices can consume the same channel data.  Emitted on UART0 (Serial0) at
+// 100k 8E2 inverted, TX-only; each byte is teed into the UART TX FIFO as it
+// arrives on Serial1 RX (~1 µs push).  See SbusReader::setPassthroughSink().
+#define SBUS_OUT_PIN     9    // UART0 (Serial0) TX → downstream SBUS consumer
 
 #define STATUS_LED_PIN  48    // WCB 3.2 onboard NeoPixel — verify against schematic
 #define STATUS_LED_COUNT 1
@@ -116,15 +119,19 @@ WCBStream* maestroBroadcast = nullptr;
 // =============================================================================
 //  Aux serial ports S3, S4  +  dedicated SBUS OUT
 //
-//  ESP32-S3 has only 3 hardware UARTs (Serial / Serial1 / Serial2), all
-//  claimed: USB-CDC, SBUS RX, local Maestro TX. Everything else is
-//  bit-banged via SoftwareSerial. Aux ports stay reserved for ≤57600 baud
-//  command lines; SBUS OUT runs at 100k 8E2 inverted TX-only.
+//  ESP32-S3 has 3 hardware UARTs (UART0/1/2).  Allocation once the debug
+//  console moved to native USB CDC (USBMode=hwcdc, CDCOnBoot=cdc):
+//    • Serial  → native USB CDC (debug + config tool)  — no UART consumed
+//    • Serial0 → UART0 → SBUS OUT (TX-only, GPIO9, 100k 8E2 inverted)
+//    • Serial1 → UART1 → SBUS RX
+//    • Serial2 → UART2 → local Maestro TX
+//  That leaves no spare hardware UART for the aux command ports, so S3/S4
+//  stay bit-banged via SoftwareSerial (fine at ≤57600 baud; they never run
+//  the 100k SBUS rate).
 // =============================================================================
 SoftwareSerial Serial3;    // Aux command-line port, bound in setup()
 SoftwareSerial Serial4;    // Aux command-line port, bound in setup()
-// SBUS OUT no longer uses SoftwareSerial — it goes out Serial1's TX pin
-// directly (configured in setup()).  See the SBUS_OUT_PIN comment above.
+// SBUS OUT uses the real UART0 (Serial0) — see setup() and SBUS_OUT_PIN above.
 
 // =============================================================================
 //  HCR Vocalizer routing
@@ -302,6 +309,11 @@ static inline int readBoundSwitchSbus(int8_t swIdx) {
 
 int pwmToButton(int val) {
   for (int i = 0; i < RC_NUM_THRESHOLDS; i++) {
+    // A 0/0 band is the "Unassigned" sentinel — treat it as inert so it
+    // can never match (otherwise pwmToButton(0) returns that slot, e.g. a
+    // pre-signal/garbage 0 would decode as a real button press).
+    if (rcConfig.thresholds[i].minPwm == 0 && rcConfig.thresholds[i].maxPwm == 0)
+      continue;
     if (val >= rcConfig.thresholds[i].minPwm && val <= rcConfig.thresholds[i].maxPwm)
       return i + 1;
   }
@@ -400,8 +412,13 @@ static void executeMaestroCmd(uint8_t id, const char* cmd) {
 // =============================================================================
 //  Serial port write helpers (S3, S4 only — S5 is now SBUS OUT)
 // =============================================================================
-void writeS3(const String& s) { for (char c : (s + '\r')) Serial3.write(c); }
-void writeS4(const String& s) { for (char c : (s + '\r')) Serial4.write(c); }
+// Write the payload + a trailing CR in as few SoftwareSerial calls as
+// possible.  The old form `for (char c : (s + '\r'))` allocated a fresh
+// String every call AND wrote one byte at a time; on a bit-banged port
+// each write blocks ~1 byte-time, so a long command stalled loop() (and
+// thus SBUS) for many ms.  One block write + one CR minimizes the hit.
+void writeS3(const String& s) { Serial3.write((const uint8_t*)s.c_str(), s.length()); Serial3.write('\r'); }
+void writeS4(const String& s) { Serial4.write((const uint8_t*)s.c_str(), s.length()); Serial4.write('\r'); }
 
 // =============================================================================
 //  HCR command formatter
@@ -604,7 +621,11 @@ static uint8_t mp3LocalVolume = 20;
 static inline void mp3Raw(Stream* p, uint8_t b1, int16_t b2 = -1) {
   p->write(b1);
   if (b2 >= 0) p->write((uint8_t)b2);
-  p->flush();
+  // No flush(): on a bit-banged SoftwareSerial port flush() blocks until
+  // the TX shift-register drains (~1 byte-time/byte at the aux baud), which
+  // stalls loop() — and therefore SBUS read/dispatch/passthrough — on every
+  // MP3-local command.  The bytes are already queued in the port's buffer
+  // and clock out on their own; nothing here needs to wait for completion.
 }
 
 static void mp3SendLocal(Stream* p, const char* portName, uint8_t fn, int16_t arg) {
@@ -963,6 +984,29 @@ void processSbus() {
   lostFrameOld  = sbusRx.lostFrame;
   for (int i = 0; i < 24; i++) sbusValues[i] = sbusRx.channels[i];
 
+  // ── Failsafe gate — DO NOT dispatch on a failsafe frame ─────────────────
+  // When the transmitter powers off (or link is lost), many receivers keep
+  // emitting frames with the failsafe bit set and channels parked at their
+  // configured failsafe positions.  Acting on those would drive servos to
+  // the failsafe pose and fire any switch/knob thresholds the parked values
+  // happen to cross — unexpected motion on signal loss, which is dangerous
+  // for an animatronic.  Instead we freeze: keep telemetry/FPS current (so
+  // the config tool shows "FAILSAFE"), but skip mode/matrix/switch/knob
+  // dispatch entirely, leaving all outputs holding their last commanded
+  // state.  We also reset the matrix debounce so that when the link
+  // recovers, a button physically held across the dropout requires a fresh
+  // confirmed-neutral + press before it can fire (no recovery-transient
+  // phantom press).
+  // NOTE: this gates on `failsafe` only, NOT `lostFrame` — lostFrame is a
+  // single-frame transient and gating on it would make control feel laggy.
+  if (sbusRx.failsafe) {
+    matrixArmed        = false;   // require a confirmed neutral to re-arm post-recovery
+    matrixCandidate    = 0;
+    matrixCandCount    = 0;
+    matrixNeutralCount = 0;
+    return;
+  }
+
   // Mode selector — same SBUS-cluster thresholds as readSwitchPos()
   // (582/1401) so the bound mode switch decodes its three positions
   // correctly. Earlier 340/680 incorrectly mapped middle (~992) → mode 3.
@@ -1070,7 +1114,14 @@ void onWCBCommand(uint8_t senderID, const char* command) {
   // returns true.  Otherwise we just log the raw command for visibility
   // (legacy WCB ;-commands intended for other peers or droid hardware).
   if (rcTelemetry::handle(senderID, command)) return;
-  Serial.printf("[WCB RX] from WCB%d: %s\n", senderID, command);
+  // Unhandled (legacy/unknown) WCB command.  This runs in the ESP-NOW
+  // receive callback on Core 0; a blocking Serial.printf here can stall the
+  // WiFi task (if a USB host is attached but not draining) and interleave
+  // with the main loop's Serial output on Core 1.  It's rare (almost all RC
+  // traffic is JSON handled above), so gate it behind the same verbose flag
+  // used for the fragment logging rather than printing unconditionally.
+  if (rcTelemetry::RC_TELEM_VERBOSE)
+    Serial.printf("[WCB RX] from WCB%d: %s\n", senderID, command);
 }
 
 // =============================================================================
@@ -1220,6 +1271,17 @@ void handleSerialInput() {
               // Apply baud changes live (Serial2/3/4) so HCR / MP3 / Maestro
               // pick up a new rate immediately — no reboot required.
               applySerialBauds(false);
+              // rcConfigSaveNVS() (flash erase/write) + applySerialBauds()
+              // block loop() for 100+ ms, during which processSbus() can't
+              // run.  If the operator was holding a matrix button across
+              // that gap, the frozen debounce state could produce a phantom
+              // edge when loop() resumes.  Reset the matrix state machine to
+              // a clean "must see a confirmed neutral, then a fresh press"
+              // condition so the save can't manufacture a button event.
+              matrixArmed        = false;
+              matrixCandidate    = 0;
+              matrixCandCount    = 0;
+              matrixNeutralCount = 0;
               Serial.println("{\"type\":\"ACK\",\"ok\":true}");
             } else {
               Serial.println("{\"type\":\"ACK\",\"ok\":false,\"msg\":\"config apply failed\"}");
@@ -1452,18 +1514,29 @@ void setup() {
   // / rcConfig.auxBaud). Nothing uses them before setup() finishes, so
   // deferring the open is safe.
 
-  // SBUS reader on Serial1 — RX = SBUS_RX_PIN, TX disabled (-1).
-  // The SBUS OUT passthrough is intentionally DISABLED here as a diagnostic:
-  // even after moving it from SoftwareSerial to a hardware-UART TX FIFO,
-  // the board still ran for ~a minute then panicked under sustained SBUS
-  // input.  Disabling the passthrough entirely tells us whether any SBUS-OUT
-  // write activity is involved or whether the crash is purely in the SBUS RX
-  // / dispatch path.  Re-enable by passing SBUS_OUT_PIN to begin() and
-  // pointing the sink at &Serial1 (see chat log 2026-05-22).
+  // SBUS reader on Serial1 (UART1) — RX = SBUS_RX_PIN, TX disabled (-1).
+  // SBUS RX and SBUS OUT now live on SEPARATE hardware UARTs (see the
+  // dedicated UART0 block just below), so Serial1 is RX-only and never
+  // shares its FIFO with the re-emit path.
   sbusRx.begin(&Serial1, SBUS_RX_PIN, /*txPin=*/-1);
-  // sbusRx.setPassthroughSink(&Serial1);   // intentionally not set — see above
-  Serial.printf("[SBUS] IN  on Serial1 RX (GPIO%d)\n", SBUS_RX_PIN);
-  Serial.println("[SBUS] OUT DISABLED (diagnostic — see source comment)");
+
+  // ── SBUS OUT on a DEDICATED hardware UART (UART0 / Serial0) ──────────────
+  // See the SBUS_RX_PIN comment block above for the three-attempt history.
+  // Short version: bit-banging (v1) and sharing Serial1's TX (v2) both
+  // failed; UART0 became free when the debug console moved to native USB
+  // CDC, so SBUS OUT now owns a real hardware UART — TX-only, GPIO9,
+  // 100k 8E2 INVERTED (matching the SBUS line format), no RX pin.
+  //
+  // A 256-byte TX ring buffer (≈7 frames) guarantees the byte-tee write in
+  // SbusReader::read() never blocks loop(): frames drain at 100k baud
+  // (~3-4 ms each) far faster than they arrive (~7-14 ms), so the buffer
+  // never fills.  Non-blocking TX is what keeps this off the watchdog.
+  // setTxBufferSize() MUST be called before begin().
+  Serial0.setTxBufferSize(256);
+  Serial0.begin(100000, SERIAL_8E2, /*rxPin=*/-1, /*txPin=*/SBUS_OUT_PIN, /*invert=*/true);
+  sbusRx.setPassthroughSink(&Serial0);
+  Serial.printf("[SBUS] IN  on Serial1/UART1 RX (GPIO%d)\n", SBUS_RX_PIN);
+  Serial.printf("[SBUS] OUT on Serial0/UART0 TX (GPIO%d) — 100k 8E2 inverted, byte passthrough\n", SBUS_OUT_PIN);
 
   // RC Config: defaults then NVS overrides. Must run BEFORE constructing
   // WCB_Client so the network credentials come from rcConfig.wcbNetwork.

@@ -2197,7 +2197,7 @@
         <img src="../Images/r2logo.png" alt="R2 logo"
              style="width:72px;height:72px;object-fit:contain;opacity:0.9">
         <div style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.3px">
-          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">011009QJUN26</span>
+          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">011216QJUN26</span>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap">
@@ -3173,39 +3173,62 @@ const maestroCommands = {
 // ════════════════════════════════════════════════════════════════════════════
 //  WebSerial connection
 // ════════════════════════════════════════════════════════════════════════════
+// Open an already-obtained (granted) SerialPort and run the standard connect
+// handshake.  Factored out of the Connect button so the post-flash
+// auto-reconnect can reuse the exact same flow without a port picker.
+// Globals (port/writer) are set ONLY after both open() and getWriter()
+// succeed, so a failed attempt leaves no partial state for the caller to
+// clean up.  Throws if the port can't be opened (caller decides retry).
+async function openPortAndStart(p) {
+  window._loggedMissingSbus = false;
+  await p.open({ baudRate: 115200 });
+  let w;
+  try {
+    w = p.writable.getWriter();
+  } catch (e) {
+    try { await p.close(); } catch (_) {}
+    throw e;
+  }
+  port   = p;
+  writer = w;
+  startReading();
+  setConnected(true);
+  document.getElementById('status-text').textContent = 'Waiting for board…';
+  await new Promise(r => setTimeout(r, 4000));
+
+  let pongOk = false;
+  for (let i = 0; i < 6 && !pongOk; i++) {
+    await sendJSON({ type: 'PING' });
+    await new Promise(r => setTimeout(r, 500));
+    if (document.getElementById('status-text').textContent.includes('Connected')) {
+      pongOk = true; break;
+    }
+  }
+  if (!pongOk) console.warn('PING never received PONG — proceeding anyway.');
+
+  await sendJSON({ type: 'GET_CONFIG' });
+  await new Promise(r => setTimeout(r, 400));
+  await sendJSON({ type: 'START_MONITOR' });
+  isMonitoring = true;
+  // Push current debug-chip state to the firmware so it knows which
+  // categories to emit. Default = all off → firmware stays quiet.
+  sendDebugFlagsToBoard();
+  // If Via WCB was already enabled from a previous session (restored
+  // from localStorage on page load), kick off the keep-alive PING timer
+  // now — onViaWcbToggle() only fires when the checkbox actually flips.
+  if (viaWcbActive) onViaWcbToggle(true);
+}
+
 document.getElementById('btn-connect').addEventListener('click', async () => {
+  // Don't let a Connect click race a firmware flash — esptool-js owns the
+  // port for the duration, and a competing Web Serial session would corrupt
+  // the flash (or the resumed session).  The button is also disabled while
+  // flashing; this guard is defense-in-depth in case a click slips through.
+  if (_fwFlashing) return;
   if (port) { await disconnect(); return; }
   try {
-    window._loggedMissingSbus = false;
-    port = await navigator.serial.requestPort();
-    await port.open({ baudRate: 115200 });
-    writer = port.writable.getWriter();
-    startReading();
-    setConnected(true);
-    document.getElementById('status-text').textContent = 'Waiting for board…';
-    await new Promise(r => setTimeout(r, 4000));
-
-    let pongOk = false;
-    for (let i = 0; i < 6 && !pongOk; i++) {
-      await sendJSON({ type: 'PING' });
-      await new Promise(r => setTimeout(r, 500));
-      if (document.getElementById('status-text').textContent.includes('Connected')) {
-        pongOk = true; break;
-      }
-    }
-    if (!pongOk) console.warn('PING never received PONG — proceeding anyway.');
-
-    await sendJSON({ type: 'GET_CONFIG' });
-    await new Promise(r => setTimeout(r, 400));
-    await sendJSON({ type: 'START_MONITOR' });
-    isMonitoring = true;
-    // Push current debug-chip state to the firmware so it knows which
-    // categories to emit. Default = all off → firmware stays quiet.
-    sendDebugFlagsToBoard();
-    // If Via WCB was already enabled from a previous session (restored
-    // from localStorage on page load), kick off the keep-alive PING timer
-    // now — onViaWcbToggle() only fires when the checkbox actually flips.
-    if (viaWcbActive) onViaWcbToggle(true);
+    const p = await navigator.serial.requestPort();
+    await openPortAndStart(p);
   } catch(e) {
     console.error(e);
     alert('Could not open serial port:\n' + e.message);
@@ -3268,6 +3291,9 @@ async function disconnect() {
     if (_rcSbusTimer) { clearInterval(_rcSbusTimer); _rcSbusTimer = null; }
     _rcLastChMs   = 0;
     _rcLastHbSbus = null;
+    // The rc_trig one-shot can otherwise fire ~250 ms after teardown,
+    // mutating live-display globals on a disconnected UI.
+    if (_rcTrigReleaseTimer) { clearTimeout(_rcTrigReleaseTimer); _rcTrigReleaseTimer = null; }
   }
 }
 
@@ -3509,10 +3535,17 @@ async function sendJSON(obj, silent = false) {
   // id 20 (the RC's special-peer slot) the bridge WCB must have
   // `specialPeerEnabled` true / `WCB_SPECIAL_PEER_ID == 20`.
   const prefix = ';w' + RC_WCB_DEVICE_ID + ',';
-  const ESP_NOW_MAX = 250;
 
   // Single-packet fast path — common case for PING / TRIGGER / SET_MODE.
-  if (prefix.length + inner.length <= ESP_NOW_MAX) {
+  // The bridge strips ";w20," and relays `inner` as the ETM command, which
+  // WCB_Client copies into a 200-byte structCommand[] and appends a 12-byte
+  // "|CRC########" suffix.  So `inner` itself must be <= FRAG_MAX_ENV_BYTES
+  // (187) or the CRC gets truncated and the RC silently drops it as
+  // "Missing CRC".  Previously this gated on 250 (the raw ESP-NOW MTU),
+  // which let 188-245 byte commands through to be silently dropped — a
+  // real hole reachable by diff-saves that touch one mid-size branch.
+  // Anything larger than 187 must go through the fragmenter below.
+  if (inner.length <= FRAG_MAX_ENV_BYTES) {
     await sendLine(prefix + inner, silent);
     return;
   }
@@ -3907,18 +3940,36 @@ function handleBoardMessage(line) {
   // with the reassembled JSON so the normal dispatch handles it.
   if (typeof msg.f === 'number' && typeof msg.of === 'number' && typeof msg.sid === 'number') {
     _gcExpiredFragments();
-    let sess = _fragSessions.get(msg.sid);
-    if (!sess) {
-      sess = { parts: new Array(msg.of), total: msg.of, got: 0, expireAt: Date.now() + FRAG_TIMEOUT_MS };
-      _fragSessions.set(msg.sid, sess);
+    // ── Validate the envelope BEFORE trusting any field ───────────────────
+    // A corrupt/garbage fragment (RC bug, ESP-NOW bit-flip that still parses
+    // as JSON, malicious peer) must not be able to throw or corrupt a
+    // session.  Without these checks: a huge `of` makes `new Array(of)`
+    // throw RangeError; an out-of-range `f` writes a bogus slot and inflates
+    // `got` so the session "completes" with missing parts → garbled payload.
+    const of  = msg.of, f = msg.f, sid = msg.sid;
+    if (!Number.isInteger(of)  || of < 1 || of > FRAG_MAX_PARTS) return;
+    if (!Number.isInteger(f)   || f  < 1 || f  > of)             return;
+    if (!Number.isInteger(sid) || sid < 0)                       return;
+
+    let sess = _fragSessions.get(sid);
+    // Reject sid reuse with a mismatched part count: a new transfer that
+    // collides with a still-open stale session (different `of`) would
+    // otherwise mix parts.  Drop the stale one and start fresh.
+    if (sess && sess.total !== of) {
+      _fragSessions.delete(sid);
+      sess = undefined;
     }
-    if (sess.parts[msg.f - 1] === undefined) {
-      sess.parts[msg.f - 1] = msg.s || '';
+    if (!sess) {
+      sess = { parts: new Array(of), total: of, got: 0, expireAt: Date.now() + FRAG_TIMEOUT_MS };
+      _fragSessions.set(sid, sess);
+    }
+    if (sess.parts[f - 1] === undefined) {
+      sess.parts[f - 1] = msg.s || '';
       sess.got++;
       sess.expireAt = Date.now() + FRAG_TIMEOUT_MS;
     }
     if (sess.got >= sess.total) {
-      _fragSessions.delete(msg.sid);
+      _fragSessions.delete(sid);
       const full = sess.parts.join('');
       handleBoardMessage(full);   // recurse with the reassembled payload
     }
@@ -6341,7 +6392,24 @@ async function saveConfigToBoard() {
     );
     if (!proceed) return;
   }
-  config.tapWindowMs = +(document.getElementById('tapwin-input').value) || 500;
+  // ─── Overlapping-save guard ─────────────────────────────────────────────
+  // A SET_CONFIG is "in flight" until its ACK arrives (or the 12 s watchdog
+  // fires).  Starting a second Save while the first is unconfirmed makes the
+  // ACKs ambiguous (they carry no correlation id), and the baseline could
+  // advance to the wrong snapshot if a save is later lost.  Block until the
+  // current one resolves — the user just waits a few seconds.
+  if (_pendingSaveBaseline) {
+    appendTerminalLine('< [config] A save is still awaiting confirmation — wait for it to finish, then Save again.', 'rx');
+    return;
+  }
+  // Defensive parse: don't let `|| 500` silently rewrite a legitimately-0
+  // value or a transiently-blank field into 500 (which would fabricate a
+  // diff against the baseline on every Save).  Only update when the field
+  // holds a finite number.
+  {
+    const tw = parseInt(document.getElementById('tapwin-input').value, 10);
+    if (Number.isFinite(tw) && tw >= 0) config.tapWindowMs = tw;
+  }
 
   // ─── Diff against the on-board baseline ─────────────────────────────────
   // Only ship the top-level branches that actually changed since Load.
@@ -6524,22 +6592,59 @@ document.getElementById('hwsetup-modal').addEventListener('click', e => {
 });
 
 // ── Firmware flasher (Config → Firmware tab) ───────────────────────────────
-// Wraps flashFirmware() from flasher.js. Walks the user through:
-//   1. Cleanly disconnect any active config session (esptool-js needs the port closed)
-//   2. Request a USB serial port (Chrome remembers the last one)
-//   3. Stream progress / log into the panel
-//   4. Leave the board running new firmware; user clicks Connect to resume.
+// Wraps flashFirmware() from flasher.js.  Flow (no extra port pickers):
+//   1. Reuse the port we're already connected through (or a previously-
+//      authorized one); only show the picker if nothing is remembered.
+//   2. Release our read loop / writer so esptool-js can drive the port.
+//   3. Stream progress / log into the panel.
+//   4. On completion, reopen the SAME port (retrying across the reboot's USB
+//      re-enumeration) and resume the config session automatically.
 //
 // Two entry points share one flow:
 //   • btn-fw-flash → eraseNvs=false (update, NVS preserved)
 //   • btn-fw-wipe  → eraseNvs=true  (full wipe / initial push, NVS erased)
 let _fwFlashing = false;
+
+// Reopen a just-flashed port and resume the config session WITHOUT a picker.
+// The board reboots on flash completion; on native USB CDC (the OTG port)
+// the device re-enumerates, so open() can fail for a second or two — retry
+// across that window.  The browser keeps the grant for the device, so the
+// same SerialPort object normally reopens once it re-appears; if it was
+// invalidated, fall back to any other already-granted port (still no picker).
+// Returns true if the session resumed, false if we gave up (caller tells the
+// user to click Connect).
+async function reopenAfterFlash(p) {
+  await new Promise(r => setTimeout(r, 1500));   // let the board boot + USB re-enumerate
+  for (let attempt = 0; attempt < 40; attempt++) {   // ~10 s of retries
+    try {
+      await openPortAndStart(p);
+      return true;
+    } catch (_) {
+      try { await p.close(); } catch (_) {}
+      await new Promise(r => setTimeout(r, 250));
+    }
+  }
+  // Original handle never came back — the re-enumerated device may have been
+  // handed to us as a different object.  Try any other granted port.
+  try {
+    const granted = await navigator.serial.getPorts();
+    for (const g of granted) {
+      if (g === p) continue;
+      try { await openPortAndStart(g); return true; } catch (_) {}
+    }
+  } catch (_) {}
+  // Give up cleanly — leave no half-open state.
+  port = null; writer = null; setConnected(false);
+  return false;
+}
+
 async function runFirmwareFlash({ eraseNvs, sourceBtn, label, defaultLabel }) {
   if (_fwFlashing) return;
   _fwFlashing = true;
 
   const btnFlash   = document.getElementById('btn-fw-flash');
   const btnWipe    = document.getElementById('btn-fw-wipe');
+  const btnConnect = document.getElementById('btn-connect');
   const statusEl   = document.getElementById('fw-status');
   const wrap       = document.getElementById('fw-progress-wrap');
   const bar        = document.getElementById('fw-progress-bar');
@@ -6562,10 +6667,13 @@ async function runFirmwareFlash({ eraseNvs, sourceBtn, label, defaultLabel }) {
   logEl.style.display = 'block';
   wrap.style.display  = 'block';
   setBar(0, 1);
-  // Disable BOTH buttons while a flash is in progress so the user can't
-  // accidentally trigger the other mode mid-flash.
+  // Disable BOTH flash buttons while a flash is in progress so the user
+  // can't accidentally trigger the other mode mid-flash — and disable the
+  // top-bar Connect button too, so a click can't open a competing Web
+  // Serial session on the port esptool-js is driving.
   btnFlash.disabled = true;
   btnWipe.disabled  = true;
+  if (btnConnect) btnConnect.disabled = true;
   sourceBtn.textContent = label;
 
   if (eraseNvs) {
@@ -6574,28 +6682,42 @@ async function runFirmwareFlash({ eraseNvs, sourceBtn, label, defaultLabel }) {
     appendLog('Update mode — NVS preserved.');
   }
 
-  let flashPort = null;
+  let flashPort   = null;
+  let resumeAfter = false;   // were we connected before the flash? → auto-reconnect after
   try {
-    // Tear down the JSON config session so the port is free for esptool-js.
     if (port) {
-      appendLog('Disconnecting active config session…');
+      // Reuse the port we're ALREADY connected through — no second picker.
+      // Capture the SerialPort reference before disconnect() nulls the
+      // global, then tear down our read loop / writer and close it (esptool
+      // opens it itself).  The object stays valid (just closed), so we can
+      // hand it straight to esptool and reopen it afterward.
+      appendLog('Reusing the connected port for flashing (no need to pick it again)…');
+      flashPort   = port;
+      resumeAfter = true;
       await disconnect();
+    } else {
+      // Not currently connected.  Prefer a previously-authorized port (no
+      // picker); only show the picker if the browser remembers none, or more
+      // than one and we can't disambiguate.
+      let granted = [];
+      try { granted = await navigator.serial.getPorts(); } catch (_) {}
+      if (granted.length === 1) {
+        flashPort = granted[0];
+        appendLog('Using the previously-authorized USB port…');
+      } else {
+        setStatus('Selecting USB port…');
+        appendLog('Requesting USB serial port (pick the WCB v3.2)…');
+        try {
+          flashPort = await navigator.serial.requestPort();
+        } catch (e) {
+          throw new Error('No port selected — flashing cancelled.');
+        }
+      }
     }
 
-    // Always re-request the port — even if the same physical board, the previous
-    // SerialPort instance may be in a stale state after our close(). The browser
-    // will silently re-grant a previously-authorized device.
-    setStatus('Selecting USB port…');
-    appendLog('Requesting USB serial port (pick the WCB v3.2)…');
-    try {
-      flashPort = await navigator.serial.requestPort();
-    } catch (e) {
-      throw new Error('No port selected — flashing cancelled.');
-    }
-
-    // esptool-js needs the port closed when it constructs its Transport, but
-    // the browser also requires it to have been opened at least once in the
-    // user gesture chain. Open+close so future open() inside esptool succeeds.
+    // esptool-js opens the port itself; hand it a CLOSED port.  A warm-up
+    // open+close also satisfies esptool-js's expectation that the port has
+    // been opened once before its Transport takes over.
     try {
       await flashPort.open({ baudRate: 115200 });
       await flashPort.close();
@@ -6616,7 +6738,21 @@ async function runFirmwareFlash({ eraseNvs, sourceBtn, label, defaultLabel }) {
     } else {
       appendLog('Update complete. Your saved config was preserved.');
     }
-    appendLog('Click Connect on the top bar to resume the config session.');
+
+    // Auto-reconnect — no third picker.  If we were connected before the
+    // flash, reopen the SAME granted port (retrying across the reboot's USB
+    // re-enumeration) and resume the config session.  If we weren't
+    // connected, leave it to the user.
+    if (resumeAfter) {
+      setStatus('Reconnecting…');
+      appendLog('Reconnecting to the board…');
+      const ok = await reopenAfterFlash(flashPort);
+      appendLog(ok
+        ? 'Reconnected — config session resumed.'
+        : 'Auto-reconnect timed out — click Connect to resume.');
+    } else {
+      appendLog('Click Connect on the top bar to start a config session.');
+    }
   } catch (e) {
     console.error(e);
     setStatus('Flash failed.');
@@ -6624,11 +6760,21 @@ async function runFirmwareFlash({ eraseNvs, sourceBtn, label, defaultLabel }) {
     appendLog('✖ ' + (e?.message || String(e)));
     sourceBtn.textContent = defaultLabel;
   } finally {
-    if (flashPort) { try { await flashPort.close(); } catch (_) {} }
+    // Close flashPort ONLY if we didn't resume the session on it — when
+    // reopenAfterFlash succeeds, `port === flashPort` and it must stay open.
+    if (flashPort && flashPort !== port) { try { await flashPort.close(); } catch (_) {} }
     btnFlash.disabled = false;
     btnWipe.disabled  = false;
+    if (btnConnect) btnConnect.disabled = false;   // re-enable Connect now the port is free / resumed
     _fwFlashing  = false;
-    if (sourceBtn.textContent === label) sourceBtn.textContent = defaultLabel;
+    // ALWAYS restore the button to its action label.  Previously this only
+    // reverted when the text still equalled the in-progress `label`
+    // ("Wiping…"/"Updating…"), but the success path had already changed it
+    // to "✓ Done" — so the condition was false and the button stayed stuck
+    // on a red "✓ Done", which then just re-ran the flash when clicked.
+    // Completion feedback lives in the status line ("Flash complete!") and
+    // the log panel, not the button.
+    sourceBtn.textContent = defaultLabel;
   }
 }
 
@@ -6645,6 +6791,10 @@ function _updateFirmwareBtnState() {
   const btnWipe  = document.getElementById('btn-fw-wipe');
   const status   = document.getElementById('fw-status');
   if (!btnFlash || !btnWipe) return;
+  // While a flash is running, the flash flow owns these buttons' disabled
+  // state (it disables them up front, re-enables them in its finally).  Don't
+  // let a Via-WCB toggle mid-flash re-enable them out from under it.
+  if (_fwFlashing) { btnFlash.disabled = true; btnWipe.disabled = true; return; }
   const disable = !!viaWcbActive;
   btnFlash.disabled = disable;
   btnWipe.disabled  = disable;

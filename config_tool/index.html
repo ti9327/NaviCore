@@ -1465,12 +1465,14 @@
              previous rectangle-with-bulbs shape and wouldn't match. -->
         <path d="M 644.14,593.80 c 0.00 0.00 7.77 -3.36 10.71 -6.30 2.94 -2.94 7.14 -27.50 10.50 -35.69 3.36 -8.19 5.04 -9.03 10.71 -9.66 5.67 -0.63 12.39 7.35 14.70 11.13 2.31 3.78 75.58 205.96 75.58 205.96 0.00 0.00 5.46 14.91 21.83 22.25 16.38 7.35 48.71 -0.21 48.71 -0.21 0.00 0.00 44.51 -8.61 72.85 -28.34 28.34 -19.73 36.11 -36.53 38.21 -52.49 2.10 -15.96 0.42 -38.63 0.42 -38.63 0.00 0.00 -23.30 -316.18 -31.28 -341.16 -7.98 -24.98 -11.34 -44.51 -11.34 -44.51 0.00 0.00 -1.68 -6.93 -8.82 -14.07 -7.14 -7.14 -154.73 -57.94 -154.73 -57.94 l -4.41 -0.84 -26.03 -0.63 -3.57 -142.34 c 0.00 0.00 -1.68 -4.83 -4.20 -7.98 -9.28 -11.60 -16.38 -8.40 -16.38 -8.40 l -404.98 3.15 c 0.00 0.00 -6.93 -1.05 -11.76 5.67 -4.83 6.72 -6.34 6.71 -6.72 11.55 -0.87 11.22 3.15 141.50 0.63 141.50 -2.52 0.00 -15.75 -0.42 -15.75 -0.42 l -156.62 59.20 -11.34 13.44 c 0.00 0.00 -22.67 112.95 -22.46 148.64 0.21 35.69 -5.04 169.85 -5.67 190.00 -0.35 11.30 -2.94 73.48 -2.94 73.48 0.00 0.00 4.20 23.93 8.40 30.65 4.20 6.72 21.62 22.46 35.69 32.96 14.07 10.50 31.91 22.04 51.44 27.71 19.52 5.67 28.34 7.77 43.46 7.77 15.12 0.00 29.39 -15.33 29.39 -15.33 0.00 0.00 16.17 -36.11 19.73 -46.40 3.57 -10.29 22.88 -78.94 28.13 -91.12 5.25 -12.18 17.22 -67.18 20.57 -71.80 3.36 -4.62 6.93 -11.76 11.97 -15.96 5.04 -4.20 9.87 -5.88 11.76 -1.89 1.89 3.99 5.67 10.71 7.56 18.27 1.89 7.56 4.62 19.52 4.62 19.52 0.00 0.00 2.52 7.14 8.61 8.40 6.09 1.26 312.82 0.84 312.82 0.84 z" fill="url(#body-grad)" stroke="#0a1224" stroke-width="2" filter="url(#shadow)"/>
 
-        <!-- ── Switch shoulders: dark rectangular "ears" sticking up
-             above the main body's top edge, holding the switches and
-             knobs.  In the reference image these read as a separate
-             rubber/plastic material from the main blue body. ──────── -->
-        <rect x="50"  y="100" width="260" height="155" rx="22" fill="#0e0e0e" stroke="#000" stroke-width="2" filter="url(#shadow)"/>
-        <rect x="690" y="100" width="260" height="155" rx="22" fill="#0e0e0e" stroke="#000" stroke-width="2" filter="url(#shadow)"/>
+        <!-- ── Switch shoulders: rectangular "ears" sticking up above the
+             main body's top edge, holding the switches and knobs.  Filled
+             a touch lighter (#1c2233) with a visible blue-grey border so
+             they read as distinct raised panels instead of blending into
+             the dark page background — the near-black #0e0e0e/#000 they
+             used before disappeared against the current backdrop. ──────── -->
+        <rect x="50"  y="100" width="260" height="155" rx="22" fill="#1c2233" stroke="#3a4a66" stroke-width="2.5" filter="url(#shadow)"/>
+        <rect x="690" y="100" width="260" height="155" rx="22" fill="#1c2233" stroke="#3a4a66" stroke-width="2.5" filter="url(#shadow)"/>
 
         <!-- ── Screen — front-and-center at the very top, sticking up
              ABOVE the body's top edge.  Taller and wider than before
@@ -1715,22 +1717,27 @@
         </g>
         <text x="584" y="475" text-anchor="middle" fill="#cdd6e8" font-size="10" font-weight="700">T6</text>
 
-        <!-- ╭───────── Face buttons B1-B4  (own row BELOW T5/T6) ────────── -->
+        <!-- ╭───────── Face buttons B1-B4  (own row BELOW T5/T6) ──────────
+             Pill / rounded-rectangle shaped (rx = half height → fully
+             rounded ends) to match the real Twin X-Lite face buttons,
+             which are oblong, not circular.  Sized 30×18 (comparable to
+             the D-pad / power-button controls) and evenly spaced on 36 px
+             centers (6 px gaps) around x=500.  Slots/labels unchanged. -->
         <g class="btn-zone" data-btn="1" onclick="openModal(1)">
-          <circle cx="465" cy="498" r="8" fill="#1a1a2a" stroke="#3a3a4a" stroke-width="1.5"/>
-          <text x="465" y="502" text-anchor="middle" fill="#a0a8b8" font-size="9" font-weight="700">1</text>
+          <rect x="431" y="489" width="30" height="18" rx="9" fill="#1a1a2a" stroke="#3a3a4a" stroke-width="1.5"/>
+          <text x="446" y="502" text-anchor="middle" fill="#a0a8b8" font-size="11" font-weight="700">1</text>
         </g>
         <g class="btn-zone" data-btn="2" onclick="openModal(2)">
-          <circle cx="485" cy="498" r="8" fill="#1a1a2a" stroke="#3a3a4a" stroke-width="1.5"/>
-          <text x="485" y="502" text-anchor="middle" fill="#a0a8b8" font-size="9" font-weight="700">2</text>
+          <rect x="467" y="489" width="30" height="18" rx="9" fill="#1a1a2a" stroke="#3a3a4a" stroke-width="1.5"/>
+          <text x="482" y="502" text-anchor="middle" fill="#a0a8b8" font-size="11" font-weight="700">2</text>
         </g>
         <g class="btn-zone" data-btn="3" onclick="openModal(3)">
-          <circle cx="515" cy="498" r="8" fill="#1a1a2a" stroke="#3a3a4a" stroke-width="1.5"/>
-          <text x="515" y="502" text-anchor="middle" fill="#a0a8b8" font-size="9" font-weight="700">3</text>
+          <rect x="503" y="489" width="30" height="18" rx="9" fill="#1a1a2a" stroke="#3a3a4a" stroke-width="1.5"/>
+          <text x="518" y="502" text-anchor="middle" fill="#a0a8b8" font-size="11" font-weight="700">3</text>
         </g>
         <g class="btn-zone" data-btn="4" onclick="openModal(4)">
-          <circle cx="535" cy="498" r="8" fill="#1a1a2a" stroke="#3a3a4a" stroke-width="1.5"/>
-          <text x="535" y="502" text-anchor="middle" fill="#a0a8b8" font-size="9" font-weight="700">4</text>
+          <rect x="539" y="489" width="30" height="18" rx="9" fill="#1a1a2a" stroke="#3a3a4a" stroke-width="1.5"/>
+          <text x="554" y="502" text-anchor="middle" fill="#a0a8b8" font-size="11" font-weight="700">4</text>
         </g>
 
         </g><!-- /tx-twinxlite -->
@@ -2197,7 +2204,7 @@
         <img src="../Images/r2logo.png" alt="R2 logo"
              style="width:72px;height:72px;object-fit:contain;opacity:0.9">
         <div style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.3px">
-          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">011349QJUN26</span>
+          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">011416QJUN26</span>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap">
@@ -6766,10 +6773,17 @@ async function runFirmwareFlash({ eraseNvs, sourceBtn, label, defaultLabel }) {
       setStatus('Reconnecting…');
       appendLog('Reconnecting to the board…');
       const ok = await reopenAfterFlash(flashPort);
+      // Update the flash-panel status to its FINAL state — otherwise it
+      // stays stuck on "Reconnecting…" even though the session is live
+      // (reopenAfterFlash drives the top-bar status via setConnected, but
+      // the flash panel's own fw-status line is separate).
+      setStatus(ok ? 'Flash complete — reconnected.'
+                   : 'Flash complete — click Connect to resume.');
       appendLog(ok
         ? 'Reconnected — config session resumed.'
         : 'Auto-reconnect timed out — click Connect to resume.');
     } else {
+      setStatus('Flash complete.');
       appendLog('Click Connect on the top bar to start a config session.');
     }
   } catch (e) {

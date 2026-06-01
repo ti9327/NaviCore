@@ -9,15 +9,33 @@
 #  Communication_Board-WCB) but trimmed to the single ESP32-S3 variant
 #  that NaviCore targets.
 #
-#  Trigger: any push (except the workflow's own auto-commits, which carry
-#  "[skip ci]" in their message and are ignored by GitHub Actions).
-#  Manual re-run also available via workflow_dispatch.
+#  Trigger: a push that changes SKETCH SOURCE (see paths filter below) —
+#  the firmware .ino / .h, the build script, or this workflow itself.
+#  Changes to the config tool, README, images, or the committed .bin files
+#  do NOT recompile, since they can't change the firmware binary.
+#  The workflow's own auto-commit carries "[skip ci]" and is ignored too.
+#  Manual re-run is always available via workflow_dispatch.
+#
+#  Note: fw_version.h is intentionally EXCLUDED from the trigger.  The
+#  pre-commit hook stamps its FW_VERSION_DTG on EVERY commit, so triggering
+#  on it would rebuild on every commit (defeating the filter).  A real code
+#  change to another sketch file is what triggers a build; the build then
+#  reads the current fw_version.h at compile time, so the .bin always gets
+#  the right version regardless.  To force a build after a bare version-base
+#  bump, use the manual workflow_dispatch run.
 # ─────────────────────────────────────────────────────────────────────────
 name: Build NaviCore firmware
 
 on:
   push:
     branches: ['**']
+    paths:
+      - '**.ino'
+      - '**.h'
+      - '**.cpp'
+      - 'tools/build-firmware.sh'
+      - '.github/workflows/build-firmware.yml'
+      - '!fw_version.h'        # stamped every commit by the pre-commit hook — see note above
   workflow_dispatch:
 
 permissions:

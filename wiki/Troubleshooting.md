@@ -9,7 +9,7 @@ Common problems and how to isolate them. For live diagnostics use the [[CLI Comm
 - **Use Chrome or Edge** on desktop. Firefox and Safari don't support the Web Serial API.
 - Only one program can hold the serial port. Close the Arduino IDE Serial Monitor, other terminals, or another browser tab that's connected.
 - Re‑plug the USB cable and click **Connect** again, then pick the port. A **charge‑only cable** won't enumerate a data port — use a data cable.
-- After a flash or reboot the port re‑enumerates; reconnect.
+- After a manual reboot the native‑USB port re‑enumerates — just click **Connect** again. (After a *flash* the tool reconnects on its own; if that ever times out it tells you to click Connect.)
 
 ## No SBUS / "SBUS not OK" in the monitor
 

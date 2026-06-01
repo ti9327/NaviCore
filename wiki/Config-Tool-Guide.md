@@ -88,6 +88,8 @@ Each matrix button matches a PWM band on the matrix channel (default CH7), with 
 
 While the wizard is open, **all action dispatch is muted** (so nothing fires while you wiggle controls). Closing the wizard — or stopping the monitor — restores normal dispatch.
 
+> Calibration requires a **direct USB** connection. Over Via WCB the channel data arrives at only ~5 Hz, too slow to reliably capture a quick stick/switch move, so the tool blocks calibration in Via WCB mode and asks you to connect over USB.
+
 ---
 
 ## Saving & loading

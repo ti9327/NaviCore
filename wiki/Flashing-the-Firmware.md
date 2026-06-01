@@ -12,12 +12,14 @@ The config tool can flash a connected board directly over USB, pulling the lates
 2. Plug the board in over USB.
 3. Go to **Config → Firmware**.
 4. Choose one of:
-   - **⬆ Update Firmware** — routine update. **Preserves your saved configuration** (NVS is never touched). The flasher auto‑detects whether an app‑only write is safe or a full bootloader+partition+app write is needed.
-   - **⚠ Full Wipe & Flash** — initial programming or recovery. Writes the full image **and erases NVS** (all saved settings) plus OTA data, returning the board to factory‑fresh. Use this the first time you program a new board, or to recover from a corrupted config.
+   - **⬆ Update Firmware** — routine update. Writes the bootloader, partition table, and app, but **never touches NVS**, so your saved configuration is preserved.
+   - **⚠ Full Wipe & Flash** — initial programming or recovery. Writes the same image **and erases NVS** (all saved settings) plus OTA data, returning the board to factory‑fresh. Use this the first time you program a new board, or to recover from a corrupted config.
+
+Both modes write the same three regions (bootloader + partition table + app); the only difference is whether NVS/OTA data is also erased. The flasher **reuses the port you're already connected on** (no second port picker) and **reconnects to the board automatically** once it reboots — no need to re‑select the port afterward.
 
 The page fetches binaries from `main` by default. (Developers can target another branch by setting `localStorage.rc_fw_branch = '<branch>'` in DevTools.)
 
-> The flasher uses esptool over Web Serial and needs a **direct USB connection** — you cannot flash through a "Via WCB" bridge.
+> The flasher uses esptool over Web Serial and needs a **direct USB connection** — you cannot flash through a "Via WCB" bridge. (The flash buttons are disabled while Via WCB is active.)
 
 ---
 
@@ -31,14 +33,16 @@ The page fetches binaries from `main` by default. (Developers can target another
 
 ### Required libraries
 
-Install via **Library Manager**:
-- **ArduinoJson** (Benoit Blanchon) — v6.x
-- **Adafruit NeoPixel**
-- **EspSoftwareSerial** (for S3/S4)
-
-Local libraries (drop into your sketchbook `libraries/` folder):
-- **WCB_Client** + **WCBStream** (from the `greghulette/WCBClient` repo)
+Install via **Library Manager** (versions pinned to match CI — ArduinoJson **must be v7**; v6's `DynamicJsonDocument` allocation behavior breaks `SET_CONFIG` parsing):
+- **ArduinoJson** (Benoit Blanchon) — **7.4.3**
+- **EspSoftwareSerial** — **8.1.0** (for S3/S4)
+- **Adafruit NeoPixel** — **1.15.4**
 - **PololuMaestro**
+
+Local library (drop into your sketchbook `libraries/` folder):
+- **WCB_Client** + **WCBStream** (from the `greghulette/WCBClient` repo)
+
+> The exact library set + versions live in `.github/workflows/build-firmware.yml` — that workflow is the source of truth, so check there if a build ever disagrees with this list.
 
 ---
 

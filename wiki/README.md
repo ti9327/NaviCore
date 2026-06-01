@@ -17,11 +17,13 @@ A repo's wiki is its own git repository at `https://github.com/<you>/NaviCore.wi
 **Faster (git):**
 ```bash
 git clone https://github.com/<you>/NaviCore.wiki.git
-cp wiki/*.md NaviCore.wiki/
+cp -r wiki/*.md wiki/images NaviCore.wiki/
 cd NaviCore.wiki
 git add . && git commit -m "Add NaviCore wiki" && git push
 ```
 GitHub turns `Hardware-and-Wiring.md` filenames into “Hardware and Wiring” page titles automatically, and `[[Page Name]]` links resolve to those pages.
+
+> **Images:** the `images/` folder must be copied into the wiki repo too (the command above does this). Pages reference them as `![alt](images/banner.svg)`. GitHub renders committed SVGs in wikis. Diagrams: `banner.svg` (Home header), `signal-flow.svg` (Home), `pinmap.svg` (Hardware and Wiring).
 
 ## Pages
 

@@ -1,5 +1,7 @@
 # NaviCore Wiki
 
+![NaviCore](images/banner.svg)
+
 **NaviCore** — *Astromech Animation Controller.* A WCB-based RC controller for ESP32‑S3 (WCB hardware v3.2). It reads **SBUS** from an FrSky receiver and dispatches matrix buttons, switches, and knobs to local & remote Pololu Maestros, WCB boards, HCR vocalizers, and MP3 triggers — over a hardware serial bus and ESP‑NOW. A browser‑based config tool (Web Serial) handles all setup.
 
 > Formerly *RC‑Controller* / *HyperCore*.
@@ -32,6 +34,8 @@
 ---
 
 ## How it works (one paragraph)
+
+![Signal flow](images/signal-flow.svg)
 
 The transmitter multiplexes its physical buttons onto a single SBUS channel (the **matrix channel**, default CH7) as discrete PWM bands, and its switches/knobs onto their own channels. NaviCore decodes each SBUS frame, figures out which button was pressed (and how many times — single/double/triple tap), which **mode** the mode‑switch is in (1/2/3), and fires the **actions** you mapped to that button‑in‑that‑mode. Actions go out to a local Maestro on a hardware UART, to remote Maestros/WCBs over ESP‑NOW, to an HCR vocalizer or MP3 trigger, or to a raw serial port. The whole mapping lives in the board's NVS and is edited entirely from the browser config tool.
 

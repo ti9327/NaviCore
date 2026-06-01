@@ -1,0 +1,89 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="340" viewBox="0 0 1280 340" role="img" aria-label="NaviCore — Astromech Animation Controller">
+  <defs>
+    <linearGradient id="steelGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f4f7fb"></stop><stop offset=".5" stop-color="#aab3bf"></stop><stop offset="1" stop-color="#646d79"></stop></linearGradient>
+    <linearGradient id="steelGradH" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#cad2dd"></stop><stop offset=".5" stop-color="#8b94a1"></stop><stop offset="1" stop-color="#cad2dd"></stop></linearGradient>
+    <linearGradient id="blueGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#7cc0ff"></stop><stop offset="1" stop-color="#1547b0"></stop></linearGradient>
+    <radialGradient id="blueGlow" cx="50%" cy="50%" r="50%"><stop offset="0" stop-color="#eaf6ff"></stop><stop offset=".28" stop-color="#4f9dff"></stop><stop offset="1" stop-color="#2b86ff" stop-opacity="0"></stop></radialGradient>
+    <radialGradient id="eyeLens" cx="42%" cy="38%" r="65%"><stop offset="0" stop-color="#dcefff"></stop><stop offset=".4" stop-color="#2b86ff"></stop><stop offset="1" stop-color="#0e2147"></stop></radialGradient>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#0f1626"></stop><stop offset=".7" stop-color="#0a0d12"></stop><stop offset="1" stop-color="#070a0e"></stop></linearGradient>
+    <radialGradient id="bgGlow" cx="22%" cy="20%" r="60%"><stop offset="0" stop-color="#2b86ff" stop-opacity=".18"></stop><stop offset="1" stop-color="#2b86ff" stop-opacity="0"></stop></radialGradient>
+    <linearGradient id="naviTxt" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f4f7fb"></stop><stop offset=".5" stop-color="#c2cad4"></stop><stop offset="1" stop-color="#7e8794"></stop></linearGradient>
+    <linearGradient id="coreTxt" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#7cc0ff"></stop><stop offset=".55" stop-color="#2b86ff"></stop><stop offset="1" stop-color="#1547b0"></stop></linearGradient>
+    <g id="navEye">
+      <circle cx="40" cy="40" r="30" fill="#0d1117" stroke="url(#steelGrad)" stroke-width="2.5"></circle>
+      <g stroke="#5d6573" stroke-width="1.4">
+        <g id="bAp"><line x1="40" y1="13" x2="40" y2="18"></line></g>
+        <use href="#bAp" transform="rotate(45 40 40)"></use><use href="#bAp" transform="rotate(90 40 40)"></use>
+        <use href="#bAp" transform="rotate(135 40 40)"></use><use href="#bAp" transform="rotate(180 40 40)"></use>
+        <use href="#bAp" transform="rotate(225 40 40)"></use><use href="#bAp" transform="rotate(270 40 40)"></use>
+        <use href="#bAp" transform="rotate(315 40 40)"></use>
+      </g>
+      <circle cx="40" cy="40" r="23" fill="none" stroke="url(#steelGrad)" stroke-width="3"></circle>
+      <circle cx="40" cy="40" r="20" fill="url(#blueGlow)" opacity=".9"></circle>
+      <circle cx="40" cy="40" r="13" fill="url(#eyeLens)" stroke="#cfe8ff" stroke-width="1.3"></circle>
+      <circle cx="40" cy="40" r="5" fill="#dff0ff"></circle>
+      <circle cx="34.5" cy="34.5" r="3" fill="#ffffff"></circle>
+    </g>
+  </defs>
+
+  <rect width="1280" height="340" rx="18" fill="url(#bg)"></rect>
+  <rect width="1280" height="340" rx="18" fill="url(#bgGlow)"></rect>
+  
+  <g fill="#cfe0f5">
+    <circle cx="980" cy="46" r="1.6" opacity=".8"></circle><circle cx="1060" cy="92" r="1.1" opacity=".5"></circle>
+    <circle cx="1130" cy="40" r="1.3" opacity=".6"></circle><circle cx="1190" cy="120" r="1.7" opacity=".75"></circle>
+    <circle cx="900" cy="120" r="1" opacity=".45"></circle><circle cx="1024" cy="180" r="1.2" opacity=".5"></circle>
+    <circle cx="1150" cy="210" r="1.5" opacity=".7"></circle><circle cx="1220" cy="70" r="1.1" opacity=".5"></circle>
+    <circle cx="950" cy="250" r="1.3" opacity=".55"></circle><circle cx="1080" cy="270" r="1" opacity=".45"></circle>
+    <circle cx="1210" cy="285" r="1.6" opacity=".7"></circle><circle cx="870" cy="64" r="1" opacity=".4"></circle>
+  </g>
+  <g fill="#5cb0ff">
+    <circle cx="1095" cy="150" r="2.1" opacity=".85"></circle><circle cx="935" cy="200" r="1.8" opacity=".7"></circle>
+    <circle cx="1240" cy="170" r="1.7" opacity=".7"></circle>
+  </g>
+
+  
+  <g transform="translate(70,70) scale(1.0)">
+    <g fill="none" stroke="url(#steelGrad)" stroke-width="2.2" stroke-linecap="round">
+      <path d="M22 100 H6"></path><path d="M22 86 H12 V79"></path><path d="M22 114 H12 V121"></path>
+      <path d="M178 100 H194"></path><path d="M178 86 H188 V79"></path><path d="M178 114 H188 V121"></path>
+    </g>
+    <g fill="#0d1117" stroke="url(#steelGrad)" stroke-width="2">
+      <circle cx="4" cy="100" r="3"></circle><circle cx="12" cy="75" r="2.6"></circle><circle cx="12" cy="125" r="2.6"></circle>
+      <circle cx="196" cy="100" r="3"></circle><circle cx="188" cy="75" r="2.6"></circle><circle cx="188" cy="125" r="2.6"></circle>
+    </g>
+    <polygon points="100,11 177.1,55.5 177.1,144.5 100,189 22.9,144.5 22.9,55.5" fill="none" stroke="#5d6573" stroke-width="1"></polygon>
+    <polygon points="100,16 172.7,58 172.7,142 100,184 27.3,142 27.3,58" fill="none" stroke="url(#steelGrad)" stroke-width="8" stroke-linejoin="round"></polygon>
+    <polygon points="100,21 168.3,60.5 168.3,139.5 100,179 31.7,139.5 31.7,60.5" fill="none" stroke="#5d6573" stroke-width="1"></polygon>
+    <polygon points="100,30 160.6,65 160.6,135 100,170 39.4,135 39.4,65" fill="none" stroke="#2b86ff" stroke-width="1.8" opacity=".7"></polygon>
+    <path d="M100 30 L39.4 65 L39.4 135" fill="none" stroke="#2b86ff" stroke-width="3" opacity=".9" stroke-linejoin="round"></path>
+    <g stroke="#5d6573" stroke-width="1.8">
+      <g id="bVtk"><line x1="100" y1="24" x2="100" y2="31"></line></g>
+      <use href="#bVtk" transform="rotate(60 100 100)"></use><use href="#bVtk" transform="rotate(120 100 100)"></use>
+      <use href="#bVtk" transform="rotate(180 100 100)"></use><use href="#bVtk" transform="rotate(240 100 100)"></use>
+      <use href="#bVtk" transform="rotate(300 100 100)"></use>
+    </g>
+    <g stroke="#5d6573" stroke-width="1.6">
+      <line x1="100" y1="56" x2="100" y2="61"></line><line x1="100" y1="144" x2="100" y2="139"></line>
+    </g>
+    <g fill="url(#steelGradH)" stroke="#5d6573" stroke-width=".8">
+      <rect x="88" y="40" width="24" height="4.6" rx="2.3"></rect><rect x="83" y="47" width="34" height="4.6" rx="2.3"></rect>
+      <rect x="88" y="155.4" width="24" height="4.6" rx="2.3"></rect><rect x="83" y="148.4" width="34" height="4.6" rx="2.3"></rect>
+    </g>
+    <circle cx="100" cy="69" r="2.8" fill="#5cb0ff"></circle><circle cx="100" cy="131" r="2.8" fill="#5cb0ff"></circle>
+    <line x1="40" y1="100" x2="160" y2="100" stroke="#2b86ff" stroke-width="1" opacity=".2" stroke-dasharray="2 6"></line>
+    <path d="M38 100 Q45 84 52 100 T66 100 T80 100" fill="none" stroke="url(#steelGrad)" stroke-width="3.2" stroke-linecap="round"></path>
+    <path d="M120 100 Q127 116 134 100 T148 100 T162 100" fill="none" stroke="#5cb0ff" stroke-width="3.2" stroke-linecap="round"></path>
+    <g fill="#8b94a1"><circle cx="45" cy="86" r="2"></circle><circle cx="59" cy="114" r="2"></circle></g>
+    <g fill="#5cb0ff"><circle cx="141" cy="86" r="2"></circle><circle cx="155" cy="114" r="2"></circle></g>
+    <use href="#navEye" transform="translate(65 65) scale(0.875)"></use>
+  </g>
+
+  
+  <text x="320" y="178" font-family="&#39;Segoe UI Semibold&#39;,&#39;Helvetica Neue&#39;,Arial,sans-serif" font-weight="800" font-size="96" letter-spacing="1">
+    <tspan fill="url(#naviTxt)">Navi</tspan><tspan fill="url(#coreTxt)">Core</tspan>
+  </text>
+  <line x1="322" y1="212" x2="360" y2="212" stroke="#2b86ff" stroke-width="3"></line>
+  <text x="372" y="220" font-family="&#39;Consolas&#39;,&#39;SF Mono&#39;,monospace" font-weight="600" font-size="19" letter-spacing="4.5" fill="#8a93a1">ASTROMECH ANIMATION CONTROLLER</text>
+  <text x="322" y="252" font-family="&#39;Consolas&#39;,&#39;SF Mono&#39;,monospace" font-size="15" letter-spacing="2" fill="#5d6573">SBUS → decode → dispatch · WCB v3.2 / ESP32-S3</text>
+</svg>

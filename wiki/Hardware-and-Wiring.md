@@ -4,6 +4,8 @@ NaviCore runs on a **WCB v3.2** board (Espressif **ESP32‑S3**). This page cove
 
 > ⚠️ **Pin caveat.** The firmware's **TX** pins below are authoritative (they match the WCB 3.2 pin map and are confirmed in code). Some **RX** pins and the status‑LED pin are marked *"verify against schematic"* in the source — they are the firmware's defaults but you should confirm against your board before soldering to an RX pad. The SBUS‑in pin (GPIO5) is confirmed.
 
+![Pin map](images/pinmap.svg)
+
 ---
 
 ## Pin map (ESP32‑S3 / WCB 3.2)

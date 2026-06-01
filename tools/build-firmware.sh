@@ -59,15 +59,22 @@ echo "  tag  : $TAG"
 echo ""
 
 # ── Compile ─────────────────────────────────────────────────────────────
-# FQBN deliberately mirrors what Arduino IDE produces with the
-# "ESP32S3 Dev Module" board selected and NO menu options changed —
-# all options at their defaults except PartitionScheme=min_spiffs.
-# Critically this means USBMode=default + CDCOnBoot=default, i.e. Serial
-# is UART0 (routed off-chip via the WCB v3.2's USB-to-UART bridge), NOT
-# the ESP32-S3's native USB-Serial-JTAG controller.  Overriding to hwcdc
-# routes Serial to native USB pins (GPIO19/20) which the WCB v3.2 board
-# doesn't expose for debug — output silently goes nowhere.
-FQBN="esp32:esp32:esp32s3:PartitionScheme=min_spiffs"
+# FQBN mirrors the Arduino IDE settings the user runs locally:
+#   • Board: ESP32S3 Dev Module
+#   • USB CDC On Boot: Enabled  →  CDCOnBoot=cdc
+#   • USB Mode: Hardware CDC and JTAG  →  USBMode=hwcdc
+#   • Partition Scheme: Minimal SPIFFS (1.9MB APP / OTA)  →  PartitionScheme=min_spiffs
+#
+# Why USBMode=hwcdc + CDCOnBoot=cdc matter: NaviCore.ino calls
+# Serial.setTxTimeoutMs(50) which only exists on the HWCDC class (native
+# USB CDC).  More importantly, the WCB v3.2's "OTG" USB-C port is wired
+# to the ESP32-S3's native USB pins (GPIO19/20).  Without these options
+# the compile defaults to UART-mode Serial, which routes output to the
+# UART bridge chip's USB-C port instead — leaving the OTG port silent
+# and the config tool unable to connect.  Symptoms when this is wrong:
+# IDE-built firmware works, web-flashed (CI-built) firmware appears
+# "dead" on the OTG port.
+FQBN="esp32:esp32:esp32s3:USBMode=hwcdc,CDCOnBoot=cdc,PartitionScheme=min_spiffs"
 BUILD_DIR="${TMPDIR:-/tmp}/rc-fw-build"
 
 rm -rf "$BUILD_DIR"

@@ -700,7 +700,7 @@ static void executeMp3Action(const RcAction& a) {
           dest.target, WCB_MAX_BOARDS);
     return;
   }
-  bool ok = wcb->send(target, cmd.c_str(), /*ensured=*/true);   // ETM: MP3-over-WCB is a command — retry until ACK
+  bool ok = wcb->send(target, cmd.c_str());
   dlog(DBG_MP3, "[DISPATCH] MP3→WCB%u  %s  %s\n", target, cmd.c_str(), ok ? "OK" : "FAIL");
 }
 
@@ -729,13 +729,13 @@ void rcExecuteAction(const RcAction& a) {
       uint8_t boardId = (uint8_t)atoi(a.target);
       if (boardId >= 1 && boardId <= WCB_MAX_BOARDS) {
         dlog(DBG_WCB, "[DISPATCH] WCB→%d  %s\n", boardId, a.cmd);
-        wcb->send(boardId, a.cmd, /*ensured=*/true);   // ETM: retry until the target ACKs
+        wcb->send(boardId, a.cmd);
       }
       break;
     }
     case RA_WCB_BROADCAST:
       dlog(DBG_WCB, "[DISPATCH] WCB broadcast  %s\n", a.cmd);
-      wcb->broadcast(a.cmd, /*ensured=*/true);   // ETM: retry per-board until every online board ACKs
+      wcb->broadcast(a.cmd);
       break;
 
     case RA_MAESTRO_LOCAL:
@@ -1345,8 +1345,8 @@ void handleSerialInput() {
         } else if (strcmp(type,"WCB_SEND")==0) {
           int target     = hdr["target"] | 0;
           const char* cmd = hdr["cmd"]   | "";
-          if (target == 0)                               wcb->broadcast(cmd, /*ensured=*/true);
-          else if (target >= 1 && target <= WCB_MAX_BOARDS) wcb->send((uint8_t)target, cmd, /*ensured=*/true);
+          if (target == 0)                               wcb->broadcast(cmd);
+          else if (target >= 1 && target <= WCB_MAX_BOARDS) wcb->send((uint8_t)target, cmd);
           Serial.println("{\"type\":\"ACK\",\"ok\":true}");
 
         } else if (strcmp(type,"SET_DEBUG_FLAGS")==0) {

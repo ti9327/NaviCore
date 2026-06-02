@@ -581,7 +581,8 @@ inline void tick() {
       sbusAgeMs,
       lostFrameOld ? "true" : "false",
       sbusFailsafe ? "true" : "false");
-    wcb->broadcast(buf);   // WCBClient's broadcast() — wcb->send(0,...) bails (target_wcb < 1 check)
+    // best-effort: liveness beat; a miss is covered by the next one (0.5 Hz)
+    wcb->broadcast(buf, false);   // broadcast() not send(0,...) — send() bails on target_wcb<1
   }
 
   // rc_ch is gated on subscription — see _hasWcbSubscriber comment above.
@@ -612,7 +613,9 @@ inline void tick() {
       buf[len++] = ']';
       buf[len++] = '}';
       buf[len]   = '\0';
-      wcb->broadcast(buf);
+      // best-effort: superseded by the next frame 200 ms later; ensured would
+      // thrash the ETM pending table at 5 Hz retrying already-stale channels.
+      wcb->broadcast(buf, false);
     }
     // If !ok (garbage channel data overflowed the buffer) we simply skip
     // this rc_ch frame rather than emit a malformed/unterminated packet.
@@ -630,7 +633,7 @@ inline void emitTrig(int mode, int btn, int tap) {
   snprintf(buf, sizeof(buf),
     "{\"type\":\"rc_trig\",\"id\":%u,\"mode\":%d,\"btn\":%d,\"tap\":%d}",
     rcConfig.wcbNetwork.deviceId, mode, btn, tap);
-  wcb->broadcast(buf);
+  wcb->broadcast(buf, false);   // best-effort: monitor display telemetry, not a must-land command
 }
 
 // Call from the FunctionSwState-update path whenever the active mode
@@ -642,7 +645,7 @@ inline void emitMode(int mode) {
   snprintf(buf, sizeof(buf),
     "{\"type\":\"rc_mode\",\"id\":%u,\"mode\":%d}",
     rcConfig.wcbNetwork.deviceId, mode);
-  wcb->broadcast(buf);
+  wcb->broadcast(buf, false);   // best-effort: monitor display telemetry (sibling of rc_trig)
 }
 
 // ── Inbound parser ──────────────────────────────────────────────────────────

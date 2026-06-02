@@ -25,10 +25,15 @@
 | [[Flashing the Firmware]] | In‑browser flasher, Arduino IDE, CI builds, versioning |
 | [[Transmitter Setup]] | X18 / X20 / Twin X‑Lite, channel map, loading the model file |
 | [[Config Tool Guide]] | Connecting, the live monitor, buttons/switches/knobs, modes, multi‑tap, calibration, save/load |
+| [[Maestro Setup]] | Pololu Control Center, device numbers, local vs remote, wiring |
 | [[Actions Reference]] | WCB, Maestro, HCR, MP3, Serial — every action type and its parameters |
+| [[Configuration Schema]] | The full config JSON shape — for export/backup/scripting |
 | [[WCB Network]] | ESP‑NOW credentials, device IDs, remote Maestros, "Via WCB" |
+| [[Remote Management over WCB]] | Manage the controller wirelessly through a tethered WCB |
 | [[Serial JSON Protocol]] | Full USB command table for tooling / scripting |
 | [[CLI Commands]] | `#Lxx` serial debug commands |
+| [[Failsafe and Signal Loss]] | What the droid does when the radio link drops |
+| [[Glossary]] | WCB, SBUS, ESP‑NOW, ETM, HCR, Maestro, NVS… defined |
 | [[Troubleshooting]] | No SBUS, port won't connect, save NACKs, HCR silent, Via‑WCB issues |
 
 ---

@@ -36,10 +36,15 @@ GitHub turns `Hardware-and-Wiring.md` filenames into “Hardware and Wiring” p
 | `Flashing-the-Firmware.md` | Flasher, Arduino IDE, CI, versioning |
 | `Transmitter-Setup.md` | Models, channel map, model file |
 | `Config-Tool-Guide.md` | Connecting, monitor, mapping, calibration, save/load |
+| `Maestro-Setup.md` | Pololu Control Center, device numbers, local/remote, wiring |
 | `Actions-Reference.md` | WCB / Maestro / HCR / MP3 / Serial actions |
+| `Configuration-Schema.md` | Full config JSON shape (export/backup/scripting) |
 | `WCB-Network.md` | ESP‑NOW credentials, device IDs, Via WCB |
+| `Remote-Management-over-WCB.md` | Wireless management through a tethered WCB |
 | `Serial-JSON-Protocol.md` | USB JSON command table |
 | `CLI-Commands.md` | `#Lxx` serial debug commands |
+| `Failsafe-and-Signal-Loss.md` | Behavior when the radio link drops |
+| `Glossary.md` | Term definitions |
 | `Troubleshooting.md` | Problem → fix |
 
 > Internal links use GitHub Wiki `[[Double Bracket]]` syntax, so they only resolve once published to the wiki (not in the normal file browser).

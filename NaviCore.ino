@@ -489,6 +489,25 @@ static String hcrFormatCommand(uint8_t fn, int chan, int track) {
   return String("<") + inner + ">\n";
 }
 
+// Build the ";H,FN,<fn>,<chan>,<track>" command an HCR action sends over the
+// WCB network. The receiving WCB strips the ';', routes 'H,...' to its
+// processHCRRuntimeCommand() FN handler (the "RC-Controller numeric
+// convention"), and that drives its locally-wired HCRVocalizer to the WCB's
+// own configured HCR port. Gating on hcrFormatCommand() returning non-empty
+// reuses the SAME fn/param validation as the local-serial path, so both
+// transports accept exactly the same actions. Returns "" for an unknown fn or
+// out-of-range params. No trailing newline — this is a WCB command, not a raw
+// serial forward (mirrors mp3FormatCommand()).
+static String hcrFormatWcbCommand(uint8_t fn, int chan, int track) {
+  if (hcrFormatCommand(fn, chan, track).length() == 0) return "";   // reuse validation
+  // Mirror the one shortcut hcrFormatCommand() applies: for Trigger/Stimulate,
+  // emotion index 4 means Overload (fn 5). The WCB's FN handler has no such
+  // shortcut, so translate it here to keep the WCB and local transports
+  // behaviourally identical.
+  if ((fn == 3 || fn == 4) && chan == 4) return ";H,FN,5,0,0";   // Overload
+  return String(";H,FN,") + (int)fn + "," + chan + "," + track;
+}
+
 // ── Non-blocking hot-path logging ───────────────────────────────────────────
 // loop() must NEVER stall on Serial. On WCB HW 3.2 the USB serial path
 // back-pressures when no host is draining it, so a plain Serial.printf() on
@@ -523,21 +542,26 @@ static void executeHcrAction(const RcAction& a) {
   const RcHcrDest& dest = rcConfig.hcrDest;
 
   if (dest.transport == 1) {
-    // ── WCB transport (raw forward via ESP-NOW) ────────────────────────────
+    // ── WCB transport (ETM command via ESP-NOW) ────────────────────────────
+    // HCR over WCB is UNICAST ONLY and rides the normal WCB command path: we
+    // send ";H,FN,<fn>,<chan>,<track>" and the receiving WCB strips the ';',
+    // routes 'H,...' to processHCRRuntimeCommand()'s FN handler (the
+    // "RC-Controller numeric convention"), which drives its locally-wired
+    // HCRVocalizer to the WCB's OWN configured HCR port. So the WCB owns the
+    // HCR serial port now — NaviCore no longer specifies it (dest.wcbPort is
+    // unused on this path; the receiving WCB must have ?HCR,PORT configured).
+    // This replaces the old raw-serial forward (sendRaw, targetID 97), which
+    // was best-effort only: wcb->send() defaults to ETM, so a dropped HCR
+    // command is retried until ACK'd — HCR can't tolerate a miss. Mirrors the
+    // MP3-over-WCB pattern (";A,..." → processMP3AudioCommand). Broadcast is
+    // unsupported — an HCR vocalizer is a single device at a known WCB.
     if (!wcb) { dlog(DBG_HCR, "[DISPATCH] HCR-WCB: wcb not ready — skipped\n"); return; }
-    String payload = hcrFormatCommand(a.fn, a.chan, a.track);
-    if (payload.length() == 0) {
-      dlog(DBG_HCR, "[DISPATCH] HCR-WCB: bad fn=%u chan=%d track=%d — skipped\n",
+    String cmd = hcrFormatWcbCommand(a.fn, a.chan, a.track);
+    if (cmd.length() == 0) {
+      dlog(DBG_HCR, "[DISPATCH] HCR-WCB: bad/unsupported fn=%u chan=%d track=%d — skipped\n",
             a.fn, a.chan, a.track);
       return;
     }
-    // HCR over WCB is UNICAST ONLY. It must go through sendRaw() (targetID 97,
-    // raw-serial forward) so the receiving WCB pipes the bytes verbatim to the
-    // HCR device's serial port. Broadcast is intentionally unsupported: the
-    // only broadcast primitives are the command path (which would parse the
-    // HCR string as a WCB command and discard it) and Kyber (Maestro ports
-    // only) — neither delivers to an arbitrary HCR serial port. An HCR
-    // vocalizer is a single device at a known location, so unicast is correct.
     uint8_t target = (uint8_t)atoi(dest.target);
     if (target < 1 || target > WCB_MAX_BOARDS) {
       dlog(DBG_HCR, "[DISPATCH] HCR-WCB: target '%s' invalid — HCR over WCB must be a "
@@ -546,20 +570,8 @@ static void executeHcrAction(const RcAction& a) {
             dest.target, WCB_MAX_BOARDS);
       return;
     }
-    if (dest.wcbPort < 1 || dest.wcbPort > 5) {
-      // sendRaw() silently rejects a port outside 1-5 — surface it so a
-      // misconfigured HCR Destination doesn't fail invisibly.
-      dlog(DBG_HCR, "[DISPATCH] HCR-WCB: invalid port %u (must be 1-5) — "
-            "check HCR Destination in the config tool, not sent\n",
-            dest.wcbPort);
-      return;
-    }
-    dlog(DBG_HCR, "[DISPATCH] HCR→WCB%u:port%u  %s\n",
-          target, dest.wcbPort, payload.c_str());
-    bool ok = wcb->sendRaw(target, dest.wcbPort,
-                           (const uint8_t*)payload.c_str(), payload.length());
-    dlog(DBG_HCR, "[DISPATCH] HCR-WCB sendRaw(WCB%u, port%u, %u bytes) %s\n",
-          target, dest.wcbPort, payload.length(), ok ? "OK" : "FAIL");
+    bool ok = wcb->send(target, cmd.c_str());   // ETM by default — HCR can't tolerate a miss
+    dlog(DBG_HCR, "[DISPATCH] HCR→WCB%u  %s  %s\n", target, cmd.c_str(), ok ? "OK" : "FAIL");
     return;
   }
 
@@ -688,7 +700,7 @@ static void executeMp3Action(const RcAction& a) {
           dest.target, WCB_MAX_BOARDS);
     return;
   }
-  bool ok = wcb->send(target, cmd.c_str());
+  bool ok = wcb->send(target, cmd.c_str(), /*ensured=*/true);   // ETM: MP3-over-WCB is a command — retry until ACK
   dlog(DBG_MP3, "[DISPATCH] MP3→WCB%u  %s  %s\n", target, cmd.c_str(), ok ? "OK" : "FAIL");
 }
 
@@ -717,13 +729,13 @@ void rcExecuteAction(const RcAction& a) {
       uint8_t boardId = (uint8_t)atoi(a.target);
       if (boardId >= 1 && boardId <= WCB_MAX_BOARDS) {
         dlog(DBG_WCB, "[DISPATCH] WCB→%d  %s\n", boardId, a.cmd);
-        wcb->send(boardId, a.cmd);
+        wcb->send(boardId, a.cmd, /*ensured=*/true);   // ETM: retry until the target ACKs
       }
       break;
     }
     case RA_WCB_BROADCAST:
       dlog(DBG_WCB, "[DISPATCH] WCB broadcast  %s\n", a.cmd);
-      wcb->broadcast(a.cmd);
+      wcb->broadcast(a.cmd, /*ensured=*/true);   // ETM: retry per-board until every online board ACKs
       break;
 
     case RA_MAESTRO_LOCAL:
@@ -1333,8 +1345,8 @@ void handleSerialInput() {
         } else if (strcmp(type,"WCB_SEND")==0) {
           int target     = hdr["target"] | 0;
           const char* cmd = hdr["cmd"]   | "";
-          if (target == 0)                               wcb->broadcast(cmd);
-          else if (target >= 1 && target <= WCB_MAX_BOARDS) wcb->send((uint8_t)target, cmd);
+          if (target == 0)                               wcb->broadcast(cmd, /*ensured=*/true);
+          else if (target >= 1 && target <= WCB_MAX_BOARDS) wcb->send((uint8_t)target, cmd, /*ensured=*/true);
           Serial.println("{\"type\":\"ACK\",\"ok\":true}");
 
         } else if (strcmp(type,"SET_DEBUG_FLAGS")==0) {

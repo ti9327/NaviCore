@@ -158,7 +158,21 @@ SoftwareSerial Serial4;    // Aux command-line port, bound in setup()
 //  SBUS + RC Config
 // =============================================================================
 SbusReader sbusRx;
-RcConfig   rcConfig;
+// rcConfig is heap-allocated in EXTERNAL PSRAM (ESP32-S3-WROOM-1 N16R8 = 8 MB).
+// With the 15 logical-button slots the struct is ~210 KB — it will NOT fit in
+// internal DRAM alongside the WCB stack + the ~96 KB SET_CONFIG JSON parse.
+//
+// NOTE: EXT_RAM_BSS_ATTR does NOT help here — the stock Arduino-ESP32 core is
+// built without CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY, so the attribute is
+// a no-op and the struct lands in .bss → linker "dram0_0_seg overflowed". The
+// reliable way on the stock core is to allocate from the PSRAM heap at runtime
+// (ps_calloc, at the top of setup()).  The global below is just a 4-byte pointer;
+// `rcConfig` is a macro alias (see rc_config.h) so all rcConfig.xxx access is
+// unchanged.  Mapping/threshold arrays aren't a hot path (read on button events,
+// not per-SBUS-byte), so PSRAM latency is irrelevant.
+// REQUIRES Arduino IDE: Tools → PSRAM → "OPI PSRAM" (the N16R8 is OCTAL PSRAM).
+// If PSRAM is off, ps_calloc() returns null and setup() halts with a message.
+RcConfig* g_rcConfig = nullptr;
 
 // =============================================================================
 //  Status LED
@@ -1550,6 +1564,20 @@ void setup() {
   Serial.printf("[SBUS] IN  on Serial1/UART1 RX (GPIO%d)\n", SBUS_RX_PIN);
   Serial.printf("[SBUS] OUT on Serial0/UART0 TX (GPIO%d) — 100k 8E2 inverted, byte passthrough\n", SBUS_OUT_PIN);
 
+  // RC Config lives in PSRAM — allocate it BEFORE any rcConfig.* access.
+  // ps_calloc() pulls from the PSRAM heap (Tools → PSRAM must be "OPI PSRAM").
+  // If PSRAM is unavailable the ~210 KB struct can't fit internal RAM, so halt
+  // with a clear message instead of crashing cryptically on first access.
+  g_rcConfig = (RcConfig*) ps_calloc(1, sizeof(RcConfig));
+  if (!g_rcConfig) {
+    Serial.println("\n[FATAL] PSRAM allocation for rcConfig failed.");
+    Serial.println("        Set Arduino IDE: Tools -> PSRAM -> \"OPI PSRAM\", then reflash.");
+    setStatusLed(C_RED, 255);
+    while (true) { delay(1000); }
+  }
+  Serial.printf("[MEM] rcConfig (%u bytes) allocated in PSRAM, free PSRAM now %u\n",
+                (unsigned)sizeof(RcConfig), (unsigned)ESP.getFreePsram());
+
   // RC Config: defaults then NVS overrides. Must run BEFORE constructing
   // WCB_Client so the network credentials come from rcConfig.wcbNetwork.
   rcConfigLoadDefaults();
@@ -1612,6 +1640,35 @@ void setup() {
 // =============================================================================
 //  LOOP
 // =============================================================================
+// ── Status LED: SBUS-aware running indicator ────────────────────────────────
+// Once the board is up, the LED reflects SBUS reception:
+//   • frames arriving        → steady BLUE  (ready / receiving SBUS)
+//   • no frames (no signal)  → slow-flash ORANGE
+// Non-blocking: toggles on a millis() timer so loop()/SBUS dispatch never stall,
+// and only writes the NeoPixel on a state change or flash edge (not every loop).
+// Boot/fault colours (RED, WCB-init-fail ORANGE) are set in setup(); this takes
+// over on the first loop(), so once running, FLASHING orange == "no SBUS".
+#define SBUS_LED_TIMEOUT_MS 500   // no SBUS frame for this long ⇒ "no signal"
+#define SBUS_LED_FLASH_MS   600   // slow-flash half-period (ORANGE on, then off)
+#define STATUS_LED_BRIGHT   12    // running-indicator brightness (0-255). Kept low —
+                                  // the NeoPixel sits right on the board; bump if you
+                                  // want it more visible across a room.
+static void updateStatusLed() {
+  unsigned long now = millis();
+  bool sbusAlive = (sbusLastFrameMs != 0) && (now - sbusLastFrameMs < SBUS_LED_TIMEOUT_MS);
+  static int8_t        mode       = -1;   // -1 unset, 0 steady-blue, 1 flashing-orange
+  static bool          flashOn    = false;
+  static unsigned long lastToggle = 0;
+  if (sbusAlive) {
+    if (mode != 0) { setStatusLed(C_BLUE, STATUS_LED_BRIGHT); mode = 0; }   // receiving → steady blue
+  } else if (mode != 1) {                                                   // just lost / never had SBUS
+    mode = 1; flashOn = true; lastToggle = now; setStatusLed(C_ORANGE, STATUS_LED_BRIGHT);
+  } else if (now - lastToggle >= SBUS_LED_FLASH_MS) {                       // slow flash
+    lastToggle = now; flashOn = !flashOn;
+    setStatusLed(flashOn ? C_ORANGE : C_OFF, flashOn ? STATUS_LED_BRIGHT : 0);
+  }
+}
+
 void loop() {
   // WCB — heartbeats, ACKs, WCBStream flushes
   if (wcb) wcb->update();
@@ -1625,6 +1682,9 @@ void loop() {
   // SBUS
   processSbus();
   checkDeferredTap();
+
+  // Status LED: steady BLUE while receiving SBUS, slow-flash ORANGE when not
+  updateStatusLed();
 
   // Pending delayed actions
   checkPendingActions();

@@ -2204,7 +2204,7 @@
         <img src="../Images/r2logo.png" alt="R2 logo"
              style="width:72px;height:72px;object-fit:contain;opacity:0.9">
         <div style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.3px">
-          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">021159QJUN26</span>
+          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">091538QJUN26</span>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap">
@@ -2276,6 +2276,7 @@
     <div class="cfg-body">
       <nav class="cfg-tabs" id="cfg-tabs">
         <button class="cfg-tab active" type="button" data-tab="channels">Channels</button>
+        <button class="cfg-tab"        type="button" data-tab="logical">Logical Buttons</button>
         <button class="cfg-tab"        type="button" data-tab="transmitter">Transmitter</button>
         <button class="cfg-tab"        type="button" data-tab="wcb">WCB Network</button>
         <button class="cfg-tab"        type="button" data-tab="hcr">HCR</button>
@@ -2377,6 +2378,17 @@
              control, calibration step list, and (eventually) per-model
              defaults pushed to the firmware via SET_CONFIG.
              ════════════════════════════════════════════════════════════ -->
+        <section class="cfg-pane" id="cfg-pane-logical">
+          <h2 class="cfg-pane-title">Logical Buttons</h2>
+          <div class="sb-section">
+            <h3>Matrix-channel logical buttons <small>15 extra buttons on matrix CH<span id="logical-mxch">7</span>, not on the transmitter graphic</small></h3>
+            <p style="color:var(--muted);font-size:12px;line-height:1.5;margin:0 0 12px">
+              Mix a transmitter logical switch (or any spare source) onto the matrix channel, then set the value it outputs below. When the matrix channel reaches that value (±10), the logical button fires — with the same per-mode, multi-tap actions as the physical buttons. Switch the mode tabs to map different actions per mode; <strong>Configure actions</strong> opens the standard editor. Leave the trigger blank to disable a slot.
+            </p>
+            <div id="logical-list"></div>
+          </div>
+        </section>
+
         <section class="cfg-pane" id="cfg-pane-transmitter">
           <h2 class="cfg-pane-title">Transmitter</h2>
           <div class="sb-section">
@@ -2964,6 +2976,13 @@ function applyTxModel(modelId, persist = true) {
       btnLabels[+idx] = label;
     });
   }
+  // Re-apply user custom labels (physical OR logical) stored in
+  // config.thresholds[].label, so a rename survives the model-default reset
+  // above. Logical buttons (22-36) have no model default, so this is the only
+  // thing that keeps their names on the main page after a model/config refresh.
+  if (config && Array.isArray(config.thresholds)) {
+    config.thresholds.forEach((t, i) => { if (t && t.label) btnLabels[i + 1] = t.label; });
+  }
 
   // Show only the active model's SVG group.  Each model's <g> in the
   // transmitter SVG carries a class like "tx-x18" / "tx-twinxlite".  We
@@ -3080,7 +3099,11 @@ const BTN_LABELS_DEFAULT = ['', 'B1', 'B2', 'B3', 'B4', 'B5', 'B6',
                         'T4 Left', 'T4 Right', 'T5 Left', 'T5 Right',
                         'T3 Up', 'T3 Down', 'T2 Up', 'T2 Down',
                         'T6 Left', 'T6 Right', 'T1 Left', 'T1 Right',
-                        'SK', 'SL', 'Unassigned'];
+                        'SK', 'SL', 'Unassigned',
+                        // Logical buttons (slots 22-36) — matrix-channel bands not on the TX graphic.
+                        'Logical 1', 'Logical 2', 'Logical 3', 'Logical 4', 'Logical 5',
+                        'Logical 6', 'Logical 7', 'Logical 8', 'Logical 9', 'Logical 10',
+                        'Logical 11', 'Logical 12', 'Logical 13', 'Logical 14', 'Logical 15'];
 let btnLabels = [...BTN_LABELS_DEFAULT];
 // Number of real, user-facing matrix buttons (excludes the inert slot 21
 // "Unassigned" sentinel).  Slots 19/20 are SK / SL — the X20's L/R stick-click
@@ -3088,6 +3111,12 @@ let btnLabels = [...BTN_LABELS_DEFAULT];
 // come with the optional 3-axis gimbal upgrade.  On X18 and X-Lite they sit
 // unused (channel=0).
 const RC_VISIBLE_BUTTONS = 20;
+// Logical buttons: 15 user-defined matrix-channel bands (slots 22-36) NOT on the
+// TX graphic — configured in the "Logical Buttons" tab. Mirrors the firmware's
+// RC_NUM_PHYSICAL(21) / RC_NUM_LOGICAL(15) / RC_NUM_THRESHOLDS(36).
+const RC_PHYSICAL_SLOTS = 21;
+const RC_LOGICAL_COUNT  = 15;
+const RC_TOTAL_SLOTS    = RC_PHYSICAL_SLOTS + RC_LOGICAL_COUNT;  // 36
 
 // RC Controller action types. Maestros are addressed by ID 1-8 regardless of
 // wiring — the location of each is configured in the Maestro Locations panel.
@@ -4266,6 +4295,18 @@ function applyConfig(data) {
   if (data.matrixChannel !== undefined) config.matrixChannel = data.matrixChannel;
   if (data.funcBindings)               config.funcBindings  = data.funcBindings;
   if (data.thresholds)  config.thresholds = data.thresholds;
+  // Ensure all 36 slots exist. Older firmware (or the default) may send fewer;
+  // pad the tail with inert logical-button defaults so the Logical Buttons tab
+  // always has rows to render and openModal(22..36) finds a threshold.
+  if (!Array.isArray(config.thresholds)) config.thresholds = [];
+  while (config.thresholds.length < RC_TOTAL_SLOTS) {
+    const id = config.thresholds.length + 1;
+    config.thresholds.push({ id, label: (BTN_LABELS_DEFAULT[id] || ('Logical ' + (id - RC_PHYSICAL_SLOTS))), minPwm: 0, maxPwm: 0 });
+  }
+  // Mirror custom labels into btnLabels. applyTxModel() (called above) reset
+  // them to model defaults; this re-applies the user's physical + logical names
+  // now that the real thresholds are loaded, so cards and the editor title match.
+  config.thresholds.forEach((t, i) => { if (t && t.label) btnLabels[i + 1] = t.label; });
   if (data.mappings)    config.mappings   = data.mappings;
   if (data.switches)    config.switches   = data.switches;
   if (data.knobs)       config.knobs      = data.knobs;
@@ -4297,6 +4338,7 @@ function applyConfig(data) {
   // was constructed with — snapshot them as the baseline for dirty tracking.
   snapshotWcbBaseline();
   renderMaestroLocations();
+  renderLogicalButtons();
   const mcEl = document.getElementById('cfg-matrix-ch');
   if (mcEl && config.matrixChannel) mcEl.value = config.matrixChannel;
   applyBindingsUI();
@@ -4965,10 +5007,17 @@ function updatePWMDisplay(matrixVal, modeVal, btn, mode) {
   const effectiveBtn = isReleased ? 0 : btn;
 
   const chip = document.getElementById('live-btn-name');
-  chip.textContent = effectiveBtn > 0
-    ? `Btn ${effectiveBtn}: ${btnLabels[effectiveBtn]} (Mode ${mode})`
-    : 'Neutral / Released';
-  chip.style.background = effectiveBtn > 0 ? 'var(--accent)' : 'var(--muted)';
+  if (effectiveBtn > 0) {
+    const nm = (config.thresholds[effectiveBtn - 1] && config.thresholds[effectiveBtn - 1].label)
+               || btnLabels[effectiveBtn] || ('Btn ' + effectiveBtn);
+    const isLog = effectiveBtn > RC_PHYSICAL_SLOTS;
+    chip.textContent = isLog ? `⚡ ${nm} · logical (Mode ${mode})`
+                             : `Btn ${effectiveBtn}: ${nm} (Mode ${mode})`;
+    chip.style.background = isLog ? 'var(--accent2)' : 'var(--accent)';
+  } else {
+    chip.textContent = 'Neutral / Released';
+    chip.style.background = 'var(--muted)';
+  }
 
   document.querySelectorAll('.btn-zone.live-active').forEach(el => el.classList.remove('live-active'));
   if (effectiveBtn > 0 && effectiveBtn <= RC_VISIBLE_BUTTONS) {
@@ -4978,6 +5027,14 @@ function updatePWMDisplay(matrixVal, modeVal, btn, mode) {
     document.querySelectorAll(`.btn-zone[data-btn="${effectiveBtn}"]`).forEach(el => {
       el.classList.add('live-active');
     });
+  }
+
+  // Logical buttons (slots 22-36) have no SVG zone — glow their assignment-list
+  // card instead so you can see them fire, mirroring the SVG glow above.
+  document.querySelectorAll('[data-logical-id]').forEach(el => { el.style.boxShadow = 'none'; });
+  if (effectiveBtn > RC_PHYSICAL_SLOTS) {
+    const lc = document.querySelector(`[data-logical-id="${effectiveBtn}"]`);
+    if (lc) lc.style.boxShadow = '0 0 0 2px var(--live-color, #ff8c00), 0 0 12px var(--live-color, #ff8c00)';
   }
 }
 
@@ -5133,6 +5190,67 @@ function renderAxesTable() {
   });
 }
 
+// Render the Logical Buttons tab — 15 rows for matrix-channel slots 22-36.
+// Each row: name, the matrix-channel trigger value (center, ±10 deadband), a
+// per-mode "mapped" summary, and a button that opens the standard action editor
+// (openModal) for that slot in the current mode. Reuses config.thresholds[] and
+// config.mappings[] exactly like the physical buttons — only the UI is new.
+function renderLogicalButtons() {
+  const host = document.getElementById('logical-list');
+  if (!host) return;
+  const mxEl = document.getElementById('logical-mxch');
+  if (mxEl) mxEl.textContent = config.matrixChannel || 7;
+  const escAttr = s => String(s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+  host.innerHTML = '';
+  for (let id = RC_PHYSICAL_SLOTS + 1; id <= RC_TOTAL_SLOTS; id++) {
+    let t = config.thresholds[id - 1];
+    if (!t) { t = { id, label: btnLabels[id] || ('Logical ' + (id - RC_PHYSICAL_SLOTS)), minPwm: 0, maxPwm: 0 }; config.thresholds[id - 1] = t; }
+    const center = Math.round(((t.minPwm || 0) + (t.maxPwm || 0)) / 2);
+    let modesMapped = 0;
+    for (let mode = 1; mode <= 3; mode++) {
+      const m = config.mappings[String(mode * 100 + id)];
+      if (m && ['t1', 't2', 't3'].some(k => (m[k] || []).length)) modesMapped++;
+    }
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 0;border-bottom:1px solid var(--border)';
+    row.innerHTML = `
+      <span style="color:var(--muted);font-size:12px;min-width:30px">#${id}</span>
+      <input type="text" class="logical-label" data-id="${id}" value="${escAttr(t.label)}" maxlength="23"
+             placeholder="Logical ${id - RC_PHYSICAL_SLOTS}" style="width:130px" title="Name shown in the action editor and summaries">
+      <div class="field-group" style="margin:0">
+        <label style="font-size:11px">Trigger <span class="unit-label">(${unitLbl()})</span></label>
+        <input type="number" class="logical-center" data-id="${id}" min="0" max="2047" step="1"
+               value="${center ? fmtVal(center) : ''}" placeholder="—" style="width:90px"
+               title="Matrix-channel value this logical button matches (±10 deadband). Set it to what your TX outputs on the matrix channel when this logical switch is active. Blank = disabled.">
+      </div>
+      <span style="color:var(--muted);font-size:12px;flex:1;min-width:90px">${modesMapped ? (modesMapped + ' mode' + (modesMapped > 1 ? 's' : '') + ' mapped') : 'no actions'}</span>
+      <button type="button" data-id="${id}" style="padding:5px 11px;cursor:pointer">Configure actions →</button>
+    `;
+    host.appendChild(row);
+  }
+  host.querySelectorAll('.logical-label').forEach(el => el.addEventListener('change', e => {
+    const id = +e.target.dataset.id;
+    if (!config.thresholds[id - 1]) config.thresholds[id - 1] = { id, label: '', minPwm: 0, maxPwm: 0 };
+    config.thresholds[id - 1].label = e.target.value.slice(0, 23);
+    btnLabels[id] = config.thresholds[id - 1].label || ('Logical ' + (id - RC_PHYSICAL_SLOTS));
+    if (typeof renderAssignmentList === 'function') renderAssignmentList();
+  }));
+  host.querySelectorAll('.logical-center').forEach(el => el.addEventListener('change', e => {
+    const id = +e.target.dataset.id;
+    if (!config.thresholds[id - 1]) config.thresholds[id - 1] = { id, label: btnLabels[id] || '', minPwm: 0, maxPwm: 0 };
+    const raw = e.target.value.trim();
+    if (raw === '') { config.thresholds[id - 1].minPwm = 0; config.thresholds[id - 1].maxPwm = 0; }
+    else {
+      const v = parseVal(raw);
+      if (!Number.isFinite(v)) return;
+      config.thresholds[id - 1].minPwm = Math.max(0, v - 10);
+      config.thresholds[id - 1].maxPwm = v + 10;
+    }
+    if (typeof renderAssignmentList === 'function') renderAssignmentList();
+  }));
+  host.querySelectorAll('button[data-id]').forEach(el => el.addEventListener('click', () => openModal(+el.dataset.id)));
+}
+
 function renderAssignmentList() {
   const list = document.getElementById('assignment-list');
   list.innerHTML = '';
@@ -5160,6 +5278,43 @@ function renderAssignmentList() {
     `;
     list.appendChild(card);
   });
+
+  // ── Logical buttons (slots 22-36) ────────────────────────────────────────
+  // They have no place on the TX graphic, so surface any that are "in use"
+  // (trigger band set, or actions mapped in any mode) here as cards — same
+  // click-to-edit UX as the physical buttons, with the current mode's actions.
+  const logicalInUse = [];
+  for (let id = RC_PHYSICAL_SLOTS + 1; id <= RC_TOTAL_SLOTS; id++) {
+    const t = config.thresholds[id - 1];
+    const hasBand = t && (((t.minPwm || 0) !== 0) || ((t.maxPwm || 0) !== 0));
+    const hasActsAnyMode = [1, 2, 3].some(mode =>
+      ['t1', 't2', 't3'].some(k => (config.mappings[String(mode * 100 + id)] || {})[k]?.length));
+    if (hasBand || hasActsAnyMode) logicalInUse.push(id);
+  }
+  if (logicalInUse.length) {
+    const hdr = document.createElement('div');
+    hdr.style.cssText = 'grid-column:1/-1;margin-top:6px;font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em';
+    hdr.textContent = 'Logical Buttons';
+    list.appendChild(hdr);
+    logicalInUse.forEach(id => {
+      const m = config.mappings[String(currentMode * 100 + id)];
+      const t = config.thresholds[id - 1] || {};
+      const center = Math.round(((t.minPwm || 0) + (t.maxPwm || 0)) / 2);
+      const lbl = (t && t.label) || btnLabels[id] || ('Logical ' + (id - RC_PHYSICAL_SLOTS));
+      const isConfig = m && (m.t1?.length || m.t2?.length || m.t3?.length || m.exclusive);
+      const excBadge = m?.exclusive ? ' <span style="color:var(--yellow);font-size:10px">⚡ excl</span>' : '';
+      const card = document.createElement('div');
+      card.dataset.logicalId = id;   // so updatePWMDisplay() can glow it live
+      card.style.cssText = `background:var(--card); border-radius:8px; padding:10px; cursor:pointer; border:1px solid var(--border); border-left:3px solid var(--accent)`;
+      card.onclick = () => openModal(id);
+      card.innerHTML = `
+        <div style="font-weight:700;margin-bottom:4px;color:${isConfig ? 'var(--text)' : 'var(--muted)'}">${escH(lbl)}${excBadge}
+          <span style="color:var(--muted);font-weight:400;font-size:10px">· ch${config.matrixChannel || 7}@${center ? fmtVal(center) : '—'}</span></div>
+        ${tierSummary(m, 1)}${tierSummary(m, 2)}${tierSummary(m, 3)}
+      `;
+      list.appendChild(card);
+    });
+  }
 }
 
 function tierSummary(m, tier) {
@@ -6594,6 +6749,7 @@ function setConfigTab(name) {
     if (on) found = true;
   });
   panes.forEach(p => p.classList.toggle('active', p.id === 'cfg-pane-' + name));
+  if (name === 'logical') renderLogicalButtons();   // (re)populate rows when opened
   if (!found) setConfigTab('channels');   // fallback if stored name is stale
   else try { localStorage.setItem('rcConfigLastTab', name); } catch {}
 }
@@ -7497,13 +7653,20 @@ function exportConfigCsv() {
 
   const thresholds = config.thresholds || defaultThresholds();
   for (let mode = 1; mode <= 3; mode++) {
-    for (let btn = 1; btn <= 18; btn++) {
+    for (let btn = 1; btn <= RC_TOTAL_SLOTS; btn++) {
       const key = String(mode * 100 + btn);
       const mapping = config.mappings[key] || {};
       const threshold = thresholds[btn - 1] || {};
       const pwmValue = (threshold.minPwm !== undefined && threshold.maxPwm !== undefined)
         ? Math.round((threshold.minPwm + threshold.maxPwm) / 2) : '';
       const isExclusive = mapping.exclusive ? '1' : '';
+      // Skip the inert slot-21 "Unassigned" sentinel, and skip logical slots
+      // (22-36) that are entirely unused, so the CSV isn't padded with blank
+      // rows. Physical slots 1-20 always emit (now incl. the X20 SK/SL clicks).
+      const _hasActs = [1, 2, 3].some(ti => (mapping['t' + ti] || []).length);
+      const _hasBand = pwmValue !== '' && pwmValue !== 0;
+      if (btn === RC_PHYSICAL_SLOTS) continue;
+      if (btn > RC_PHYSICAL_SLOTS && !_hasActs && !_hasBand && !isExclusive) continue;
       for (let tier = 1; tier <= 3; tier++) {
         const actions = mapping['t' + tier] || [];
         if (!actions.length) {
@@ -7974,14 +8137,19 @@ function escH(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').r
 function defaultThresholds() {
   // Measured SBUS values from the live X18 (matrix channel). Window = center
   // ±12 → ~17-count neutral deadband between adjacent buttons (SBUS noise is
-  // only ±1-2). Slot 19 is inert (0/0 never matches) and hidden from the UI;
-  // it stays only so the 19-slot firmware mapping/NVS math is unaffected.
+  // only ±1-2). Slots 19/20 are SK/SL (X20 stick-clicks); slot 21 "Unassigned"
+  // is the inert sentinel. Slots 22-36 are the 15 logical buttons — inert (0/0)
+  // by default until the user assigns a band in the Logical Buttons tab. This
+  // is only a pre-connect fallback; the board's GET_CONFIG overrides it.
   const bands = [
     ['B1',       1811], ['B2',       1770], ['B3',      1730], ['B4', 1688],
     ['B5',       1646], ['B6',       1606], ['T4 Left', 1565], ['T4 Right', 1524],
     ['T5 Left',  1483], ['T5 Right', 1442], ['T3 Up',     1401], ['T3 Down', 1360],
     ['T2 Up',      1320], ['T2 Down',      1278], ['T6 Left', 1237], ['T6 Right', 1196],
-    ['T1 Left',  1155], ['T1 Right', 1115], ['Unassigned', 0],
+    ['T1 Left',  1155], ['T1 Right', 1115], ['SK', 1074], ['SL', 1033], ['Unassigned', 0],
+    ['Logical 1', 0], ['Logical 2', 0], ['Logical 3', 0], ['Logical 4', 0], ['Logical 5', 0],
+    ['Logical 6', 0], ['Logical 7', 0], ['Logical 8', 0], ['Logical 9', 0], ['Logical 10', 0],
+    ['Logical 11', 0], ['Logical 12', 0], ['Logical 13', 0], ['Logical 14', 0], ['Logical 15', 0],
   ];
   return bands.map(([label, c], i) => ({
     id:     i + 1,

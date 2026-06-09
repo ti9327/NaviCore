@@ -22,7 +22,7 @@ Quick definitions for the jargon scattered across this wiki.
 | **MP3 Trigger** | A SparkFun **MP3 Trigger v2.x** sound board. Driven over serial or via a WCB's MP3 driver. |
 | **NVS** | **Non‑Volatile Storage** — the ESP32 flash area where your saved configuration lives (survives reboots). *Update Firmware* preserves it; *Full Wipe* erases it. |
 | **DTG** | **Date‑Time‑Group** — the timestamp stamped into the firmware version (`v0.2.0_011009QJUN26`) by the pre‑commit hook, so a binary's name matches the running version. |
-| **FQBN** | **Fully Qualified Board Name** — the `arduino-cli` board+options string the build uses (`esp32:esp32:esp32s3:USBMode=hwcdc,CDCOnBoot=cdc,PartitionScheme=min_spiffs`). |
+| **FQBN** | **Fully Qualified Board Name** — the `arduino-cli` board+options string the build uses (`esp32:esp32:esp32s3:USBMode=hwcdc,CDCOnBoot=cdc,PartitionScheme=min_spiffs,PSRAM=opi`). `PSRAM=opi` is **required** — the runtime config lives in external PSRAM. |
 | **USB CDC (on boot)** | Native‑USB serial mode on the ESP32‑S3. NaviCore is built with it **enabled**, which frees a hardware UART for SBUS‑out and is why `Serial` is the native USB port. |
 | **Mode** | One of **three** complete mapping sets, chosen by a 3‑position switch (default **SE**). The same button does different things per mode — tripling your control surface. |
 | **Tap window / multi‑tap** | The window (default **500 ms**) NaviCore waits to see if more taps are coming, so single / double / triple taps can each fire different actions. |

@@ -80,12 +80,15 @@ producing a one-off bin without going through CI.
 1. Open `NaviCore.ino` in Arduino IDE.
 2. Tools → Board → **ESP32S3 Dev Module** (or whatever you normally use for WCB v3.2).
 3. Tools → Partition Scheme → **Minimal SPIFFS (1.9MB APP with OTA / 190KB SPIFFS)**.
-4. Sketch → **Export Compiled Binary** (Ctrl/Cmd+Alt+S).
-5. The IDE writes three files into `build/<fqbn>/`:
+4. Tools → PSRAM → **OPI PSRAM** — **required**; the firmware allocates its
+   runtime config in external PSRAM and halts at boot (solid red status LED)
+   without it.
+5. Sketch → **Export Compiled Binary** (Ctrl/Cmd+Alt+S).
+6. The IDE writes three files into `build/<fqbn>/`:
    - `NaviCore.ino.bin`
    - `NaviCore.ino.bootloader.bin`
    - `NaviCore.ino.partitions.bin`
-6. Copy them into `firmware/`, renaming with a version prefix + the suffixes
+7. Copy them into `firmware/`, renaming with a version prefix + the suffixes
    in the table above. Example:
    ```
    cp build/.../NaviCore.ino.bin             firmware/NaviCore_<DTG>_ESP32S3.bin
@@ -94,7 +97,7 @@ producing a one-off bin without going through CI.
    ```
    (Old versioned files can be deleted or left as history — the flasher only
    looks at suffixes, so it always picks one of each.)
-7. Commit to `main`. The Config → Firmware tab will pick them up automatically.
+8. Commit to `main`. The Config → Firmware tab will pick them up automatically.
 
 ### Option B — `tools/build-firmware.ps1` (Windows) or `build-firmware.sh` (Linux/macOS/WSL)
 

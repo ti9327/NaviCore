@@ -29,7 +29,8 @@ The page fetches binaries from `main` by default. (Developers can target another
 2. **Tools → Board →** *ESP32S3 Dev Module* (or your usual WCB v3.2 board definition).
 3. **Tools → Partition Scheme →** *Minimal SPIFFS (1.9 MB APP with OTA / 190 KB SPIFFS)*.
 4. **Tools → USB CDC On Boot → Enabled** (so `Serial` is native USB‑CDC; the firmware relies on this for the SBUS‑out UART allocation).
-5. **Sketch → Upload**, or **Export Compiled Binary** to produce the three `.bin` files.
+5. **Tools → PSRAM →** *OPI PSRAM* — **required**. The firmware allocates its ~210 KB runtime configuration in external PSRAM at boot; if PSRAM is disabled (or set to QSPI) the allocation fails and the board halts with a **solid red status LED**. The WCB v3.2's ESP32‑S3‑WROOM‑1 **N16R8** module has 8 MB of *octal* PSRAM, hence "OPI".
+6. **Sketch → Upload**, or **Export Compiled Binary** to produce the three `.bin` files.
 
 ### Required libraries
 

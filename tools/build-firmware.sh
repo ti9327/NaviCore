@@ -64,6 +64,13 @@ echo ""
 #   • USB CDC On Boot: Enabled  →  CDCOnBoot=cdc
 #   • USB Mode: Hardware CDC and JTAG  →  USBMode=hwcdc
 #   • Partition Scheme: Minimal SPIFFS (1.9MB APP / OTA)  →  PartitionScheme=min_spiffs
+#   • PSRAM: OPI PSRAM  →  PSRAM=opi
+#
+# Why PSRAM=opi matters: NaviCore.ino heap-allocates the ~210 KB RcConfig
+# struct from the PSRAM heap (ps_calloc at the top of setup()).  The WCB
+# v3.2's ESP32-S3-WROOM-1 N16R8 module has 8 MB of OCTAL PSRAM.  Without
+# PSRAM=opi the core builds without -DBOARD_HAS_PSRAM, ps_calloc() returns
+# null, and the firmware halts at boot with a solid red status LED.
 #
 # Why USBMode=hwcdc + CDCOnBoot=cdc matter: NaviCore.ino calls
 # Serial.setTxTimeoutMs(50) which only exists on the HWCDC class (native
@@ -74,7 +81,7 @@ echo ""
 # and the config tool unable to connect.  Symptoms when this is wrong:
 # IDE-built firmware works, web-flashed (CI-built) firmware appears
 # "dead" on the OTG port.
-FQBN="esp32:esp32:esp32s3:USBMode=hwcdc,CDCOnBoot=cdc,PartitionScheme=min_spiffs"
+FQBN="esp32:esp32:esp32s3:USBMode=hwcdc,CDCOnBoot=cdc,PartitionScheme=min_spiffs,PSRAM=opi"
 BUILD_DIR="${TMPDIR:-/tmp}/rc-fw-build"
 
 rm -rf "$BUILD_DIR"

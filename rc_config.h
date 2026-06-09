@@ -112,10 +112,14 @@ struct RcMapping {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  PWM threshold bands for the 21 virtual matrix-channel buttons
+//  PWM threshold bands on the matrix channel (RC_NUM_THRESHOLDS slots).
+//  Slots 1-21 are physical (drawn on the TX graphic; slot 21 = inert
+//  "Unassigned" sentinel). Slots 22-36 are user-defined LOGICAL buttons —
+//  extra bands on the same matrix channel, not tied to a physical control.
+//  All decode identically through pwmToButton().
 // ─────────────────────────────────────────────────────────────────────────────
 struct RcThreshold {
-  int  id;          // 1–21
+  int  id;          // 1–36 (1-21 physical, 22-36 logical)
   char label[24];
   int  minPwm;
   int  maxPwm;
@@ -332,11 +336,24 @@ enum RcTxModel : uint8_t {
 //  "Unassigned" sentinel.  X18/X-Lite configs load fine because the two new
 //  slots are persisted by name (JSON keys) and default to channel=0 when
 //  the model doesn't use them.
+//
+//  LOGICAL BUTTONS: slots 22-36 are 15 user-defined "logical buttons" — extra
+//  PWM bands on the SAME matrix channel, NOT tied to any physical control on the
+//  TX graphic. They decode/debounce/tap/dispatch through the exact same path as
+//  the physical matrix slots (pwmToButton + rcMapIndex), so the only firmware
+//  change is the slot count. They default INERT (band 0/0 never matches) until
+//  the user assigns a band + per-mode actions in the config tool's Logical
+//  Buttons panel. rcConfig lives in PSRAM (EXT_RAM_BSS_ATTR on its definition in
+//  NaviCore.ino), so the extra ~85 KB of mapping storage costs internal RAM nil.
 // ─────────────────────────────────────────────────────────────────────────────
-#define RC_NUM_THRESHOLDS 21
-#define RC_NUM_MAPPINGS   63   // 3 modes × 21 buttons
+#define RC_NUM_PHYSICAL   21   // matrix slots on the TX graphic (1-20 buttons + slot-21 sentinel)
+#define RC_NUM_LOGICAL    15   // user-defined logical buttons (matrix-channel bands, slots 22-36)
+#define RC_NUM_THRESHOLDS 36   // RC_NUM_PHYSICAL + RC_NUM_LOGICAL — total matrix-channel bands
+#define RC_NUM_MAPPINGS   108  // 3 modes × 36 slots
 
 inline int rcMapIndex(int mode, int btn) { return (mode - 1) * RC_NUM_THRESHOLDS + (btn - 1); }
+// True for logical-button slots (22-36) — i.e. not drawn on the TX graphic.
+inline bool rcIsLogicalSlot(int btn) { return btn > RC_NUM_PHYSICAL && btn <= RC_NUM_THRESHOLDS; }
 
 struct RcConfig {
   uint8_t        txModel;        // RcTxModel — drives GUI layout + defaults
@@ -374,7 +391,11 @@ struct RcConfig {
   uint32_t       maestroBaud;
 };
 
-extern RcConfig rcConfig;
+// rcConfig is heap-allocated in PSRAM at boot (see NaviCore.ino setup()); the
+// global is a pointer, and this macro keeps every `rcConfig.xxx` access working
+// unchanged.  g_rcConfig MUST be allocated before any rcConfig access.
+extern RcConfig* g_rcConfig;
+#define rcConfig (*g_rcConfig)
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Construction helpers
@@ -482,6 +503,14 @@ void rcConfigLoadDefaults() {
     { "L-Stick Click", 1062, 1086 },   // X20 3-axis gimbal momentary (left stick press)
     { "R-Stick Click", 1021, 1045 },   // X20 3-axis gimbal momentary (right stick press)
     { "Unassigned",       0,    0 },
+    // Logical buttons (slots 22-36): extra user-defined bands on the matrix
+    // channel, off the TX graphic. INERT (0/0 never matches) until the user
+    // sets a band + actions in the config tool's Logical Buttons panel.
+    { "Logical 1",  0, 0 }, { "Logical 2",  0, 0 }, { "Logical 3",  0, 0 },
+    { "Logical 4",  0, 0 }, { "Logical 5",  0, 0 }, { "Logical 6",  0, 0 },
+    { "Logical 7",  0, 0 }, { "Logical 8",  0, 0 }, { "Logical 9",  0, 0 },
+    { "Logical 10", 0, 0 }, { "Logical 11", 0, 0 }, { "Logical 12", 0, 0 },
+    { "Logical 13", 0, 0 }, { "Logical 14", 0, 0 }, { "Logical 15", 0, 0 },
   };
   for (int i = 0; i < RC_NUM_THRESHOLDS; i++) {
     rcConfig.thresholds[i].id = i + 1;
@@ -668,7 +697,7 @@ static bool actionFromJson(const JsonObject& obj, RcAction& a) {
 //  Serialise full config to JSON string (for GET_CONFIG WebSocket response)
 // ─────────────────────────────────────────────────────────────────────────────
 String rcConfigToJSON() {
-  DynamicJsonDocument doc(32768);
+  DynamicJsonDocument doc(49152);   // sized for 36 matrix slots (21 physical + 15 logical) when heavily mapped
 
   doc["txModel"]              = rcConfig.txModel;          // RcTxModel — GUI uses this to swap SVG / labels
   doc["threeAxisGimbals"]     = rcConfig.threeAxisGimbals; // X20 hardware option (shows/hides J5/J6 + stick-click matrix slots)
@@ -988,7 +1017,7 @@ void rcConfigSaveNVS() {
 
   // Thresholds
   {
-    DynamicJsonDocument doc(1024);
+    DynamicJsonDocument doc(4096);   // 36 thresholds (was 21) — node pool, not the NVS string
     JsonArray arr = doc.to<JsonArray>();
     for (int i = 0; i < RC_NUM_THRESHOLDS; i++) {
       JsonObject o = arr.createNestedObject();
@@ -1001,36 +1030,44 @@ void rcConfigSaveNVS() {
     prefs.putString("th", s);
   }
 
-  // Mode mappings (one key per mode).  Buffer was 4096 when RC_NUM_THRESHOLDS
-  // was 19; with 21 buttons the worst case grows to ~8.4 KB, so use 8192.
-  // NVS itself is still capped at 4000 bytes per value — if the resulting
-  // JSON string exceeds that, the putString silently fails (caller should
-  // log).  In practice mappings are usually sparse (most slots empty), so
-  // the serialized size stays well under the NVS cap.
-  const char* modeKeys[3] = { "m1", "m2", "m3" };
-  for (int mode = 1; mode <= 3; mode++) {
-    DynamicJsonDocument doc(8192);
-    JsonObject root = doc.to<JsonObject>();
-    for (int btn = 1; btn <= RC_NUM_THRESHOLDS; btn++) {
-      int idx = rcMapIndex(mode, btn);
-      const RcMapping& m = rcConfig.mappings[idx];
-      bool hasAny = false;
-      for (int ti = 0; ti < 3 && !hasAny; ti++) if (m.t[ti].count > 0) hasAny = true;
-      if (!hasAny && !m.exclusive) continue;
-      String key = String(mode * 100 + btn);
-      JsonObject mObj = root.createNestedObject(key);
-      mObj["exclusive"] = m.exclusive;
-      for (int ti = 0; ti < 3; ti++) {
-        if (m.t[ti].count == 0) continue;
-        String tierKey = String("t") + (ti + 1);
-        JsonArray acts = mObj.createNestedArray(tierKey);
-        for (int ai = 0; ai < m.t[ti].count; ai++) {
-          actionToJson(m.t[ti].a[ai], acts.createNestedObject());
+  // Mode mappings.  Physical buttons (slots 1..RC_NUM_PHYSICAL) go in m1/m2/m3;
+  // logical buttons (slots 22..36) go in their OWN keys m1L/m2L/m3L.  Splitting
+  // keeps each NVS value well under the 4000-byte putString ceiling even when
+  // many slots are configured (NVS caps a single string value at 4000 bytes; an
+  // over-cap putString silently fails).  Mappings are usually sparse, so each
+  // blob normally stays small; the split just removes the worst-case overflow.
+  // Keeping the physical range in the original m1/m2/m3 keys is backward
+  // compatible — existing configs load unchanged, and old firmware simply
+  // ignores the new mL keys.
+  struct { const char* key[3]; int lo, hi; } mapGroups[2] = {
+    { { "m1",  "m2",  "m3"  }, 1,                   RC_NUM_PHYSICAL   },
+    { { "m1L", "m2L", "m3L" }, RC_NUM_PHYSICAL + 1, RC_NUM_THRESHOLDS },
+  };
+  for (int g = 0; g < 2; g++) {
+    for (int mode = 1; mode <= 3; mode++) {
+      DynamicJsonDocument doc(8192);
+      JsonObject root = doc.to<JsonObject>();
+      for (int btn = mapGroups[g].lo; btn <= mapGroups[g].hi; btn++) {
+        int idx = rcMapIndex(mode, btn);
+        const RcMapping& m = rcConfig.mappings[idx];
+        bool hasAny = false;
+        for (int ti = 0; ti < 3 && !hasAny; ti++) if (m.t[ti].count > 0) hasAny = true;
+        if (!hasAny && !m.exclusive) continue;
+        String key = String(mode * 100 + btn);
+        JsonObject mObj = root.createNestedObject(key);
+        mObj["exclusive"] = m.exclusive;
+        for (int ti = 0; ti < 3; ti++) {
+          if (m.t[ti].count == 0) continue;
+          String tierKey = String("t") + (ti + 1);
+          JsonArray acts = mObj.createNestedArray(tierKey);
+          for (int ai = 0; ai < m.t[ti].count; ai++) {
+            actionToJson(m.t[ti].a[ai], acts.createNestedObject());
+          }
         }
       }
+      String s; serializeJson(doc, s);
+      prefs.putString(mapGroups[g].key[mode - 1], s);
     }
-    String s; serializeJson(doc, s);
-    prefs.putString(modeKeys[mode - 1], s);
   }
 
   // Switches
@@ -1164,7 +1201,7 @@ void rcConfigLoadNVS() {
 
   if (prefs.isKey("th")) {
     String s = prefs.getString("th", "");
-    DynamicJsonDocument doc(1024);
+    DynamicJsonDocument doc(4096);   // 36 thresholds (was 21) — node pool, not the NVS string
     if (deserializeJson(doc, s) == DeserializationError::Ok) {
       JsonArray arr = doc.as<JsonArray>();
       int i = 0;
@@ -1179,12 +1216,14 @@ void rcConfigLoadNVS() {
     }
   }
 
-  const char* modeKeys[3] = { "m1", "m2", "m3" };
-  for (int mode = 1; mode <= 3; mode++) {
-    if (!prefs.isKey(modeKeys[mode - 1])) continue;
-    String s = prefs.getString(modeKeys[mode - 1], "");
-    // Buffer sized to match the writer (see save path) — 8 KB to hold
-    // worst-case 21-button mode mappings.
+  // Mode mappings: physical (m1/m2/m3) + logical (m1L/m2L/m3L).  Both groups
+  // parse identically — the buttonId in each key (mode*100+btn) selects the
+  // slot, and the b_ <= RC_NUM_THRESHOLDS gate accepts logical slots 22-36.
+  // Old configs without the mL keys just leave the logical slots empty.
+  const char* mapKeys[6] = { "m1", "m2", "m3", "m1L", "m2L", "m3L" };
+  for (int k = 0; k < 6; k++) {
+    if (!prefs.isKey(mapKeys[k])) continue;
+    String s = prefs.getString(mapKeys[k], "");
     DynamicJsonDocument doc(8192);
     if (deserializeJson(doc, s) != DeserializationError::Ok) continue;
     JsonObject root = doc.as<JsonObject>();

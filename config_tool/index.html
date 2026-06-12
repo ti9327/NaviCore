@@ -2204,7 +2204,7 @@
         <img src="../Images/r2logo.png" alt="R2 logo"
              style="width:72px;height:72px;object-fit:contain;opacity:0.9">
         <div style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.3px">
-          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">091538QJUN26</span>
+          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">112258QJUN26</span>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap">
@@ -2976,13 +2976,9 @@ function applyTxModel(modelId, persist = true) {
       btnLabels[+idx] = label;
     });
   }
-  // Re-apply user custom labels (physical OR logical) stored in
-  // config.thresholds[].label, so a rename survives the model-default reset
-  // above. Logical buttons (22-36) have no model default, so this is the only
-  // thing that keeps their names on the main page after a model/config refresh.
-  if (config && Array.isArray(config.thresholds)) {
-    config.thresholds.forEach((t, i) => { if (t && t.label) btnLabels[i + 1] = t.label; });
-  }
+  // NOTE: btnLabels holds MODEL labels only (physical slots). Custom names —
+  // logical buttons especially — are read on demand via getBtnLabel(), which
+  // prefers config.thresholds[].label for slots 22-36. No re-sync needed here.
 
   // Show only the active model's SVG group.  Each model's <g> in the
   // transmitter SVG carries a class like "tx-x18" / "tx-twinxlite".  We
@@ -3117,6 +3113,33 @@ const RC_VISIBLE_BUTTONS = 20;
 const RC_PHYSICAL_SLOTS = 21;
 const RC_LOGICAL_COUNT  = 15;
 const RC_TOTAL_SLOTS    = RC_PHYSICAL_SLOTS + RC_LOGICAL_COUNT;  // 36
+
+// Display label for a matrix slot — the ONE place label precedence lives.
+// LOGICAL slots (22-36): config.thresholds[].label is the source of truth
+// (user-named in the Logical Buttons tab). PHYSICAL slots (1-21): the active
+// TX model's labels (btnLabels) win, so per-model overrides (e.g. X-Lite's
+// "T1" vs X18's "T1 Left") render correctly. No cached copies to re-sync —
+// callers always derive on demand.
+function getBtnLabel(id) {
+  if (id > RC_PHYSICAL_SLOTS) {
+    const t = (config && config.thresholds) ? config.thresholds[id - 1] : null;
+    return (t && t.label) || ('Logical ' + (id - RC_PHYSICAL_SLOTS));
+  }
+  return btnLabels[id] || ('Btn ' + id);
+}
+
+// Shared "configured / in use" predicates — ONE definition used by the
+// assignment cards, the Logical Buttons tab, and the CSV export, so the views
+// can never drift apart on which slots count as in use.
+function mappingHasActions(m) { return !!(m && ((m.t1 && m.t1.length) || (m.t2 && m.t2.length) || (m.t3 && m.t3.length))); }
+function mappingInUse(m)      { return mappingHasActions(m) || !!(m && m.exclusive); }
+function thresholdHasBand(t)  { return !!(t && (((t.minPwm || 0) !== 0) || ((t.maxPwm || 0) !== 0))); }
+function slotInUseAnyMode(id) {
+  if (thresholdHasBand((config.thresholds || [])[id - 1])) return true;
+  for (let mode = 1; mode <= 3; mode++)
+    if (mappingInUse(config.mappings[String(mode * 100 + id)])) return true;
+  return false;
+}
 
 // RC Controller action types. Maestros are addressed by ID 1-8 regardless of
 // wiring — the location of each is configured in the Maestro Locations panel.
@@ -4303,10 +4326,6 @@ function applyConfig(data) {
     const id = config.thresholds.length + 1;
     config.thresholds.push({ id, label: (BTN_LABELS_DEFAULT[id] || ('Logical ' + (id - RC_PHYSICAL_SLOTS))), minPwm: 0, maxPwm: 0 });
   }
-  // Mirror custom labels into btnLabels. applyTxModel() (called above) reset
-  // them to model defaults; this re-applies the user's physical + logical names
-  // now that the real thresholds are loaded, so cards and the editor title match.
-  config.thresholds.forEach((t, i) => { if (t && t.label) btnLabels[i + 1] = t.label; });
   if (data.mappings)    config.mappings   = data.mappings;
   if (data.switches)    config.switches   = data.switches;
   if (data.knobs)       config.knobs      = data.knobs;
@@ -4587,28 +4606,25 @@ function renderHcrDestFields() {
   const t = document.getElementById('hcr-transport')?.value || d.transport || 'serial';
   d.transport = t;
   if (t === 'wcb') {
-    // HCR over WCB is unicast-only — it uses raw-serial forward (sendRaw) to a
-    // specific WCB + port. Broadcast (0) is intentionally unsupported because
-    // there's no broadcast primitive that delivers raw bytes to an arbitrary
-    // serial port. An HCR vocalizer is a single device at a known location.
+    // HCR over WCB is unicast-only — the firmware sends an ETM ";H,FN,..."
+    // command to the target WCB, whose own HCR driver (configured there via
+    // ?HCR,PORT,Sx:baud) writes to its locally wired vocalizer. The serial
+    // port is therefore chosen ON THE RECEIVING WCB, not here — the legacy
+    // wcbPort field is ignored by the firmware and no longer shown (it only
+    // applied to the old raw-serial forward transport). Broadcast (0) is
+    // unsupported: an HCR vocalizer is a single device at a known WCB.
     let tgt = (d.target !== undefined ? parseInt(d.target, 10) : 2);
     if (!Number.isFinite(tgt) || tgt < 1) tgt = 2;   // migrate any old 0/broadcast value
     if (tgt > 20) tgt = 20;
-    const port = (d.wcbPort !== undefined ? d.wcbPort : 1);
     wrap.innerHTML = `
       <label>WCB:</label>
       <input type="number" id="hcr-target" min="1" max="20" value="${tgt}"
              style="width:60px;font-size:12px"
              title="Unicast WCB ID 1-20 (the WCB the HCR device is wired to). Broadcast is not supported for HCR."
              oninput="config.hcrDest.target = String(Math.max(1, Math.min(20, parseInt(this.value,10)||1)))">
-      <label>Port:</label>
-      <input type="number" id="hcr-wcbPort" min="1" max="5" value="${port}"
-             style="width:50px;font-size:12px"
-             title="Serial port on destination WCB (1-5)"
-             oninput="config.hcrDest.wcbPort = +this.value">
+      <small style="color:var(--muted);font-size:11px">port: set on that WCB via <code>?HCR,PORT</code></small>
     `;
     d.target = String(tgt);          // normalise (also migrates a stale 0)
-    if (d.wcbPort === undefined) d.wcbPort = port;
     delete d.port;
   } else {
     const port = d.port || 'S3';
@@ -5008,8 +5024,7 @@ function updatePWMDisplay(matrixVal, modeVal, btn, mode) {
 
   const chip = document.getElementById('live-btn-name');
   if (effectiveBtn > 0) {
-    const nm = (config.thresholds[effectiveBtn - 1] && config.thresholds[effectiveBtn - 1].label)
-               || btnLabels[effectiveBtn] || ('Btn ' + effectiveBtn);
+    const nm = getBtnLabel(effectiveBtn);
     const isLog = effectiveBtn > RC_PHYSICAL_SLOTS;
     chip.textContent = isLog ? `⚡ ${nm} · logical (Mode ${mode})`
                              : `Btn ${effectiveBtn}: ${nm} (Mode ${mode})`;
@@ -5200,22 +5215,20 @@ function renderLogicalButtons() {
   if (!host) return;
   const mxEl = document.getElementById('logical-mxch');
   if (mxEl) mxEl.textContent = config.matrixChannel || 7;
-  const escAttr = s => String(s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
   host.innerHTML = '';
   for (let id = RC_PHYSICAL_SLOTS + 1; id <= RC_TOTAL_SLOTS; id++) {
     let t = config.thresholds[id - 1];
-    if (!t) { t = { id, label: btnLabels[id] || ('Logical ' + (id - RC_PHYSICAL_SLOTS)), minPwm: 0, maxPwm: 0 }; config.thresholds[id - 1] = t; }
+    if (!t) { t = { id, label: getBtnLabel(id), minPwm: 0, maxPwm: 0 }; config.thresholds[id - 1] = t; }
     const center = Math.round(((t.minPwm || 0) + (t.maxPwm || 0)) / 2);
     let modesMapped = 0;
     for (let mode = 1; mode <= 3; mode++) {
-      const m = config.mappings[String(mode * 100 + id)];
-      if (m && ['t1', 't2', 't3'].some(k => (m[k] || []).length)) modesMapped++;
+      if (mappingHasActions(config.mappings[String(mode * 100 + id)])) modesMapped++;
     }
     const row = document.createElement('div');
     row.style.cssText = 'display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 0;border-bottom:1px solid var(--border)';
     row.innerHTML = `
       <span style="color:var(--muted);font-size:12px;min-width:30px">#${id}</span>
-      <input type="text" class="logical-label" data-id="${id}" value="${escAttr(t.label)}" maxlength="23"
+      <input type="text" class="logical-label" data-id="${id}" value="${escH(t.label)}" maxlength="23"
              placeholder="Logical ${id - RC_PHYSICAL_SLOTS}" style="width:130px" title="Name shown in the action editor and summaries">
       <div class="field-group" style="margin:0">
         <label style="font-size:11px">Trigger <span class="unit-label">(${unitLbl()})</span></label>
@@ -5232,7 +5245,7 @@ function renderLogicalButtons() {
     const id = +e.target.dataset.id;
     if (!config.thresholds[id - 1]) config.thresholds[id - 1] = { id, label: '', minPwm: 0, maxPwm: 0 };
     config.thresholds[id - 1].label = e.target.value.slice(0, 23);
-    btnLabels[id] = config.thresholds[id - 1].label || ('Logical ' + (id - RC_PHYSICAL_SLOTS));
+    // No btnLabels write — getBtnLabel() reads config.thresholds directly.
     if (typeof renderAssignmentList === 'function') renderAssignmentList();
   }));
   host.querySelectorAll('.logical-center').forEach(el => el.addEventListener('change', e => {
@@ -5270,10 +5283,10 @@ function renderAssignmentList() {
     const card = document.createElement('div');
     card.style.cssText = `background:var(--card); border-radius:8px; padding:10px; cursor:pointer; border:1px solid var(--border)`;
     card.onclick = () => openModal(btn);
-    const isConfig = m && (m.t1?.length || m.t2?.length || m.t3?.length || m.exclusive);
+    const isConfig = mappingInUse(m);
     const excBadge = m?.exclusive ? ' <span style="color:var(--yellow);font-size:10px">⚡ excl</span>' : '';
     card.innerHTML = `
-      <div style="font-weight:700;margin-bottom:4px;color:${isConfig?'var(--text)':'var(--muted)'}">${btnLabels[btn]}${excBadge}</div>
+      <div style="font-weight:700;margin-bottom:4px;color:${isConfig?'var(--text)':'var(--muted)'}">${getBtnLabel(btn)}${excBadge}</div>
       ${tierSummary(m, 1)}${tierSummary(m, 2)}${tierSummary(m, 3)}
     `;
     list.appendChild(card);
@@ -5285,11 +5298,7 @@ function renderAssignmentList() {
   // click-to-edit UX as the physical buttons, with the current mode's actions.
   const logicalInUse = [];
   for (let id = RC_PHYSICAL_SLOTS + 1; id <= RC_TOTAL_SLOTS; id++) {
-    const t = config.thresholds[id - 1];
-    const hasBand = t && (((t.minPwm || 0) !== 0) || ((t.maxPwm || 0) !== 0));
-    const hasActsAnyMode = [1, 2, 3].some(mode =>
-      ['t1', 't2', 't3'].some(k => (config.mappings[String(mode * 100 + id)] || {})[k]?.length));
-    if (hasBand || hasActsAnyMode) logicalInUse.push(id);
+    if (slotInUseAnyMode(id)) logicalInUse.push(id);
   }
   if (logicalInUse.length) {
     const hdr = document.createElement('div');
@@ -5300,8 +5309,8 @@ function renderAssignmentList() {
       const m = config.mappings[String(currentMode * 100 + id)];
       const t = config.thresholds[id - 1] || {};
       const center = Math.round(((t.minPwm || 0) + (t.maxPwm || 0)) / 2);
-      const lbl = (t && t.label) || btnLabels[id] || ('Logical ' + (id - RC_PHYSICAL_SLOTS));
-      const isConfig = m && (m.t1?.length || m.t2?.length || m.t3?.length || m.exclusive);
+      const lbl = getBtnLabel(id);
+      const isConfig = mappingInUse(m);
       const excBadge = m?.exclusive ? ' <span style="color:var(--yellow);font-size:10px">⚡ excl</span>' : '';
       const card = document.createElement('div');
       card.dataset.logicalId = id;   // so updatePWMDisplay() can glow it live
@@ -5399,7 +5408,7 @@ function openModal(btn) {
 
   document.getElementById('modal-exclusive').parentElement.parentElement.style.display = '';
 
-  document.getElementById('modal-title').textContent = `Button ${btn}: ${btnLabels[btn]}`;
+  document.getElementById('modal-title').textContent = `Button ${btn}: ${getBtnLabel(btn)}`;
   const badges = document.getElementById('modal-mode-badges');
   badges.innerHTML = `<span class="mode-badge m${currentMode}" style="margin-left:8px">${modeLabels[currentMode]}</span>`;
 
@@ -5442,11 +5451,23 @@ function openModal(btn) {
   // Wire the input: on change, update the threshold and re-render the
   // bulk table so both views stay in sync.
   document.getElementById('btn-pwm-center').addEventListener('change', (e) => {
+    if (!config.thresholds[btn - 1]) {
+      config.thresholds[btn - 1] = { id: btn, label: getBtnLabel(btn), minPwm: 0, maxPwm: 0 };
+    }
+    // LOGICAL buttons: blank = disable (band 0/0) — same semantics as the
+    // Logical Buttons tab, so the two editors can't disagree. Physical
+    // buttons keep the old behavior (blank = leave unchanged).
+    if (e.target.value.trim() === '' && btn > RC_PHYSICAL_SLOTS) {
+      config.thresholds[btn - 1].minPwm = 0;
+      config.thresholds[btn - 1].maxPwm = 0;
+      renderThresholds();
+      updatePWMTooltips();
+      if (typeof renderLogicalButtons === 'function') renderLogicalButtons();
+      if (typeof renderAssignmentList === 'function') renderAssignmentList();
+      return;
+    }
     const v = parseVal(e.target.value);
     if (!Number.isFinite(v)) return;
-    if (!config.thresholds[btn - 1]) {
-      config.thresholds[btn - 1] = { id: btn, label: btnLabels[btn] || '', minPwm: 0, maxPwm: 0 };
-    }
     config.thresholds[btn - 1].minPwm = v - 10;
     config.thresholds[btn - 1].maxPwm = v + 10;
     renderThresholds();
@@ -7322,7 +7343,7 @@ function updateCalibrationLive(msg) {
   let liveText = '';
 
   if (step.type === 'button') {
-    liveText = `Detected: ${msg.btn ? btnLabels[msg.btn] : 'none'} — raw ${fmtVal(msg.matrixVal)}`;
+    liveText = `Detected: ${msg.btn ? getBtnLabel(msg.btn) : 'none'} — raw ${fmtVal(msg.matrixVal)}`;
     document.getElementById('calibration-live-value').textContent = liveText;
     // Auto-capture — buttons leave the neutral band when pressed.
     if (calibrationState.stepCaptured) return;
@@ -7430,7 +7451,7 @@ function captureCalibrationValue() {
       setCalibrationStatus(`No button pressed (matrix at ${fmtVal(value)}). Press ${step.label} and hold while clicking Capture.`, true);
       return;
     }
-    const detectedLabel = msg.btn ? btnLabels[msg.btn] : 'none';
+    const detectedLabel = msg.btn ? getBtnLabel(msg.btn) : 'none';
     const mismatch = msg.btn && msg.btn !== step.btn;
     const current = config.thresholds[step.btn - 1] || { label: step.label, minPwm: 0, maxPwm: 0 };
     config.thresholds[step.btn - 1] = {
@@ -7661,20 +7682,20 @@ function exportConfigCsv() {
         ? Math.round((threshold.minPwm + threshold.maxPwm) / 2) : '';
       const isExclusive = mapping.exclusive ? '1' : '';
       // Skip the inert slot-21 "Unassigned" sentinel, and skip logical slots
-      // (22-36) that are entirely unused, so the CSV isn't padded with blank
-      // rows. Physical slots 1-20 always emit (now incl. the X20 SK/SL clicks).
-      const _hasActs = [1, 2, 3].some(ti => (mapping['t' + ti] || []).length);
-      const _hasBand = pwmValue !== '' && pwmValue !== 0;
+      // (22-36) that are entirely unused (shared slotInUseAnyMode predicate —
+      // same definition the cards and Logical tab use), so the CSV isn't
+      // padded with blank rows. Physical slots 1-20 always emit (incl. the
+      // X20 SK/SL clicks).
       if (btn === RC_PHYSICAL_SLOTS) continue;
-      if (btn > RC_PHYSICAL_SLOTS && !_hasActs && !_hasBand && !isExclusive) continue;
+      if (btn > RC_PHYSICAL_SLOTS && !slotInUseAnyMode(btn)) continue;
       for (let tier = 1; tier <= 3; tier++) {
         const actions = mapping['t' + tier] || [];
         if (!actions.length) {
-          rows.push(csvRow(pad(['button', btnLabels[btn], btn, config.matrixChannel || '', '', mode, tier, '', '', '', '', '', '', '', '', '', '', '', pwmValue, isExclusive, ''])));
+          rows.push(csvRow(pad(['button', getBtnLabel(btn), btn, config.matrixChannel || '', '', mode, tier, '', '', '', '', '', '', '', '', '', '', '', pwmValue, isExclusive, ''])));
         } else {
           actions.forEach(a => {
             rows.push(csvRow(pad([
-              'button', btnLabels[btn], btn, config.matrixChannel || '', '', mode, tier, '',
+              'button', getBtnLabel(btn), btn, config.matrixChannel || '', '', mode, tier, '',
               a.type || '', a.target || '', a.port || '', a.cmd || '',
               a.slot || '', a.maestroCh || '', a.posMin || '', a.posMax || '',
               a.delay || '', a.note || '', pwmValue, isExclusive, '',
@@ -7931,7 +7952,11 @@ function handleConfigImportFile(event) {
         }
 
         if (type === 'button') {
-          if (!Number.isFinite(buttonId) || buttonId < 1 || buttonId > 18) continue;
+          // Accept ALL matrix slots: 1-20 physical (incl. X20 SK/SL), skip the
+          // inert slot-21 sentinel, 22-36 logical. The old `> 18` gate predates
+          // SK/SL and logical buttons — it silently dropped their rows on import.
+          if (!Number.isFinite(buttonId) || buttonId < 1 || buttonId > RC_TOTAL_SLOTS) continue;
+          if (buttonId === RC_PHYSICAL_SLOTS) continue;   // slot 21 "Unassigned" sentinel
           if (!Number.isFinite(mode) || mode < 1 || mode > 3) continue;
           if (!Number.isFinite(tier) || tier < 1 || tier > 3) continue;
           let center = null;
@@ -7947,7 +7972,9 @@ function handleConfigImportFile(event) {
           if (center !== null) {
             imported.thresholds[buttonId - 1] = {
               id: buttonId,
-              label: btnLabels[buttonId],
+              // Logical buttons carry the user's custom name in the CSV's
+              // `control` column — restore it so names survive a round-trip.
+              label: (buttonId > RC_PHYSICAL_SLOTS && control) ? control : getBtnLabel(buttonId),
               minPwm: center - 10,
               maxPwm: center + 10,
             };

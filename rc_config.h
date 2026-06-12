@@ -697,7 +697,14 @@ static bool actionFromJson(const JsonObject& obj, RcAction& a) {
 //  Serialise full config to JSON string (for GET_CONFIG WebSocket response)
 // ─────────────────────────────────────────────────────────────────────────────
 String rcConfigToJSON() {
-  DynamicJsonDocument doc(49152);   // sized for 36 matrix slots (21 physical + 15 logical) when heavily mapped
+  // ArduinoJson 7: the constructor capacity is a legacy no-op — the document
+  // grows elastically from the heap as needed. The REAL guard is the
+  // overflowed() check at the bottom: if any allocation failed mid-build
+  // (heap exhausted by a very heavily-mapped 36-slot config), the JSON would
+  // be silently MISSING mappings. Sending that truncated config would poison
+  // the tool's baseline and a subsequent save would erase the dropped
+  // mappings — so we return an ERROR envelope instead of truncated data.
+  DynamicJsonDocument doc(49152);
 
   doc["txModel"]              = rcConfig.txModel;          // RcTxModel — GUI uses this to swap SVG / labels
   doc["threeAxisGimbals"]     = rcConfig.threeAxisGimbals; // X20 hardware option (shows/hides J5/J6 + stick-click matrix slots)
@@ -813,6 +820,14 @@ String rcConfigToJSON() {
   auxObj["S3"]      = rcConfig.auxBaud[0];
   auxObj["S4"]      = rcConfig.auxBaud[1];
   auxObj["maestro"] = rcConfig.maestroBaud;   // local Maestro bus (Serial2)
+
+  // Truncation guard — see the note at the top of this function. Better to
+  // fail loudly than hand the tool an incomplete config it would re-save.
+  if (doc.overflowed()) {
+    Serial.println("[CONFIG] ERROR: GET_CONFIG overflowed memory — config too large to serialize");
+    return String("{\"type\":\"ERROR\",\"msg\":\"GET_CONFIG overflow — config too large, not sent. "
+                  "Reduce mapped actions and retry.\"}");
+  }
 
   String out;
   serializeJson(doc, out);

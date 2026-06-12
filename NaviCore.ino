@@ -40,6 +40,8 @@
 #include <Preferences.h>
 #include <SoftwareSerial.h>
 #include <Adafruit_NeoPixel.h>
+#include "esp_timer.h"          // one-shot boot-guard timer (cold-boot auto-recovery)
+#include "esp_ota_ops.h"        // esp_ota_get_bootloader_description (boot banner)
 #include <WCB_Client.h>   // header in greghulette/WCBClient is WCB_Client.h
 #include <WCBStream.h>
 // HCR (Human Cyborg Relations Vocalizer): no library dependency — we format
@@ -192,6 +194,13 @@ static const uint32_t C_YELLOW = 0xFFFF00;
 static const uint32_t C_ORANGE = 0xFF8000;
 static const uint32_t C_CYAN   = 0x00FFFF;
 static const uint32_t C_OFF    = 0x000000;
+
+// LED fault latch — tiny arbiter so a fault outranks the routine SBUS status.
+// A non-zero color here means "a persistent fault was detected" (currently:
+// wcb->begin() failure in setup; future faults can latch their own color).
+// updateStatusLed() displays a latched fault STEADY and skips the SBUS
+// indication, so last-writer-wins can't silently erase a fault. 0 = no fault.
+uint32_t g_ledFaultColor = 0;
 
 // =============================================================================
 //  SBUS state
@@ -457,48 +466,64 @@ void writeS4(const String& s) { Serial4.write((const uint8_t*)s.c_str(), s.lengt
 //
 //  Returns an empty String for unknown fn or bad parameters.
 // =============================================================================
+// Validate + normalize an HCR fn/chan/track triplet IN PLACE. This is the ONE
+// place that owns the parameter ranges AND the "emotion 4 = Overload" shortcut
+// (fn 3/4 + chan 4 → fn 5). Both transports — local serial (hcrFormatCommand)
+// and WCB (hcrFormatWcbCommand) — normalize through here first, so they can
+// never drift apart on what an action means. Returns false for an unknown fn
+// or out-of-range params (caller skips the action).
+static bool hcrNormalizeAction(uint8_t& fn, int& chan, int& track) {
+  switch (fn) {
+    case 2:   // SetEmotion(e, v)
+      return (chan >= 0 && chan <= 3 && track >= 0 && track <= 99);
+    case 3:   // Trigger — same payload as Stimulate
+    case 4:   // Stimulate(e, v)
+      if (chan < 0 || chan > 4 || track < 0 || track > 99) return false;
+      if (chan == 4) { fn = 5; chan = 0; track = 0; }   // emotion 4 = Overload shortcut
+      return true;
+    case 5: case 6: case 8: case 9: case 11:   // no-param functions
+      return true;
+    case 14:  // PlayWAV(ch, track)
+      return (chan >= 0 && chan <= 2 && track >= 0 && track <= 9999);
+    case 16:  // StopWAV(ch)
+      return (chan >= 0 && chan <= 2);
+    case 17:  // SetVolume(ch, vol)
+      return (chan >= 0 && chan <= 2 && track >= 0 && track <= 99);
+    default:
+      return false;
+  }
+}
+
 static String hcrFormatCommand(uint8_t fn, int chan, int track) {
   static const char emoteprefix[] = "HSMC";   // HAPPY / SAD / MAD / sCared
   static const char audioprefix[] = "VAB";    // Vocalizer / A / B
+  if (!hcrNormalizeAction(fn, chan, track)) return "";   // ranges + Overload shortcut
   String inner;
   switch (fn) {
-    case 2: {  // SetEmotion(e, v)
-      if (chan < 0 || chan > 3 || track < 0 || track > 99) return "";
+    case 2:   // SetEmotion(e, v)
       inner = String("O") + emoteprefix[chan] + String(track) + ",QE" + emoteprefix[chan];
       break;
-    }
     case 3:    // Trigger — same payload as Stimulate
-    case 4: {  // Stimulate(e, v)
-      if (chan < 0 || chan > 4 || track < 0 || track > 99) return "";
-      if (chan == 4) {  // emotion 4 is Overload shortcut
-        inner = "SE,QT";
-      } else {
-        inner = String("S") + emoteprefix[chan] + String(track) + ",QE" + emoteprefix[chan] + ",QT";
-      }
+    case 4:    // Stimulate(e, v)  (chan==4 already normalized to fn 5 above)
+      inner = String("S") + emoteprefix[chan] + String(track) + ",QE" + emoteprefix[chan] + ",QT";
       break;
-    }
     case 5:  inner = "SE,QT";          break;  // Overload
     case 6:  inner = "MM";             break;  // single Muse
     case 8:  inner = "PSV,PSA,PSB,QT"; break;  // Stop (all audio + emote)
     case 9:  inner = "PSV,QT";         break;  // StopEmote
     case 11: inner = "OR,QE";          break;  // ResetEmotions
     case 14: {  // PlayWAV(ch, track) — file number is 0-padded to 4 digits
-      if (chan < 0 || chan > 2 || track < 0 || track > 9999) return "";
       char file[8]; snprintf(file, sizeof(file), "%04d", track);
       inner = String("C") + audioprefix[chan] + file + ",QP" + audioprefix[chan];
       break;
     }
-    case 16: {  // StopWAV(ch)
-      if (chan < 0 || chan > 2) return "";
+    case 16:  // StopWAV(ch)
       inner = String("PS") + audioprefix[chan] + ",QP" + audioprefix[chan];
       break;
-    }
-    case 17: {  // SetVolume(ch, vol)
-      if (chan < 0 || chan > 2 || track < 0 || track > 99) return "";
+    case 17:  // SetVolume(ch, vol)
       inner = String("PV") + audioprefix[chan] + String(track);
       break;
-    }
-    default: return "";
+    default: return "";   // unreachable — hcrNormalizeAction rejects unknown fn
   }
   return String("<") + inner + ">\n";
 }
@@ -513,12 +538,9 @@ static String hcrFormatCommand(uint8_t fn, int chan, int track) {
 // out-of-range params. No trailing newline — this is a WCB command, not a raw
 // serial forward (mirrors mp3FormatCommand()).
 static String hcrFormatWcbCommand(uint8_t fn, int chan, int track) {
-  if (hcrFormatCommand(fn, chan, track).length() == 0) return "";   // reuse validation
-  // Mirror the one shortcut hcrFormatCommand() applies: for Trigger/Stimulate,
-  // emotion index 4 means Overload (fn 5). The WCB's FN handler has no such
-  // shortcut, so translate it here to keep the WCB and local transports
-  // behaviourally identical.
-  if ((fn == 3 || fn == 4) && chan == 4) return ";H,FN,5,0,0";   // Overload
+  // Shared validation + normalization (incl. the emotion-4→Overload shortcut)
+  // lives in hcrNormalizeAction() — one source of truth for both transports.
+  if (!hcrNormalizeAction(fn, chan, track)) return "";
   return String(";H,FN,") + (int)fn + "," + chan + "," + track;
 }
 
@@ -1489,7 +1511,68 @@ void handleSerialInput() {
 // =============================================================================
 //  SETUP
 // =============================================================================
+// ── Cold-boot auto-recovery (boot guard) ───────────────────────────────────
+// The custom short-watchdog bootloader (RTC WDT 9000 → 3000 ms) auto-resets a
+// board that stalls in the pre-app boot window — but IDF disables that RTC WDT
+// right before setup() runs, so a stall INSIDE setup() (PSRAM alloc, WiFi/USB
+// bring-up current spike on a cold rail) would otherwise sit dark until someone
+// presses reset. This one-shot esp_timer fires if setup() hasn't finished
+// within BOOT_GUARD_TIMEOUT_MS and restarts the board, so a cold boot
+// auto-retries. The callback runs in the esp_timer task — independent of the
+// loop task running setup() — so a hung setup() can't stop it. Cancelled at the
+// end of a healthy setup(). The custom short-WDT bootloader and THIS guard are a
+// matched pair: never run that bootloader on a board without this guard.
+#define BOOT_GUARD_TIMEOUT_MS 15000
+static esp_timer_handle_t _bootGuardTimer = nullptr;
+static void _bootGuardFired(void*) { ESP.restart(); }
+
+static void bootGuardArm() {
+  esp_timer_create_args_t args = {};
+  args.callback        = &_bootGuardFired;
+  args.arg             = nullptr;
+  args.dispatch_method = ESP_TIMER_TASK;
+  args.name            = "bootguard";
+  if (esp_timer_create(&args, &_bootGuardTimer) == ESP_OK) {
+    esp_timer_start_once(_bootGuardTimer, (uint64_t)BOOT_GUARD_TIMEOUT_MS * 1000ULL);
+  }
+}
+
+static void bootGuardDisarm() {
+  if (_bootGuardTimer) {
+    esp_timer_stop(_bootGuardTimer);
+    esp_timer_delete(_bootGuardTimer);
+    _bootGuardTimer = nullptr;
+  }
+}
+
+// Report at boot which 2nd-stage bootloader is on the board (stock vs the custom
+// short-WDT one). Reads the esp_bootloader_desc_t in IDF 5.2+ bootloader images —
+// no flash dump. The custom bootloaders are identified by build timestamp; if
+// either is rebuilt, add its new date here (read it from this very banner).
+static void printBootloaderInfo() {
+  static const char *CUSTOM_BOOT_DATES[] = {
+    "Jun  8 2026 16:02:21",   // WCB_S3_custom_bootloader_16MB_wdt3s.bin
+    "Jun 10 2026 14:36:20",   // WCB_S3_custom_bootloader_8MB_wdt3s.bin
+  };
+  esp_bootloader_desc_t desc;
+  if (esp_ota_get_bootloader_description(NULL, &desc) == ESP_OK) {
+    bool custom = false;
+    for (size_t i = 0; i < sizeof(CUSTOM_BOOT_DATES) / sizeof(CUSTOM_BOOT_DATES[0]); i++)
+      if (strncmp(desc.date_time, CUSTOM_BOOT_DATES[i], sizeof(desc.date_time)) == 0) { custom = true; break; }
+    if (custom)
+      Serial.printf("Bootloader: CUSTOM short-WDT (cold-boot auto-retry) — built %s\n", desc.date_time);
+    else
+      Serial.printf("Bootloader: stock (IDF %s, built %s)\n", desc.idf_ver, desc.date_time);
+  } else {
+    Serial.println("Bootloader: unknown (no description block)");
+  }
+}
+
 void setup() {
+  // Arm the boot guard FIRST so it covers all of setup() (PSRAM/WiFi/USB
+  // bring-up). Disarmed at the very end once the board is confirmed healthy.
+  bootGuardArm();
+
   // Bump the USB-CDC RX buffer well above the 256-byte default. The SBUS OUT
   // byte-streaming tee blocks the main loop for ~2.75 ms per SBUS frame while
   // bit-banging SoftwareSerial; during that window the host can shove ~1-2 KB
@@ -1530,6 +1613,7 @@ void setup() {
 #endif
   delay(1500);
   Serial.println("\n\n=== NaviCore (WCB HW 3.2) ===");
+  printBootloaderInfo();
 
   // Status LED
   statusLed.begin();
@@ -1609,7 +1693,12 @@ void setup() {
                       rcConfig.wcbNetwork.deviceId);
   if (!wcb->begin()) {
     Serial.println("[WCB] ERROR: wcb->begin() failed — check WCB Network settings in GUI");
-    setStatusLed(C_ORANGE, 200);
+    // Latch the fault for the LED arbiter: updateStatusLed() (loop) displays a
+    // latched fault color STEADY and skips the SBUS indication entirely, so
+    // this isn't silently overwritten on the first loop() pass. Steady orange
+    // = WCB fault; FLASHING orange = no SBUS — distinguishable at a glance.
+    g_ledFaultColor = C_ORANGE;
+    setStatusLed(C_ORANGE, 200);   // show immediately for the rest of setup()
   } else {
     wcb->onCommand(onWCBCommand);
     Serial.printf("[WCB] Joined network as device ID %d (quantity=%d)\n",
@@ -1635,6 +1724,9 @@ void setup() {
   Serial.println("  CLI: #L01=info  #L09=SBUS dump  #L10=live  #L11=WCB status  #L12=RC state  #L13=SBUS raw hex");
   Serial.println("  CLI: #L20=HCR S3 test  #L21=HCR S4 test  (direct, bypasses config+mapping)");
   Serial.println("  Send PING to test. Send GET_CONFIG to read mappings.");
+
+  // setup() completed — cancel the boot guard so a healthy board never trips it.
+  bootGuardDisarm();
 }
 
 // =============================================================================
@@ -1655,10 +1747,18 @@ void setup() {
                                   // want it more visible across a room.
 static void updateStatusLed() {
   unsigned long now = millis();
-  bool sbusAlive = (sbusLastFrameMs != 0) && (now - sbusLastFrameMs < SBUS_LED_TIMEOUT_MS);
-  static int8_t        mode       = -1;   // -1 unset, 0 steady-blue, 1 flashing-orange
+  static int8_t        mode       = -1;   // -1 unset, 0 steady-blue, 1 flashing-orange, 2 latched-fault
   static bool          flashOn    = false;
   static unsigned long lastToggle = 0;
+
+  // Latched fault outranks the routine SBUS indication (see g_ledFaultColor).
+  // Shown STEADY — distinct from the FLASHING no-SBUS pattern below.
+  if (g_ledFaultColor) {
+    if (mode != 2) { setStatusLed(g_ledFaultColor, STATUS_LED_BRIGHT); mode = 2; }
+    return;
+  }
+
+  bool sbusAlive = (sbusLastFrameMs != 0) && (now - sbusLastFrameMs < SBUS_LED_TIMEOUT_MS);
   if (sbusAlive) {
     if (mode != 0) { setStatusLed(C_BLUE, STATUS_LED_BRIGHT); mode = 0; }   // receiving → steady blue
   } else if (mode != 1) {                                                   // just lost / never had SBUS

@@ -42,6 +42,7 @@
 #include <Adafruit_NeoPixel.h>
 #include "esp_timer.h"          // one-shot boot-guard timer (cold-boot auto-recovery)
 #include "esp_ota_ops.h"        // esp_ota_get_bootloader_description (boot banner)
+#include "rom/rtc.h"            // rtc_get_reset_reason (low-level boot telemetry)
 #include <WCB_Client.h>   // header in greghulette/WCBClient is WCB_Client.h
 #include <WCBStream.h>
 // HCR (Human Cyborg Relations Vocalizer): no library dependency — we format
@@ -1568,6 +1569,45 @@ static void printBootloaderInfo() {
   }
 }
 
+// ── Boot telemetry ──────────────────────────────────────────────────────────
+// Boot-attempt counter in RTC noinit RAM: survives watchdog/software/panic
+// resets (and usually the reset button); garbage only after true power loss —
+// the magic word detects that and restarts the count. After a "dark board"
+// episode this tells you whether the chip had been reset-looping through the
+// app (count climbing), brown-outing (RTC code 15), or never reached app code
+// at all (count restarts at 1).
+#define BOOT_MAGIC 0xB007C0DEUL
+RTC_NOINIT_ATTR static uint32_t g_bootMagic;
+RTC_NOINIT_ATTR static uint32_t g_bootAttempts;
+
+static void printBootTelemetry() {
+  esp_reset_reason_t r = esp_reset_reason();
+  const char *name = "other";
+  switch (r) {
+    case ESP_RST_POWERON:  name = "Power-on / EN reset"; break;
+    case ESP_RST_SW:       name = "Software restart (incl. boot-guard retry)"; break;
+    case ESP_RST_PANIC:    name = "Crash (panic)"; break;
+    case ESP_RST_INT_WDT:  name = "Interrupt watchdog"; break;
+    case ESP_RST_TASK_WDT: name = "Task watchdog"; break;
+    case ESP_RST_WDT:      name = "RTC watchdog (short-WDT bootloader fired)"; break;
+    case ESP_RST_BROWNOUT: name = "BROWNOUT — supply rail sagged"; break;
+    default: break;
+  }
+  // Low-level per-core causes (rom/rtc.h). Key S3 codes:
+  //   1 = power-on   15 = RTC-WDT brown-out   16 = RTC-WDT system reset
+  //   (16 = the short-WDT bootloader's 3 s watchdog fired — auto-retry)
+  Serial.printf("Reset reason: %d - %s  (RTC codes core0=%d core1=%d)\n",
+                (int)r, name, (int)rtc_get_reset_reason(0), (int)rtc_get_reset_reason(1));
+  if (g_bootMagic != BOOT_MAGIC) {          // true power loss → fresh count
+    g_bootMagic = BOOT_MAGIC;
+    g_bootAttempts = 0;
+  }
+  g_bootAttempts++;
+  Serial.printf("Boot attempts since power applied: %lu%s\n",
+                (unsigned long)g_bootAttempts,
+                g_bootAttempts > 1 ? "   <-- board retried/reset before this boot" : "");
+}
+
 void setup() {
   // Arm the boot guard FIRST so it covers all of setup() (PSRAM/WiFi/USB
   // bring-up). Disarmed at the very end once the board is confirmed healthy.
@@ -1614,6 +1654,7 @@ void setup() {
   delay(1500);
   Serial.println("\n\n=== NaviCore (WCB HW 3.2) ===");
   printBootloaderInfo();
+  printBootTelemetry();
 
   // Status LED
   statusLed.begin();

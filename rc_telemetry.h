@@ -78,6 +78,7 @@ extern int           sbusFps;            // frames/sec from the local SBUS reade
 extern unsigned long sbusLastFrameMs;    // millis() at last received frame (0 = none yet)
 extern bool          lostFrameOld;       // SBUS lost-frame flag (no signal)
 extern bool          sbusFailsafe;       // SBUS failsafe flag (TX lost / disarmed)
+extern bool          wcbReady;           // true only after wcb->begin() succeeded (ESP-NOW usable)
 void                rcDispatch(int buttonId, uint8_t tapCount);
 
 // Forward declarations from rc_config.h — needed for SET_CONFIG / GET_CONFIG
@@ -86,7 +87,7 @@ void                rcDispatch(int buttonId, uint8_t tapCount);
 String rcConfigToJSON();
 bool   rcConfigFromJSON(const String& json);
 bool   rcConfigFromJSON(const JsonObject& doc);   // JsonObject overload — skip the double-parse
-void   rcConfigSaveNVS();
+bool   rcConfigSaveNVS();   // returns false if any NVS value failed to persist
 
 namespace rcTelemetry {
 
@@ -495,8 +496,10 @@ inline void _applyReassembled(uint8_t senderID, const String& json) {
                   "(heap=%u bytes free)\n", ok ? "true" : "false",
                   (unsigned)ESP.getFreeHeap());
     if (ok) {
-      rcConfigSaveNVS();
-      Serial.println("[RC] SET_CONFIG → applied + saved to NVS");
+      bool saved = rcConfigSaveNVS();
+      if (!saved) ok = false;   // surface the NVS-save failure in the ACK below
+      Serial.println(saved ? "[RC] SET_CONFIG → applied + saved to NVS"
+                           : "[RC] SET_CONFIG → applied but NVS SAVE FAILED (not persisted)");
     } else {
       Serial.println("[RC] SET_CONFIG → rcConfigFromJSON returned false");
     }
@@ -515,6 +518,9 @@ inline void _applyReassembled(uint8_t senderID, const String& json) {
 // throttled to the constants above.  Setting _lastHb = 0 / _lastCh = 0
 // forces an immediate emit on the next tick (used by PING handler).
 inline void tick() {
+  // No WCB / ESP-NOW down → nothing to send or pump. Guard so a failed
+  // wcb->begin() can't drive sends into an uninitialized WCB_Client.
+  if (!wcb || !wcbReady) return;
   // Drain any pending reassembled fragment payload BEFORE the broadcast
   // work — applying SET_CONFIG blocks 100+ ms doing flash I/O, and we'd
   // rather skip one heartbeat than risk a watchdog by mixing flash and
@@ -628,7 +634,7 @@ inline void tick() {
 // surfaces on the network.  The config tool's "Via WCB" mode treats this as
 // "something fired, no matter who fired it".
 inline void emitTrig(int mode, int btn, int tap) {
-  if (!wcb) return;
+  if (!wcb || !wcbReady) return;
   char buf[120];
   snprintf(buf, sizeof(buf),
     "{\"type\":\"rc_trig\",\"id\":%u,\"mode\":%d,\"btn\":%d,\"tap\":%d}",
@@ -640,7 +646,7 @@ inline void emitTrig(int mode, int btn, int tap) {
 // changes.  Lets the config tool update its mode indicator immediately
 // instead of waiting up to 2 s for the next heartbeat.
 inline void emitMode(int mode) {
-  if (!wcb) return;
+  if (!wcb || !wcbReady) return;
   char buf[80];
   snprintf(buf, sizeof(buf),
     "{\"type\":\"rc_mode\",\"id\":%u,\"mode\":%d}",
@@ -656,6 +662,7 @@ inline void emitMode(int mode) {
 // the caller still needs to handle (e.g. another RC's heartbeat we want
 // to ignore, or a non-JSON legacy WCB command intended for some other path).
 inline bool handle(uint8_t senderID, const char* command) {
+  if (!wcb || !wcbReady) return false;   // WCB down — can't be receiving anyway
   if (!command || command[0] != '{') return false;
 
   // Parse the JSON payload.  Use a doc large enough to hold fragment
@@ -670,11 +677,14 @@ inline bool handle(uint8_t senderID, const char* command) {
     return false;
   }
 
-  // Any valid JSON inbound from a WCB peer counts as "someone is listening"
-  // — renew the rc_ch subscription so high-rate channel broadcasts run for
-  // the next WCB_SUBSCRIPTION_MS.  Done BEFORE the self-echo filter so a
-  // remote PING / TRIGGER / SET_CONFIG fragment all count as activity.
-  _lastWcbInbound = millis();
+  // Renew the rc_ch subscription on real inbound COMMANDS — but NOT on raw
+  // fragment envelopes. ETM retransmits a fragment until it's ACK'd; if a
+  // fragment (or a late retry arriving after the tool already closed) renewed
+  // the subscription, rc_ch would keep broadcasting for another full
+  // WCB_SUBSCRIPTION_MS past the tool's disconnect, saturating the network. A
+  // completed multi-fragment payload still counts as activity: it recurses
+  // into handle() as reassembled JSON (which has no "f" field) and renews here.
+  if (!doc.containsKey("f")) _lastWcbInbound = millis();
 
   // ── Fragment envelope ────────────────────────────────────────────────────
   // {"f":<n>,"of":<N>,"sid":<S>,"s":"<chunk>"} — slice of a larger JSON

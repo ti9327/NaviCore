@@ -90,12 +90,14 @@ struct RcAction {
   //   fn = MP3 function code, track = numeric arg (track #, index, or volume),
   //   chan unused.  Zero for all non-HCR/MP3 action types.
   uint8_t fn;             // HCR function number (2=SetEmotion, 3=Trigger, 4=Stimulate,
-                          //   5=Overload, 6=Muse, 8=Stop, 9=StopEmote, 11=ResetEmotions,
-                          //   14=PlayWAV, 16=StopWAV, 17=SetVolume)
-                          //   — OR, for RA_MP3, an RcMp3Fn code (1-8).
-  int8_t  chan;           // emotion (0=H,1=S,2=M,3=C,4=Overload) or audio chan (0=V,1=A,2=B)
-                          //   — unused for RA_MP3.
-  int16_t track;          // PlayWAV track number, SetVolume value, Trigger level, etc.
+                          //   5=Overload, 6=Muse, 7=Muse-gap, 8=Stop, 9=StopEmote,
+                          //   10=OverrideEmotions, 11=ResetEmotions, 13=SetMuse,
+                          //   14=PlayWAV, 16=StopWAV, 17=SetVolume) — matches the BC
+                          //   HCRFunction() convention. OR, for RA_MP3, an RcMp3Fn code (1-8).
+  int8_t  chan;           // emotion (0=H,1=S,2=M,3=C,4=Overload) or audio chan (0=V,1=A,2=B);
+                          //   fn 7 = Muse min-gap (s); fn 10 = Override 0/1 — unused for RA_MP3.
+  int16_t track;          // PlayWAV track number, SetVolume value, Trigger level, etc.;
+                          //   fn 7 = Muse max-gap (s); fn 13 = SetMuse 0/1.
                           //   — for RA_MP3: track #, file index, or volume value.
 };
 
@@ -1019,7 +1021,35 @@ bool rcConfigFromJSON(const String& json) {
 //  Same key layout as Body Controller for familiar tooling.
 //  Split across keys to stay within the NVS 4000-byte per-value limit.
 // ─────────────────────────────────────────────────────────────────────────────
-void rcConfigSaveNVS() {
+// Serialize `doc` into NVS key `key`. Returns false (and logs which key + why)
+// if the JSON pool overflowed, the serialized string exceeds the 4000-byte NVS
+// per-value limit, or putString reports a short write. Without these checks an
+// oversize value fails SILENTLY and the config is lost on the next boot while
+// the user is told "saved".
+static bool _nvsPutJson(Preferences& prefs, const char* key, JsonDocument& doc) {
+  String s;
+  serializeJson(doc, s);
+  if (doc.overflowed()) {
+    Serial.printf("[CONFIG] NVS '%s' FAILED — JSON pool overflowed (config too large)\n", key);
+    return false;
+  }
+  if (s.length() >= 4000) {
+    Serial.printf("[CONFIG] NVS '%s' FAILED — %u bytes exceeds the 4000-byte NVS limit\n",
+                  key, (unsigned)s.length());
+    return false;
+  }
+  size_t n = prefs.putString(key, s);
+  if (n != s.length()) {
+    Serial.printf("[CONFIG] NVS '%s' FAILED — wrote %u of %u bytes\n",
+                  key, (unsigned)n, (unsigned)s.length());
+    return false;
+  }
+  return true;
+}
+
+// Returns true only if EVERY NVS value was written successfully.
+bool rcConfigSaveNVS() {
+  bool ok = true;
   Preferences prefs;
   prefs.begin("rcfg", false);
 
@@ -1041,8 +1071,7 @@ void rcConfigSaveNVS() {
       o["minPwm"] = rcConfig.thresholds[i].minPwm;
       o["maxPwm"] = rcConfig.thresholds[i].maxPwm;
     }
-    String s; serializeJson(doc, s);
-    prefs.putString("th", s);
+    ok &= _nvsPutJson(prefs, "th", doc);
   }
 
   // Mode mappings.  Physical buttons (slots 1..RC_NUM_PHYSICAL) go in m1/m2/m3;
@@ -1080,8 +1109,7 @@ void rcConfigSaveNVS() {
           }
         }
       }
-      String s; serializeJson(doc, s);
-      prefs.putString(mapGroups[g].key[mode - 1], s);
+      ok &= _nvsPutJson(prefs, mapGroups[g].key[mode - 1], doc);
     }
   }
 
@@ -1103,8 +1131,7 @@ void rcConfigSaveNVS() {
         }
       }
     }
-    String s; serializeJson(doc, s);
-    prefs.putString("sw", s);
+    ok &= _nvsPutJson(prefs, "sw", doc);
   }
 
   // Knobs — now 11 knobs (X20 added MS, J5, J6) × up to 8 outputs × ~50
@@ -1130,8 +1157,7 @@ void rcConfigSaveNVS() {
         oObj["posMax"]    = kn.outputs[o].posMax;
       }
     }
-    String s; serializeJson(doc, s);
-    prefs.putString("kn", s);
+    ok &= _nvsPutJson(prefs, "kn", doc);
   }
 
   // Global HCR destination
@@ -1145,8 +1171,7 @@ void rcConfigSaveNVS() {
     } else {
       root["port"]    = rcConfig.hcrDest.target;
     }
-    String s; serializeJson(doc, s);
-    prefs.putString("hcr", s);
+    ok &= _nvsPutJson(prefs, "hcr", doc);
   }
 
   // Maestro locations
@@ -1158,8 +1183,7 @@ void rcConfigSaveNVS() {
       mObj["type"]   = rcConfig.maestros[i].type;
       mObj["device"] = rcConfig.maestros[i].device;
     }
-    String s; serializeJson(doc, s);
-    prefs.putString("mae", s);
+    ok &= _nvsPutJson(prefs, "mae", doc);
   }
 
   // WCB network credentials
@@ -1171,8 +1195,7 @@ void rcConfigSaveNVS() {
     root["password"] = rcConfig.wcbNetwork.password;
     root["quantity"] = rcConfig.wcbNetwork.quantity;
     root["deviceId"] = rcConfig.wcbNetwork.deviceId;
-    String s; serializeJson(doc, s);
-    prefs.putString("wcb", s);
+    ok &= _nvsPutJson(prefs, "wcb", doc);
   }
 
   // MP3 Trigger destination (transport + target)
@@ -1181,8 +1204,7 @@ void rcConfigSaveNVS() {
     JsonObject root = doc.to<JsonObject>();
     root["transport"] = rcConfig.mp3Dest.transport;
     root["target"]    = rcConfig.mp3Dest.target;
-    String s; serializeJson(doc, s);
-    prefs.putString("mp3", s);
+    ok &= _nvsPutJson(prefs, "mp3", doc);
   }
 
   // Serial port baud — aux S3/S4 + local Maestro bus (Serial2)
@@ -1192,12 +1214,17 @@ void rcConfigSaveNVS() {
     root["S3"]      = rcConfig.auxBaud[0];
     root["S4"]      = rcConfig.auxBaud[1];
     root["maestro"] = rcConfig.maestroBaud;
-    String s; serializeJson(doc, s);
-    prefs.putString("aux", s);
+    ok &= _nvsPutJson(prefs, "aux", doc);
   }
 
   prefs.end();
-  Serial.println("RC config saved to NVS.");
+  if (ok) {
+    Serial.println("RC config saved to NVS.");
+  } else {
+    Serial.println("[CONFIG] WARNING: NVS save INCOMPLETE — one or more values failed (see "
+                   "errors above). Config may NOT survive a reboot. Reduce mapped actions/labels.");
+  }
+  return ok;
 }
 
 void rcConfigLoadNVS() {

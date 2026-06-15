@@ -101,20 +101,34 @@ async function fetchFirmwareImages(onLog) {
   const appBuf = await fetchBySuffix('_ESP32S3.bin', true);
   const images = [{ buf: appBuf, address: 0x10000 }];
 
-  let hasBootPart = true;
-  try {
-    const [bootBuf, partBuf] = await Promise.all([
-      fetchBySuffix('_ESP32S3_boot.bin', true),
-      fetchBySuffix('_ESP32S3_part.bin', true),
-    ]);
+  // Bootloader + partition table are a PAIR — flash both or neither. Fetch each
+  // as optional (non-throwing) and inspect them independently:
+  //   • both present  → full flash (boot + part + app)
+  //   • both absent   → app-only (fine for re-flashing an already-provisioned
+  //                     board; a blank board still needs a one-time IDE flash)
+  //   • exactly one   → a corrupted/partial firmware upload. Do NOT silently
+  //                     fall back to app-only: app-only onto a blank board (no
+  //                     partition table) leaves it unbootable. Abort loudly.
+  const [bootBuf, partBuf] = await Promise.all([
+    fetchBySuffix('_ESP32S3_boot.bin', false),
+    fetchBySuffix('_ESP32S3_part.bin', false),
+  ]);
+  let hasBootPart = false;
+  if (bootBuf && partBuf) {
     images.unshift(
       { buf: bootBuf, address: 0x0    },
       { buf: partBuf, address: 0x8000 },
     );
-  } catch (_) {
-    hasBootPart = false;
+    hasBootPart = true;
+  } else if (bootBuf || partBuf) {
+    const missing = bootBuf ? 'partition table (_ESP32S3_part.bin)'
+                            : 'bootloader (_ESP32S3_boot.bin)';
+    throw new Error(`Incomplete firmware on GitHub: the ${missing} is missing while ` +
+      `its pair is present. Refusing to flash a partial set — app-only onto a blank ` +
+      `board would leave it unbootable. Re-run the firmware build/upload, then retry.`);
+  } else {
     onLog('Note: bootloader/partition files not on GitHub — flashing app only.');
-    onLog('      Blank boards will need a one-time full flash via Arduino IDE.');
+    onLog('      A blank board will need a one-time full flash via Arduino IDE.');
   }
 
   const totalKB = Math.round(images.reduce((s, i) => s + i.buf.byteLength, 0) / 1024);

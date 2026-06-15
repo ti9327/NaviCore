@@ -132,27 +132,54 @@ private:
   bool     inFrame_ = false;
   unsigned long lastByteUs_ = 0;
 
-  // Returns true on a successful parse, resets state regardless.
+  // ── Frame-confirmation lock (noise rejection) ──────────────────────────────
+  // Header + footer + exact length can be matched by RF noise / a half-booted
+  // source. Require LOCK_FRAMES consecutive structurally-valid frames of the
+  // SAME variant before we TRUST the stream — i.e. before we decode it, set
+  // detectedChCount, or return true (which is what counts a frame for fps). A
+  // real receiver locks in ~3 frames (~30-50 ms); noise that lands on the
+  // 0x0F…0x00 pattern once almost never repeats, so it never locks. A
+  // malformed frame breaks the streak. A genuine lost-frame/failsafe frame is
+  // still structurally valid (correct length/header/footer, only flag bits
+  // differ) so it does NOT break a lock once established.
+  static constexpr uint8_t LOCK_FRAMES = 3;
+  uint8_t  lockStreak_  = 0;   // consecutive same-variant valid frames seen
+  int      lockVariant_ = 0;   // 16 or 24 — the variant currently being confirmed
+
+  // Returns true on a CONFIRMED frame (passes structure AND the lock streak),
+  // resets framing state regardless.
   bool tryParseAndReset() {
+    // 1) Structural check: exact length + header + footer. variant = 0 means
+    //    malformed/partial/noise.
+    int variant = 0;
+    if (bufIdx_ == FRAME_LEN_16 && buf_[0] == SBUS_HEADER && buf_[FRAME_LEN_16 - 1] == SBUS_FOOTER)      variant = 16;
+    else if (bufIdx_ == FRAME_LEN_24 && buf_[0] == SBUS_HEADER && buf_[FRAME_LEN_24 - 1] == SBUS_FOOTER) variant = 24;
+
     bool ok = false;
-    if (bufIdx_ == FRAME_LEN_16 && buf_[0] == SBUS_HEADER && buf_[FRAME_LEN_16 - 1] == SBUS_FOOTER) {
-      decodeFrame(buf_, 16);
-      detectedChCount   = 16;
-      detectedFrameLen  = 25;
-      lastValidFrameMs  = millis();
-      memcpy(lastFrameRawBuf_, buf_, FRAME_LEN_16);
-      lastFrameRawLen_  = FRAME_LEN_16;
-      ok = true;
-    } else if (bufIdx_ == FRAME_LEN_24 && buf_[0] == SBUS_HEADER && buf_[FRAME_LEN_24 - 1] == SBUS_FOOTER) {
-      decodeFrame(buf_, 24);
-      detectedChCount   = 24;
-      detectedFrameLen  = 36;
-      lastValidFrameMs  = millis();
-      memcpy(lastFrameRawBuf_, buf_, FRAME_LEN_24);
-      lastFrameRawLen_  = FRAME_LEN_24;
-      ok = true;
+    if (variant == 0) {
+      // Malformed / partial / noise — break the confirmation streak so a single
+      // stray valid-looking frame amid garbage can't masquerade as a live signal.
+      lockStreak_  = 0;
+      lockVariant_ = 0;
+    } else {
+      // 2) Confirmation: require LOCK_FRAMES consecutive valid frames of the
+      //    same variant before trusting the stream.
+      if (variant == lockVariant_) { if (lockStreak_ < LOCK_FRAMES) lockStreak_++; }
+      else                         { lockVariant_ = variant; lockStreak_ = 1; }
+
+      if (lockStreak_ >= LOCK_FRAMES) {
+        decodeFrame(buf_, variant);
+        detectedChCount  = variant;
+        detectedFrameLen = (variant == 16) ? FRAME_LEN_16 : FRAME_LEN_24;
+        lastValidFrameMs = millis();
+        memcpy(lastFrameRawBuf_, buf_, detectedFrameLen);
+        lastFrameRawLen_ = detectedFrameLen;
+        ok = true;
+      }
+      // else: structurally valid but not yet confirmed — do NOT decode, do NOT
+      // set detectedChCount, do NOT count it (return false). Channels hold.
     }
-    // Otherwise: malformed / partial — drop silently
+
     inFrame_ = false;
     bufIdx_ = 0;
     return ok;

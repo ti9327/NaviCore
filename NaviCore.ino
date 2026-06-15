@@ -108,6 +108,10 @@
 // The #defines are still the factory defaults on a fresh device — see
 // rcConfigLoadDefaults() in rc_config.h.
 WCB_Client* wcb = nullptr;
+// True ONLY after wcb->begin() succeeds. ESP-NOW is unusable until then, and
+// calling send/broadcast/update on a WCB_Client whose begin() failed is
+// undefined behavior — so every wcb-> call is gated on this flag.
+bool wcbReady = false;
 
 // One stream, broadcast to all WCBs.  target_port is ignored for broadcast.
 //
@@ -374,8 +378,12 @@ static void maestroWrite(uint8_t id, uint8_t cmd_compact,
                          const uint8_t* payload, size_t plen) {
   if (id < 1 || id > RC_NUM_MAESTROS) return;
   const RcMaestroSlot& slot = rcConfig.maestros[id - 1];
-  if (slot.type == 0) return;          // disabled
-  if (slot.device > 127) return;       // invalid Pololu device #
+  if (slot.type == 0) return;          // disabled (expected — not an error)
+  if (slot.device > 127) {             // invalid Pololu device # (config error)
+    dlog(DBG_MAESTRO, "[DISPATCH] Maestro %u: invalid Pololu device # %u (must be 0-127) — skipped\n",
+         id, slot.device);
+    return;
+  }
 
   Stream* dest = (slot.type == 1) ? (Stream*)&Serial2 : (Stream*)maestroBroadcast;
   if (!dest) return;                    // remote slot but stream not yet up
@@ -384,20 +392,36 @@ static void maestroWrite(uint8_t id, uint8_t cmd_compact,
   if (payload && plen) dest->write(payload, plen);
 }
 
+// Valid Maestro channel guard (0-31 covers Micro/Mini Maestro 6/12/18/24).
+// An out-of-range channel is a config error; warn + skip so it isn't a silent
+// no-op the user has to debug by guessing the servo/wiring is broken.
+static bool maestroChanOk(uint8_t id, uint8_t ch) {
+  if (ch <= 31) return true;
+  dlog(DBG_MAESTRO, "[DISPATCH] Maestro %u: channel %u out of range (0-31) — skipped\n", id, ch);
+  return false;
+}
+
 // Pololu Maestro command byte values (compact protocol).
 //   0x84 SET_TARGET   · 0x87 SET_SPEED  · 0x89 SET_ACCEL
 //   0xA2 GO_HOME      · 0xA4 STOP_SCRIPT · 0xA7 RESTART_SCRIPT_AT_SUB
 static void maestroSetTarget(uint8_t id, uint8_t ch, uint16_t pos) {
+  if (!maestroChanOk(id, ch)) return;
   uint8_t p[3] = { ch, (uint8_t)(pos & 0x7F), (uint8_t)((pos >> 7) & 0x7F) };
   maestroWrite(id, 0x84, p, 3);
 }
 static void maestroSetSpeed(uint8_t id, uint8_t ch, uint16_t spd) {
+  if (!maestroChanOk(id, ch)) return;
   uint8_t p[3] = { ch, (uint8_t)(spd & 0x7F), (uint8_t)((spd >> 7) & 0x7F) };
   maestroWrite(id, 0x87, p, 3);
 }
 static void maestroSetAccel(uint8_t id, uint8_t ch, uint8_t accel) {
-  uint8_t p[2] = { ch, accel };
-  maestroWrite(id, 0x89, p, 2);
+  if (!maestroChanOk(id, ch)) return;
+  // Acceleration (0-255) is sent as TWO 7-bit bytes, same framing as
+  // speed/target. The old single-byte form set the high bit for accel>127
+  // (corrupting the Pololu data stream) and was one byte short of the frame
+  // the Maestro expects for 0x89.
+  uint8_t p[3] = { ch, (uint8_t)(accel & 0x7F), (uint8_t)((accel >> 7) & 0x7F) };
+  maestroWrite(id, 0x89, p, 3);
 }
 static void maestroGoHome(uint8_t id)        { maestroWrite(id, 0xA2, nullptr, 0); }
 static void maestroStopScript(uint8_t id)    { maestroWrite(id, 0xA4, nullptr, 0); }
@@ -457,13 +481,21 @@ void writeS4(const String& s) { Serial4.write((const uint8_t*)s.c_str(), s.lengt
 //     3  Trigger(e, v)         (same payload as Stimulate)
 //     4  Stimulate(e, v)
 //     5  Overload()
-//     6  Muse()
+//     6  Muse()                (single muse)
+//     7  Muse(min, max)        (auto-muse gap in seconds — min=chan, max=track)
 //     8  Stop all              (Stops V/A/B audio + emotes)
 //     9  StopEmote()
+//    10  OverrideEmotions(v)   (v=chan, 0=off/1=on — locks emotion normalization)
 //    11  ResetEmotions()
+//    13  SetMuse(v)            (v=track, 0=off/1=on — continuous idle musing)
 //    14  PlayWAV(ch, track)
 //    16  StopWAV(ch)
 //    17  SetVolume(ch, vol)
+//
+//  fn numbers + parameter positions match the BC firmware's HCRFunction()
+//  dispatcher exactly (RA_HCR shares rc_config.h with the Body Controller), so a
+//  saved action means the same thing on both. The query/poll functions (1, 18+)
+//  are intentionally NOT implemented — NaviCore is fire-and-forget.
 //
 //  Returns an empty String for unknown fn or bad parameters.
 // =============================================================================
@@ -484,6 +516,12 @@ static bool hcrNormalizeAction(uint8_t& fn, int& chan, int& track) {
       return true;
     case 5: case 6: case 8: case 9: case 11:   // no-param functions
       return true;
+    case 7:   // Muse(min, max) — auto-muse gap in seconds (min=chan, max=track)
+      return (chan >= 0 && chan <= 99 && track >= 0 && track <= 99);
+    case 10:  // OverrideEmotions(v) — v=chan (0/1); locks emotion normalization
+      return (chan >= 0 && chan <= 1);
+    case 13:  // SetMuse(v) — v=track (0/1); continuous idle musing on/off
+      return (track >= 0 && track <= 1);
     case 14:  // PlayWAV(ch, track)
       return (chan >= 0 && chan <= 2 && track >= 0 && track <= 9999);
     case 16:  // StopWAV(ch)
@@ -510,9 +548,12 @@ static String hcrFormatCommand(uint8_t fn, int chan, int track) {
       break;
     case 5:  inner = "SE,QT";          break;  // Overload
     case 6:  inner = "MM";             break;  // single Muse
+    case 7:  inner = String("MN") + chan + ",MX" + track; break;  // Muse(min,max) gap
     case 8:  inner = "PSV,PSA,PSB,QT"; break;  // Stop (all audio + emote)
     case 9:  inner = "PSV,QT";         break;  // StopEmote
+    case 10: inner = String("O") + chan + ",QO"; break;  // OverrideEmotions(v) — "O<v>" (digit, vs "O<HSMC>" for SetEmotion)
     case 11: inner = "OR,QE";          break;  // ResetEmotions
+    case 13: inner = String("M") + track + ",QM"; break;  // SetMuse(v) — "M<v>" (digit, vs "MM" single muse)
     case 14: {  // PlayWAV(ch, track) — file number is 0-padded to 4 digits
       char file[8]; snprintf(file, sizeof(file), "%04d", track);
       inner = String("C") + audioprefix[chan] + file + ",QP" + audioprefix[chan];
@@ -542,7 +583,16 @@ static String hcrFormatWcbCommand(uint8_t fn, int chan, int track) {
   // Shared validation + normalization (incl. the emotion-4→Overload shortcut)
   // lives in hcrNormalizeAction() — one source of truth for both transports.
   if (!hcrNormalizeAction(fn, chan, track)) return "";
-  return String(";H,FN,") + (int)fn + "," + chan + "," + track;
+  // fn 7/10/13 are NOT in the WCB's numeric ";H,FN" switch (WCB_HCR.cpp
+  // processHCRRuntimeCommand) — it only maps 2,3,4,5,6,8,9,11,14,16,17. Emit the
+  // readable verbs the WCB DOES implement so HCR-over-WCB needs no firmware change
+  // on the receiving board. All other fns use the numeric convention.
+  switch (fn) {
+    case 7:  return String(";H,MUSE,GAP,") + chan + "," + track;  // Muse(min,max)
+    case 10: return String(";H,OVERRIDE,") + chan;                // OverrideEmotions(v)
+    case 13: return String(";H,MUSE,") + track;                   // SetMuse(v)
+    default: return String(";H,FN,") + (int)fn + "," + chan + "," + track;
+  }
 }
 
 // ── Non-blocking hot-path logging ───────────────────────────────────────────
@@ -592,7 +642,7 @@ static void executeHcrAction(const RcAction& a) {
     // command is retried until ACK'd — HCR can't tolerate a miss. Mirrors the
     // MP3-over-WCB pattern (";A,..." → processMP3AudioCommand). Broadcast is
     // unsupported — an HCR vocalizer is a single device at a known WCB.
-    if (!wcb) { dlog(DBG_HCR, "[DISPATCH] HCR-WCB: wcb not ready — skipped\n"); return; }
+    if (!wcb || !wcbReady) { dlog(DBG_HCR, "[DISPATCH] HCR-WCB: WCB not ready — skipped\n"); return; }
     String cmd = hcrFormatWcbCommand(a.fn, a.chan, a.track);
     if (cmd.length() == 0) {
       dlog(DBG_HCR, "[DISPATCH] HCR-WCB: bad/unsupported fn=%u chan=%d track=%d — skipped\n",
@@ -724,7 +774,7 @@ static void executeMp3Action(const RcAction& a) {
   }
 
   // ── WCB unicast transport ──────────────────────────────────────────────
-  if (!wcb) { dlog(DBG_MP3, "[DISPATCH] MP3: wcb not ready — skipped\n"); return; }
+  if (!wcb || !wcbReady) { dlog(DBG_MP3, "[DISPATCH] MP3: WCB not ready — skipped\n"); return; }
   String cmd = mp3FormatCommand(a.fn, a.track);
   if (cmd.length() == 0) {
     dlog(DBG_MP3, "[DISPATCH] MP3: bad fn=%u — skipped\n", a.fn);
@@ -744,6 +794,12 @@ static void executeMp3Action(const RcAction& a) {
 // =============================================================================
 //  rcExecuteAction — single-action dispatcher
 // =============================================================================
+// Forward declaration: scheduleAction() (queue-full path) and
+// checkPendingActions() fire actions through rcExecuteActionNow(), which is
+// defined further below. Declared explicitly so the call sites don't depend on
+// the Arduino auto-prototype generator handling this static function.
+static void rcExecuteActionNow(const RcAction& a);
+
 static void scheduleAction(const RcAction& action, unsigned long delayMs) {
   for (int i = 0; i < PENDING_ACTION_SLOTS; i++) {
     if (!pendingActions[i].active) {
@@ -751,26 +807,30 @@ static void scheduleAction(const RcAction& action, unsigned long delayMs) {
       return;
     }
   }
-  vlogf("WARN: pendingActions full — executing immediately\n");
+  // Queue full — fire the action NOW (dropping its delay) rather than losing
+  // it. rcExecuteActionNow bypasses the delay check, so this can't recurse.
+  vlogf("WARN: pendingActions full (%d slots) — firing now, delay dropped\n", PENDING_ACTION_SLOTS);
+  rcExecuteActionNow(action);
 }
 
-void rcExecuteAction(const RcAction& a) {
-  // Calibration mode: the operator is intentionally moving every control to
-  // set thresholds — drop every action (including delayed/scheduled ones, so
-  // nothing queues up to fire the instant calibration ends).
-  if (calibrationActive) return;
-  if (a.delayMs > 0) { scheduleAction(a, a.delayMs); return; }
-
+// Dispatch an action's EFFECT immediately — no delay handling, no calibration
+// gate (callers handle those). Split out from rcExecuteAction so the delayed
+// path fires WITHOUT re-entering the delay check: previously checkPendingActions
+// called rcExecuteAction, which saw delayMs>0 and re-queued the action forever,
+// so a delayed action's real effect never ran.
+static void rcExecuteActionNow(const RcAction& a) {
   switch (a.type) {
     case RA_WCB_UNICAST: {
       uint8_t boardId = (uint8_t)atoi(a.target);
       if (boardId >= 1 && boardId <= WCB_MAX_BOARDS) {
+        if (!wcb || !wcbReady) { dlog(DBG_WCB, "[DISPATCH] WCB→%d skipped — WCB not ready\n", boardId); break; }
         dlog(DBG_WCB, "[DISPATCH] WCB→%d  %s\n", boardId, a.cmd);
         wcb->send(boardId, a.cmd);
       }
       break;
     }
     case RA_WCB_BROADCAST:
+      if (!wcb || !wcbReady) { dlog(DBG_WCB, "[DISPATCH] WCB broadcast skipped — WCB not ready\n"); break; }
       dlog(DBG_WCB, "[DISPATCH] WCB broadcast  %s\n", a.cmd);
       wcb->broadcast(a.cmd);
       break;
@@ -814,12 +874,26 @@ void rcExecuteAction(const RcAction& a) {
   }
 }
 
+// Public entry: applies the calibration gate and per-action delay, then
+// dispatches the effect via rcExecuteActionNow().
+void rcExecuteAction(const RcAction& a) {
+  // Calibration mode: the operator is intentionally moving every control to
+  // set thresholds — drop every action (including delayed/scheduled ones, so
+  // nothing queues up to fire the instant calibration ends).
+  if (calibrationActive) return;
+  if (a.delayMs > 0) { scheduleAction(a, a.delayMs); return; }
+  rcExecuteActionNow(a);
+}
+
 void checkPendingActions() {
   unsigned long now = millis();
   for (int i = 0; i < PENDING_ACTION_SLOTS; i++) {
     if (pendingActions[i].active && now >= pendingActions[i].fireAt) {
       pendingActions[i].active = false;
-      rcExecuteAction(pendingActions[i].action);
+      // Fire the EFFECT directly (NOT rcExecuteAction) so the action's own
+      // delayMs can't re-queue it forever. Honor a calibration that started
+      // after it was scheduled.
+      if (!calibrationActive) rcExecuteActionNow(pendingActions[i].action);
     }
   }
 }
@@ -951,7 +1025,11 @@ static HcrVolCache hcrVolCache;
 static const unsigned long HCR_VOLUME_MIN_INTERVAL_MS = 80;  // ~12 Hz max per chan
 
 static void dispatchHcrVolume(uint8_t audioChan, uint8_t vol) {
-  if (audioChan > 2) return;
+  if (audioChan > 2) {
+    dlog(DBG_HCR, "[DISPATCH] HCR volume: audio channel %u out of range (0-2) — "
+         "check the knob's HCR output target; skipped\n", audioChan);
+    return;
+  }
   if (vol > 99) vol = 99;
   if ((int8_t)vol == hcrVolCache.lastVol[audioChan]) return;
   unsigned long now = millis();
@@ -1316,7 +1394,7 @@ void handleSerialInput() {
           } else {
             bool ok = rcConfigFromJSON(bigDoc["data"].as<JsonObject>());
             if (ok) {
-              rcConfigSaveNVS();
+              bool saved = rcConfigSaveNVS();
               // Apply baud changes live (Serial2/3/4) so HCR / MP3 / Maestro
               // pick up a new rate immediately — no reboot required.
               applySerialBauds(false);
@@ -1331,7 +1409,8 @@ void handleSerialInput() {
               matrixCandidate    = 0;
               matrixCandCount    = 0;
               matrixNeutralCount = 0;
-              Serial.println("{\"type\":\"ACK\",\"ok\":true}");
+              if (saved) Serial.println("{\"type\":\"ACK\",\"ok\":true}");
+              else       Serial.println("{\"type\":\"ACK\",\"ok\":false,\"msg\":\"applied but NVS save failed — config too large to persist\"}");
             } else {
               Serial.println("{\"type\":\"ACK\",\"ok\":false,\"msg\":\"config apply failed\"}");
             }
@@ -1382,9 +1461,13 @@ void handleSerialInput() {
         } else if (strcmp(type,"WCB_SEND")==0) {
           int target     = hdr["target"] | 0;
           const char* cmd = hdr["cmd"]   | "";
-          if (target == 0)                               wcb->broadcast(cmd);
-          else if (target >= 1 && target <= WCB_MAX_BOARDS) wcb->send((uint8_t)target, cmd);
-          Serial.println("{\"type\":\"ACK\",\"ok\":true}");
+          if (!wcb || !wcbReady) {
+            Serial.println("{\"type\":\"ACK\",\"ok\":false,\"msg\":\"WCB not ready (init failed)\"}");
+          } else {
+            if (target == 0)                               wcb->broadcast(cmd);
+            else if (target >= 1 && target <= WCB_MAX_BOARDS) wcb->send((uint8_t)target, cmd);
+            Serial.println("{\"type\":\"ACK\",\"ok\":true}");
+          }
 
         } else if (strcmp(type,"SET_DEBUG_FLAGS")==0) {
           // GUI debug chips drive this — bitmask of DBG_* categories to
@@ -1741,6 +1824,7 @@ void setup() {
     g_ledFaultColor = C_ORANGE;
     setStatusLed(C_ORANGE, 200);   // show immediately for the rest of setup()
   } else {
+    wcbReady = true;   // ESP-NOW is up — wcb-> calls are now safe
     wcb->onCommand(onWCBCommand);
     Serial.printf("[WCB] Joined network as device ID %d (quantity=%d)\n",
                   rcConfig.wcbNetwork.deviceId, rcConfig.wcbNetwork.quantity);
@@ -1812,7 +1896,7 @@ static void updateStatusLed() {
 
 void loop() {
   // WCB — heartbeats, ACKs, WCBStream flushes
-  if (wcb) wcb->update();
+  if (wcb && wcbReady) wcb->update();
 
   // WCB-network telemetry bridge — periodic rc_hb (0.5 Hz) + rc_ch (5 Hz)
   // broadcasts so the config tool's "Via WCB" mode can discover and live-

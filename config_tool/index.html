@@ -2204,7 +2204,7 @@
         <img src="../Images/r2logo.png" alt="R2 logo"
              style="width:72px;height:72px;object-fit:contain;opacity:0.9">
         <div style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.3px">
-          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">151114QJUN26</span>
+          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">151550QJUN26</span>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap">
@@ -3171,15 +3171,21 @@ const hcrFnLabels = {
   4:  'Stimulate',
   5:  'Overload',
   6:  'Muse',
+  7:  'Muse gap',
   8:  'Stop all',
   9:  'StopEmote',
+  10: 'Override emotions',
   11: 'ResetEmotions',
+  13: 'Auto-muse',
   14: 'PlayWAV',
   16: 'StopWAV',
   17: 'SetVolume',
 };
-// For fn 2/3/4/12/19 the "chan" param is an EMOTION enum.
-// For fn 14/15/16/17/22/24/25/26/28 it's an AUDIO CHANNEL enum.
+// The "chan" param is an EMOTION enum for SetEmotion/Trigger/Stimulate (fn 2/3/4)
+// and an AUDIO CHANNEL enum for PlayWAV/StopWAV/SetVolume (fn 14/16/17). fn 7
+// (Muse gap), 10 (Override) and 13 (Auto-muse) use their own widgets, built in
+// renderHcrParamFields(), and are intentionally NOT in either set. These sets only
+// pick the chan/track widget for a fn already chosen from the Function dropdown.
 const HCR_EMOTIONS = [
   { v: 0, n: 'HAPPY' },
   { v: 1, n: 'SAD' },
@@ -3192,8 +3198,8 @@ const HCR_AUDIO_CHANS = [
   { v: 1, n: 'A' },
   { v: 2, n: 'B' },
 ];
-const HCR_FN_USES_EMOTION    = new Set([2, 3, 4, 12, 19]);
-const HCR_FN_USES_AUDIO_CHAN = new Set([14, 15, 16, 17, 22, 24, 25, 26, 28]);
+const HCR_FN_USES_EMOTION    = new Set([2, 3, 4]);
+const HCR_FN_USES_AUDIO_CHAN = new Set([14, 16, 17]);
 function emotionName(v) { return (HCR_EMOTIONS.find(e=>e.v===+v)||{}).n || `chan ${v}`; }
 function audioChanName(v) { return (HCR_AUDIO_CHANS.find(e=>e.v===+v)||{}).n || `chan ${v}`; }
 
@@ -4071,6 +4077,17 @@ function handleBoardMessage(line) {
       }
     } catch (e) {
       console.error('PWM_UPDATE handler threw:', e, msg);
+      // A silent throw here freezes the live channel grid / button glows with no
+      // on-screen sign — the user assumes the board disconnected. Surface it in
+      // the terminal panel, throttled (window guard) so a per-frame throw can't
+      // flood the log.
+      if (!window.__pwmErrTs || Date.now() - window.__pwmErrTs > 3000) {
+        window.__pwmErrTs = Date.now();
+        appendTerminalLine('Live monitor update error: ' +
+          (e && e.message ? e.message : e) +
+          ' — channel grid / highlights may be frozen (details in browser console).',
+          'error');
+      }
     }
     return;
   }
@@ -4312,10 +4329,16 @@ function applyConfig(data) {
     config.txModel = +data.txModel | 0;
     applyTxModel(config.txModel, false);
   }
-  if (data.tapWindowMs   !== undefined) config.tapWindowMs   = data.tapWindowMs;
+  if (data.tapWindowMs   !== undefined) {
+    const t = +data.tapWindowMs;                    // coerce: a string here would show
+    if (Number.isFinite(t)) config.tapWindowMs = t; // as a false "dirty" diff on save
+  }
   if (data.matrixDebounceFrames !== undefined)
     config.matrixDebounceFrames = Math.max(1, Math.min(4, +data.matrixDebounceFrames || 1));
-  if (data.matrixChannel !== undefined) config.matrixChannel = data.matrixChannel;
+  if (data.matrixChannel !== undefined) {
+    const mc = +data.matrixChannel;
+    if (Number.isFinite(mc)) config.matrixChannel = mc;
+  }
   if (data.funcBindings)               config.funcBindings  = data.funcBindings;
   if (data.thresholds)  config.thresholds = data.thresholds;
   // Ensure all 36 slots exist. Older firmware (or the default) may send fewer;
@@ -4339,6 +4362,14 @@ function applyConfig(data) {
   }
   if (data.wcbNetwork) {
     config.wcbNetwork = { ...config.wcbNetwork, ...data.wcbNetwork };
+    // Coerce the numeric fields — if any arrive as strings they'd register as a
+    // false "dirty" diff against the number-typed defaults. (password stays a
+    // string.)
+    const w = config.wcbNetwork;
+    if (w.macOct2  !== undefined) w.macOct2  = +w.macOct2;
+    if (w.macOct3  !== undefined) w.macOct3  = +w.macOct3;
+    if (w.quantity !== undefined) w.quantity = +w.quantity;
+    if (w.deviceId !== undefined) w.deviceId = +w.deviceId;
   }
   if (data.mp3Dest) {
     config.mp3Dest = { ...config.mp3Dest, ...data.mp3Dest };
@@ -4897,7 +4928,9 @@ const CHAN_ACTIVE_WINDOW = 600;   // ms — how long the glow lingers after moti
 function markActiveChannels(channels) {
   if (!Array.isArray(channels) || !channels.length) return;
   const now = performance.now();
-  for (let i = 0; i < channels.length; i++) {
+  // Cap at 24 — _prevChan / _chanActiveTs are sized for the 24 SBUS channels;
+  // a malformed longer array must not be allowed to grow them past their bounds.
+  for (let i = 0; i < channels.length && i < 24; i++) {
     const v = channels[i] | 0;
     if (Math.abs(v - _prevChan[i]) > CHAN_ACTIVE_DELTA) _chanActiveTs[i] = now;
     _prevChan[i] = v;
@@ -4913,12 +4946,12 @@ function markActiveChannels(channels) {
 
   document.querySelectorAll('.switch-zone').forEach(el => {
     const ch = swCh(el.dataset.sw);
-    const on = ch && (now - _chanActiveTs[ch - 1] < CHAN_ACTIVE_WINDOW);
+    const on = ch >= 1 && ch <= 24 && (now - _chanActiveTs[ch - 1] < CHAN_ACTIVE_WINDOW);
     el.classList.toggle('live-active', !!on);
   });
   document.querySelectorAll('.knob-zone').forEach(el => {
     const ch = knCh(el.dataset.knob);
-    const on = ch && (now - _chanActiveTs[ch - 1] < CHAN_ACTIVE_WINDOW);
+    const on = ch >= 1 && ch <= 24 && (now - _chanActiveTs[ch - 1] < CHAN_ACTIVE_WINDOW);
     el.classList.toggle('live-active', !!on);
   });
 }
@@ -5243,14 +5276,14 @@ function renderLogicalButtons() {
   }
   host.querySelectorAll('.logical-label').forEach(el => el.addEventListener('change', e => {
     const id = +e.target.dataset.id;
-    if (!config.thresholds[id - 1]) config.thresholds[id - 1] = { id, label: '', minPwm: 0, maxPwm: 0 };
+    if (!config.thresholds[id - 1]) config.thresholds[id - 1] = { id, label: getBtnLabel(id), minPwm: 0, maxPwm: 0 };
     config.thresholds[id - 1].label = e.target.value.slice(0, 23);
     // No btnLabels write — getBtnLabel() reads config.thresholds directly.
     if (typeof renderAssignmentList === 'function') renderAssignmentList();
   }));
   host.querySelectorAll('.logical-center').forEach(el => el.addEventListener('change', e => {
     const id = +e.target.dataset.id;
-    if (!config.thresholds[id - 1]) config.thresholds[id - 1] = { id, label: btnLabels[id] || '', minPwm: 0, maxPwm: 0 };
+    if (!config.thresholds[id - 1]) config.thresholds[id - 1] = { id, label: getBtnLabel(id), minPwm: 0, maxPwm: 0 };
     const raw = e.target.value.trim();
     if (raw === '') { config.thresholds[id - 1].minPwm = 0; config.thresholds[id - 1].maxPwm = 0; }
     else {
@@ -5826,7 +5859,8 @@ function appendActionFields(container, action) {
     fnSel.id = fid + '-fn';
     fnSel.style.minWidth = '140px';
     [[14,'PlayWAV'],[16,'StopWAV'],[9,'StopEmote'],[8,'Stop All'],[4,'Stimulate'],
-     [3,'Trigger'],[2,'SetEmotion'],[17,'SetVolume'],[5,'Overload'],[6,'Muse'],[11,'ResetEmotions']
+     [3,'Trigger'],[2,'SetEmotion'],[17,'SetVolume'],[5,'Overload'],[10,'Override Emotions'],
+     [6,'Muse'],[7,'Muse Gap'],[13,'Auto-Muse On/Off'],[11,'ResetEmotions']
     ].forEach(([v,lbl]) => {
       const o = document.createElement('option');
       o.value = v; o.textContent = lbl;

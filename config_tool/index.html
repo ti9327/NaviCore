@@ -2204,7 +2204,7 @@
         <img src="../Images/r2logo.png" alt="R2 logo"
              style="width:72px;height:72px;object-fit:contain;opacity:0.9">
         <div style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.3px">
-          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">151550QJUN26</span>
+          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">161029QJUN26</span>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap">
@@ -5380,11 +5380,16 @@ function actionSummary(a) {
   else if (a.type === 'serial')        core = `${a.port}: ${escH(a.cmd)}`;
   else if (a.type === 'hcr') {
     const fnLbl = hcrFnLabels[a.fn] || `fn${a.fn}`;
-    let chanLbl;
-    if (HCR_FN_USES_EMOTION.has(+a.fn))         chanLbl = emotionName(a.chan);
-    else if (HCR_FN_USES_AUDIO_CHAN.has(+a.fn)) chanLbl = audioChanName(a.chan);
-    else                                         chanLbl = `c${a.chan}`;
-    core = `HCR ${fnLbl}(${chanLbl}, ${a.track ?? 0})`;
+    if (+a.fn === 7)        core = `HCR ${fnLbl}(${a.chan ?? 0}-${a.track ?? 0}s)`;
+    else if (+a.fn === 10)  core = `HCR ${fnLbl}(${(+a.chan) ? 'On' : 'Off'})`;
+    else if (+a.fn === 13)  core = `HCR ${fnLbl}(${(+a.track) ? 'On' : 'Off'})`;
+    else {
+      let chanLbl;
+      if (HCR_FN_USES_EMOTION.has(+a.fn))         chanLbl = emotionName(a.chan);
+      else if (HCR_FN_USES_AUDIO_CHAN.has(+a.fn)) chanLbl = audioChanName(a.chan);
+      else                                         chanLbl = `c${a.chan}`;
+      core = `HCR ${fnLbl}(${chanLbl}, ${a.track ?? 0})`;
+    }
   }
   else if (a.type === 'mp3') {
     const fnLbl = mp3FnLabels[a.fn] || `fn${a.fn}`;
@@ -5719,44 +5724,69 @@ function buildMaestroHelper(containerId, cmdInputId) {
   return wrap;
 }
 
-// Build (or rebuild) the "chan" field group for an HCR action — the widget
-// switches between an emotion dropdown, an audio-channel dropdown, or a raw
-// number input depending on the selected fn. Mirrors the BC config tool.
-function renderHcrChanField(container, fn, curVal) {
-  const groupId = container.id + '-chan-group';
-  const old = document.getElementById(groupId);
-  if (old) old.remove();
-  let widget;
-  if (HCR_FN_USES_EMOTION.has(+fn)) {
-    widget = document.createElement('select');
-    HCR_EMOTIONS.forEach(e => {
+// Build (or rebuild) BOTH the "chan" and "track" field groups for an HCR action.
+// The widgets switch per-fn: emotion / audio-channel dropdowns, on/off selects
+// (Override fn10, Auto-muse fn13), min/max gap numbers (Muse-gap fn7), or a plain
+// numeric value. fn / chan / track positions mirror the BC HCRFunction()
+// convention. Called on the initial render and whenever the Function changes.
+function renderHcrParamFields(container, fn, curChan, curTrack) {
+  fn = +fn;
+  const cid = container.id;
+  ['-chan-group', '-track-group'].forEach(sfx => {
+    const el = document.getElementById(cid + sfx);
+    if (el) el.remove();
+  });
+
+  const mkSelect = (idSfx, items, cur) => {
+    const s = document.createElement('select');
+    s.id = cid + idSfx;
+    items.forEach(([v, n]) => {
       const o = document.createElement('option');
-      o.value = e.v; o.textContent = e.n;
-      if (curVal !== undefined && +curVal === e.v) o.selected = true;
-      widget.appendChild(o);
+      o.value = v; o.textContent = n;
+      if (cur !== undefined && +cur === +v) o.selected = true;
+      s.appendChild(o);
     });
-  } else if (HCR_FN_USES_AUDIO_CHAN.has(+fn)) {
-    widget = document.createElement('select');
-    HCR_AUDIO_CHANS.forEach(e => {
-      const o = document.createElement('option');
-      o.value = e.v; o.textContent = e.n;
-      if (curVal !== undefined && +curVal === e.v) o.selected = true;
-      widget.appendChild(o);
-    });
-  } else {
-    widget = document.createElement('input');
-    widget.type = 'number'; widget.min = 0; widget.max = 99;
-    widget.value = curVal ?? 0; widget.style.width = '55px';
+    return s;
+  };
+  const mkNum = (idSfx, cur, max) => {
+    const i = document.createElement('input');
+    i.type = 'number'; i.id = cid + idSfx; i.min = 0; i.max = max;
+    i.style.width = (max > 99) ? '70px' : '55px';
+    i.value = cur ?? 0;
+    return i;
+  };
+
+  let chanW = null, chanL = '', trackW = null, trackL = '', trackTitle = '';
+  if (fn === 7) {                 // Muse(min,max) — min=chan, max=track (seconds)
+    chanW  = mkNum('-chan',  curChan,  99); chanL  = 'Min gap (s)';
+    trackW = mkNum('-track', curTrack, 99); trackL = 'Max gap (s)';
+    trackTitle = 'Maximum seconds between automatic muses';
+  } else if (fn === 10) {         // OverrideEmotions(v) — v=chan (0/1)
+    chanW = mkSelect('-chan', [[0, 'Off'], [1, 'On']], curChan); chanL = 'Override';
+  } else if (fn === 13) {         // SetMuse(v) — v=track (0/1); chan unused
+    trackW = mkSelect('-track', [[0, 'Off'], [1, 'On']], curTrack); trackL = 'Auto-muse';
+  } else {                        // the original 11 fns — behavior unchanged
+    if (HCR_FN_USES_EMOTION.has(fn)) {
+      chanW = mkSelect('-chan', HCR_EMOTIONS.map(e => [e.v, e.n]), curChan); chanL = 'Emotion';
+    } else if (HCR_FN_USES_AUDIO_CHAN.has(fn)) {
+      chanW = mkSelect('-chan', HCR_AUDIO_CHANS.map(e => [e.v, e.n]), curChan); chanL = 'Audio chan';
+    } else {
+      chanW = mkNum('-chan', curChan, 99); chanL = 'Chan';
+    }
+    trackW = mkNum('-track', curTrack, 9999); trackL = 'Track/Val';
+    trackTitle = 'Track number (PlayWAV), volume (SetVolume), or emote level (Trigger/Stimulate)';
   }
-  widget.id = container.id + '-chan';
-  const g = makeFieldGroup(HCR_FN_USES_EMOTION.has(+fn) ? 'Emotion'
-                         : HCR_FN_USES_AUDIO_CHAN.has(+fn) ? 'Audio chan'
-                         : 'Chan', widget);
-  g.id = groupId;
-  // Insert just after the Function selector (which is the first child).
-  const fnGroup = container.querySelector('#' + container.id + '-fn')?.parentElement;
-  if (fnGroup && fnGroup.nextSibling) container.insertBefore(g, fnGroup.nextSibling);
-  else container.appendChild(g);
+  if (trackW && trackTitle) trackW.title = trackTitle;
+
+  // Insert chan then track, each right after the previous (Function group first).
+  let anchor = container.querySelector('#' + cid + '-fn')?.parentElement;
+  const insertAfter = (g) => {
+    if (anchor && anchor.nextSibling) container.insertBefore(g, anchor.nextSibling);
+    else container.appendChild(g);
+    anchor = g;
+  };
+  if (chanW)  { const g = makeFieldGroup(chanL,  chanW);  g.id = cid + '-chan-group';  insertAfter(g); }
+  if (trackW) { const g = makeFieldGroup(trackL, trackW); g.id = cid + '-track-group'; insertAfter(g); }
 }
 
 // Build (or rebuild) the numeric-arg field for an MP3 action. Only PLAY,
@@ -5867,20 +5897,12 @@ function appendActionFields(container, action) {
       if (v === (action.fn || 14)) o.selected = true;
       fnSel.appendChild(o);
     });
-    // Re-render chan widget whenever the function changes
-    fnSel.onchange = () => renderHcrChanField(container, +fnSel.value, undefined);
+    // Re-render the chan + track widgets whenever the function changes.
+    fnSel.onchange = () => renderHcrParamFields(container, +fnSel.value, undefined, undefined);
     container.appendChild(makeFieldGroup('Function', fnSel));
 
-    // Initial chan field for the selected fn
-    renderHcrChanField(container, +(action.fn || 14), action.chan);
-
-    // Track / value
-    const trackIn = document.createElement('input');
-    trackIn.type = 'number'; trackIn.id = fid + '-track';
-    trackIn.min = 0; trackIn.max = 9999; trackIn.style.width = '70px';
-    trackIn.value = action.track ?? 0;
-    trackIn.title = 'Track number (PlayWAV), volume (SetVolume), or emote level (Trigger/Stimulate)';
-    container.appendChild(makeFieldGroup('Track/Val', trackIn));
+    // Initial chan + track fields for the selected fn.
+    renderHcrParamFields(container, +(action.fn || 14), action.chan, action.track);
   } else if (type === 'mp3') {
     // Destination is GLOBAL (sidebar MP3 Destination panel). The action only
     // carries fn (MP3 function) + track (numeric arg for PLAY/PLAYFS/VOL).

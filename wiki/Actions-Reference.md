@@ -58,16 +58,23 @@ Each HCR action carries a **function**, an **emotion/audio channel**, and a **tr
 | 3 | Trigger | 0–4 | level 0–99 |
 | 4 | Stimulate | 0–4 | level 0–99 |
 | 5 | Overload | — | — |
-| 6 | Muse | — | — |
+| 6 | Muse (one shot) | — | — |
+| 7 | Muse gap (auto interval) | min gap 0–99 s | max gap 0–99 s |
 | 8 | Stop (all audio + emote) | — | — |
 | 9 | StopEmote | — | — |
+| 10 | Override emotions | 0 = off / 1 = on | — |
 | 11 | ResetEmotions | — | — |
+| 13 | Auto-muse (continuous) | — | 0 = off / 1 = on |
 | 14 | PlayWAV | 0–2 audio | track 0–9999 |
 | 16 | StopWAV | 0–2 audio | — |
 | 17 | SetVolume | 0–2 audio | 0–99 |
 
 - **Emotion channels:** 0 = Happy, 1 = Sad, 2 = Mad, 3 = Scared, 4 = Overload.
 - **Audio channels:** 0 = V (vocalizer), 1 = A, 2 = B.
+- **Override emotions (fn 10):** locks the brain's emotion normalization so a `SetEmotion` level holds instead of decaying back to baseline. Turn it off to resume normal decay.
+- **Muse (fn 6 / 7 / 13):** fn 6 plays a single muse now; fn 13 turns the brain's *continuous* random idle musing on/off; fn 7 sets the random gap (min–max seconds) between auto-muses.
+
+> These match the Body Controller's HCR function numbers exactly. Over WCB, fn 7/10/13 are sent as the WCB's readable `;H,MUSE,GAP` / `;H,OVERRIDE` / `;H,MUSE` verbs (no WCB firmware change needed); the other functions use `;H,FN,…`.
 
 > Diagnostic: CLI `#L20` / `#L21` send a test HCR command straight to S3 / S4, bypassing config and mapping — handy for isolating wiring vs. config issues. See [[CLI Commands]].
 

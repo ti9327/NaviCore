@@ -87,7 +87,8 @@ void                rcDispatch(int buttonId, uint8_t tapCount);
 String rcConfigToJSON();
 bool   rcConfigFromJSON(const String& json);
 bool   rcConfigFromJSON(const JsonObject& doc);   // JsonObject overload — skip the double-parse
-bool   rcConfigSaveNVS();   // returns false if any NVS value failed to persist
+bool   rcConfigSaveNVS();   // legacy NVS save (migration source only)
+bool   rcConfigSaveLFS();   // primary: persist config to /config.json on LittleFS
 
 namespace rcTelemetry {
 
@@ -496,10 +497,10 @@ inline void _applyReassembled(uint8_t senderID, const String& json) {
                   "(heap=%u bytes free)\n", ok ? "true" : "false",
                   (unsigned)ESP.getFreeHeap());
     if (ok) {
-      bool saved = rcConfigSaveNVS();
-      if (!saved) ok = false;   // surface the NVS-save failure in the ACK below
-      Serial.println(saved ? "[RC] SET_CONFIG → applied + saved to NVS"
-                           : "[RC] SET_CONFIG → applied but NVS SAVE FAILED (not persisted)");
+      bool saved = rcConfigSaveLFS();
+      if (!saved) ok = false;   // surface the save failure in the ACK below
+      Serial.println(saved ? "[RC] SET_CONFIG → applied + saved to LittleFS"
+                           : "[RC] SET_CONFIG → applied but SAVE FAILED (not persisted)");
     } else {
       Serial.println("[RC] SET_CONFIG → rcConfigFromJSON returned false");
     }

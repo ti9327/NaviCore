@@ -38,6 +38,7 @@
 #include <WiFi.h>
 #include <ArduinoJson.h>
 #include <Preferences.h>
+#include <LittleFS.h>     // config persists as /config.json (replaces the NVS 4000-byte/value limit)
 #include <SoftwareSerial.h>
 #include <Adafruit_NeoPixel.h>
 #include "esp_timer.h"          // one-shot boot-guard timer (cold-boot auto-recovery)
@@ -1394,11 +1395,11 @@ void handleSerialInput() {
           } else {
             bool ok = rcConfigFromJSON(bigDoc["data"].as<JsonObject>());
             if (ok) {
-              bool saved = rcConfigSaveNVS();
+              bool saved = rcConfigSaveLFS();
               // Apply baud changes live (Serial2/3/4) so HCR / MP3 / Maestro
               // pick up a new rate immediately — no reboot required.
               applySerialBauds(false);
-              // rcConfigSaveNVS() (flash erase/write) + applySerialBauds()
+              // rcConfigSaveLFS() (flash write) + applySerialBauds()
               // block loop() for 100+ ms, during which processSbus() can't
               // run.  If the operator was holding a matrix button across
               // that gap, the frozen debounce state could produce a phantom
@@ -1410,7 +1411,7 @@ void handleSerialInput() {
               matrixCandCount    = 0;
               matrixNeutralCount = 0;
               if (saved) Serial.println("{\"type\":\"ACK\",\"ok\":true}");
-              else       Serial.println("{\"type\":\"ACK\",\"ok\":false,\"msg\":\"applied but NVS save failed — config too large to persist\"}");
+              else       Serial.println("{\"type\":\"ACK\",\"ok\":false,\"msg\":\"applied to RAM but could not be saved to flash (LittleFS write error)\"}");
             } else {
               Serial.println("{\"type\":\"ACK\",\"ok\":false,\"msg\":\"config apply failed\"}");
             }
@@ -1587,7 +1588,13 @@ void handleSerialInput() {
       }
       serialInputBuf = "";
     } else {
-      if (serialInputBuf.length() < 8192) serialInputBuf += c;
+      // Must be able to hold a full SET_CONFIG payload. A config with
+      // double/triple-tap mappings is tens of KB; the old 8 KB cap silently
+      // truncated large configs mid-JSON, so deserializeJson() (bigDoc, 98304
+      // in the SET_CONFIG handler above) failed with "parse failed" and the
+      // ENTIRE save was rejected — nothing persisted and reload reverted every
+      // edit. Keep this in sync with that bigDoc capacity.
+      if (serialInputBuf.length() < 98304) serialInputBuf += c;
     }
   }
 }
@@ -1789,7 +1796,25 @@ void setup() {
   // RC Config: defaults then NVS overrides. Must run BEFORE constructing
   // WCB_Client so the network credentials come from rcConfig.wcbNetwork.
   rcConfigLoadDefaults();
-  rcConfigLoadNVS();
+  // Config persistence: LittleFS (/config.json) is primary; the legacy NVS store
+  // is a one-time migration source. LittleFS removes the NVS 4000-byte-per-value
+  // limit that silently dropped densely-mapped modes.
+  rcConfigBeginLFS();
+  if (!rcConfigLoadLFS()) {
+    if (g_lfsReady && LittleFS.exists(RC_CFG_PATH)) {
+      // The file EXISTS but didn't load (parse error / transient low memory).
+      // Do NOT migrate-and-save here — that would overwrite a good config with
+      // defaults. Keep the file and run on defaults this boot; retry next boot.
+      Serial.println("[CONFIG] /config.json present but unreadable — kept; running on defaults this boot");
+    } else {
+      // No file yet — fresh board, or first boot after the LittleFS upgrade.
+      // Load the legacy NVS config and migrate it forward (once) so the next
+      // boot reads LittleFS.
+      rcConfigLoadNVS();
+      if (g_lfsReady && rcConfigSaveLFS())
+        Serial.println("[CONFIG] migrated existing config: NVS -> LittleFS");
+    }
+  }
 
   // Open Serial2 (local Maestro) + Serial3/4 (aux SWSerial) at their
   // configured baud. Single source of truth: rcConfig (maestroBaud /

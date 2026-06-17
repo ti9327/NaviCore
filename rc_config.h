@@ -14,6 +14,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 #include <Arduino.h>
 #include <Preferences.h>
+#include <LittleFS.h>     // config persists as /config.json; keep this header self-contained
 #include <ArduinoJson.h>
 #include "wcb_config.h"   // provides WCB_MAC_OCT2/3, WCB_PASSWORD, WCB_QUANTITY, WCB_DEVICE_ID used as factory defaults
 
@@ -216,7 +217,12 @@ struct RcKnob {
 //   MS = middle slider (sits between B1-B6 face buttons on the X20)
 //   J5/J6 = 3rd-axis twist channels on the L/R sticks of an X20
 //           build with the optional 3-axis gimbal upgrade.
-static const char*   RC_KNOB_LABELS[RC_NUM_KNOBS]    = {"S1","S2","LS","RS","MS","J1","J2","J3","J4","J5","J6"};
+// NOTE: index 4 is the X20 middle slider and MUST stay "S3" to match the config
+// tool's knob key (knobDefaults in config_tool/index.html). It was "MS" here
+// while the tool sent "S3"; rcConfigFromJSON/load skip any RC_KNOB_LABELS entry
+// the incoming JSON lacks, so the tool's S3 knob (incl. its Maestro pass-through)
+// silently failed to apply + persist and reverted on every reload.
+static const char*   RC_KNOB_LABELS[RC_NUM_KNOBS]    = {"S1","S2","LS","RS","S3","J1","J2","J3","J4","J5","J6"};
 static const int     RC_KNOB_DEFAULT_CH[RC_NUM_KNOBS] = {  5,   6,   0,   0,   0,   1,   2,   3,   4,   0,   0 };
 static const uint8_t RC_KNOB_DEFAULT_FN[RC_NUM_KNOBS] = {
   KF_NONE, KF_NONE, KF_NONE, KF_NONE,
@@ -843,6 +849,10 @@ bool rcConfigFromJSON(const JsonObject& doc) {
   if (doc.containsKey("txModel"))       rcConfig.txModel       = (uint8_t)(doc["txModel"] | (int)TX_MODEL_X18);
   if (doc.containsKey("threeAxisGimbals")) rcConfig.threeAxisGimbals = doc["threeAxisGimbals"] | false;
   if (doc.containsKey("tapWindowMs"))   rcConfig.tapWindowMs   = doc["tapWindowMs"];
+  // A sub-100 ms window makes the multi-tap test (now - lastTap < tapWindowMs)
+  // effectively always-false, silently killing double/triple taps while single
+  // taps keep working. Treat a nonsensically small/zero value as unset → default.
+  if (rcConfig.tapWindowMs < 100) rcConfig.tapWindowMs = 500;
   if (doc.containsKey("matrixChannel")) rcConfig.matrixChannel = doc["matrixChannel"];
   if (doc.containsKey("matrixDebounceFrames")) {
     int d = doc["matrixDebounceFrames"] | 1;
@@ -953,7 +963,10 @@ bool rcConfigFromJSON(const JsonObject& doc) {
     for (JsonObject mObj : maeArr) {
       if (i >= RC_NUM_MAESTROS) break;
       rcConfig.maestros[i].type   = (uint8_t)(mObj["type"]   | 0);
-      rcConfig.maestros[i].device = (uint8_t)(mObj["device"] | (1 + i));
+      // Presence check, not '|': ArduinoJson's '|' substitutes the default on a
+      // falsy value, and JSON 0 is falsy — so a legal Pololu device #0 would be
+      // silently rewritten to 1+i. Preserve an explicit 0.
+      rcConfig.maestros[i].device = mObj.containsKey("device") ? (uint8_t)mObj["device"].as<int>() : (uint8_t)(1 + i);
       i++;
     }
   }
@@ -1045,6 +1058,91 @@ static bool _nvsPutJson(Preferences& prefs, const char* key, JsonDocument& doc) 
     return false;
   }
   return true;
+}
+
+// ── LittleFS-backed config persistence ──────────────────────────────────────
+// Config persists as ONE JSON file (/config.json) on the LittleFS data
+// partition (the "spiffs" partition already present in the min_spiffs scheme).
+// This removes the NVS 4000-byte-per-value limit that silently dropped a
+// densely-mapped mode. rcConfigToJSON()/rcConfigFromJSON() are reused verbatim,
+// so the on-disk shape matches the SET_CONFIG/GET_CONFIG wire shape. The legacy
+// NVS save/load below is retained ONLY as a one-time migration source.
+static const char* RC_CFG_PATH     = "/config.json";
+static const char* RC_CFG_TMP_PATH = "/config.json.tmp";
+bool g_lfsReady = false;
+
+// Mount LittleFS once (format on first mount). Call from setup() before load.
+bool rcConfigBeginLFS() {
+  g_lfsReady = LittleFS.begin(true);   // true = format the partition if mount fails (first boot)
+  if (!g_lfsReady)
+    Serial.println("[CONFIG] LittleFS mount FAILED — new saves will NOT persist this boot");
+  return g_lfsReady;
+}
+
+// Write the full config to /config.json ATOMICALLY (write tmp, then rename) so a
+// power loss mid-write can never corrupt the live file. Returns false on any
+// failure (the caller surfaces it in the SET_CONFIG ACK).
+bool rcConfigSaveLFS() {
+  if (!g_lfsReady) { Serial.println("[CONFIG] LittleFS not mounted — save skipped"); return false; }
+  String json = rcConfigToJSON();
+  if (json.startsWith("{\"type\":\"ERROR\"")) {   // rcConfigToJSON hit a heap overflow
+    Serial.println("[CONFIG] LFS save aborted — config failed to serialize");
+    return false;
+  }
+  File f = LittleFS.open(RC_CFG_TMP_PATH, "w");   // "w" truncates any stale tmp
+  if (!f) { Serial.println("[CONFIG] LFS: cannot open temp file for write"); return false; }
+  size_t n = f.print(json);
+  f.close();
+  if (n != json.length()) {
+    Serial.printf("[CONFIG] LFS: short write %u/%u — keeping previous config\n",
+                  (unsigned)n, (unsigned)json.length());
+    LittleFS.remove(RC_CFG_TMP_PATH);
+    return false;
+  }
+  // Re-open and verify the ON-FLASH size. f.print() only counts bytes into the
+  // core's 4 KB stdio buffer; the final flush happens inside close(), whose error
+  // the core discards. So a near-full-partition truncation of the last <=4 KB
+  // would otherwise slip past the 'n' check and be promoted over the good config.
+  {
+    File chk = LittleFS.open(RC_CFG_TMP_PATH, "r");
+    size_t onDisk = chk ? chk.size() : 0;
+    if (chk) chk.close();
+    if (onDisk != json.length()) {
+      Serial.printf("[CONFIG] LFS: temp file truncated on flash (%u/%u) — config not updated\n",
+                    (unsigned)onDisk, (unsigned)json.length());
+      LittleFS.remove(RC_CFG_TMP_PATH);
+      return false;
+    }
+  }
+  // Atomic replace — esp_littlefs lfs_rename overwrites the destination
+  // atomically, so the live config is never left half-written. On failure the
+  // previous config stays intact and we just drop the temp.
+  if (!LittleFS.rename(RC_CFG_TMP_PATH, RC_CFG_PATH)) {
+    Serial.println("[CONFIG] LFS: rename failed — previous config kept");
+    LittleFS.remove(RC_CFG_TMP_PATH);
+    return false;
+  }
+  Serial.printf("RC config saved to LittleFS (%u bytes).\n", (unsigned)json.length());
+  return true;
+}
+
+// Load /config.json into rcConfig. Returns false if the file is missing, empty,
+// or unparseable (the caller then falls back to NVS migration / defaults).
+bool rcConfigLoadLFS() {
+  if (!g_lfsReady || !LittleFS.exists(RC_CFG_PATH)) return false;
+  File f = LittleFS.open(RC_CFG_PATH, "r");
+  if (!f) return false;
+  if (f.size() == 0) { f.close(); return false; }
+  DynamicJsonDocument doc(98304);                 // ArduinoJson 7: capacity is elastic; overflowed() is the guard
+  DeserializationError err = deserializeJson(doc, f);
+  f.close();
+  if (err) {
+    Serial.printf("[CONFIG] LFS: /config.json parse failed (%s) — keeping file, using defaults this boot\n", err.c_str());
+    return false;
+  }
+  bool applied = rcConfigFromJSON(doc.as<JsonObject>());
+  if (applied) Serial.println("RC config loaded from LittleFS.");
+  return applied;
 }
 
 // Returns true only if EVERY NVS value was written successfully.
@@ -1234,6 +1332,7 @@ void rcConfigLoadNVS() {
   if (prefs.isKey("tx"))       rcConfig.txModel          = prefs.getUChar("tx", rcConfig.txModel);
   if (prefs.isKey("3xg"))      rcConfig.threeAxisGimbals = prefs.getBool("3xg", rcConfig.threeAxisGimbals);
   if (prefs.isKey("cfg"))      rcConfig.tapWindowMs   = prefs.getInt("cfg",      rcConfig.tapWindowMs);
+  if (rcConfig.tapWindowMs < 100) rcConfig.tapWindowMs = 500;   // guard a stale/zero NVS value that would disable multi-tap
   if (prefs.isKey("matrixCh")) rcConfig.matrixChannel = prefs.getInt("matrixCh", rcConfig.matrixChannel);
   if (prefs.isKey("mtxDeb")) {
     int d = prefs.getInt("mtxDeb", rcConfig.matrixDebounceFrames);
@@ -1363,7 +1462,9 @@ void rcConfigLoadNVS() {
       for (JsonObject mObj : arr) {
         if (i >= RC_NUM_MAESTROS) break;
         rcConfig.maestros[i].type   = (uint8_t)(mObj["type"]   | 0);
-        rcConfig.maestros[i].device = (uint8_t)(mObj["device"] | (1 + i));
+        // Same presence-check as the SET_CONFIG path — preserve a stored device #0
+        // instead of letting '|' rewrite a falsy 0 to the slot default.
+        rcConfig.maestros[i].device = mObj.containsKey("device") ? (uint8_t)mObj["device"].as<int>() : (uint8_t)(1 + i);
         i++;
       }
     }

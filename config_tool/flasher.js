@@ -109,8 +109,12 @@ async function fetchFirmwareImages(onLog) {
   //   • exactly one   → a corrupted/partial firmware upload. Do NOT silently
   //                     fall back to app-only: app-only onto a blank board (no
   //                     partition table) leaves it unbootable. Abort loudly.
+  // Bootloader = the CUSTOM short-WDT 16MB bootloader (cold-boot auto-retry),
+  // committed under a FIXED name so CI's stock per-build _ESP32S3_boot.bin can
+  // never shadow it. It is the matched pair of the firmware's in-app boot guard.
+  // Partition table stays the tagged per-build _ESP32S3_part.bin.
   const [bootBuf, partBuf] = await Promise.all([
-    fetchBySuffix('_ESP32S3_boot.bin', false),
+    fetchBySuffix('WCB_S3_custom_bootloader_16MB_wdt3s.bin', false),
     fetchBySuffix('_ESP32S3_part.bin', false),
   ]);
   let hasBootPart = false;
@@ -122,7 +126,7 @@ async function fetchFirmwareImages(onLog) {
     hasBootPart = true;
   } else if (bootBuf || partBuf) {
     const missing = bootBuf ? 'partition table (_ESP32S3_part.bin)'
-                            : 'bootloader (_ESP32S3_boot.bin)';
+                            : 'custom bootloader (WCB_S3_custom_bootloader_16MB_wdt3s.bin)';
     throw new Error(`Incomplete firmware on GitHub: the ${missing} is missing while ` +
       `its pair is present. Refusing to flash a partial set — app-only onto a blank ` +
       `board would leave it unbootable. Re-run the firmware build/upload, then retry.`);

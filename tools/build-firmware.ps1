@@ -137,7 +137,15 @@ if ($LASTEXITCODE -ne 0) {
 #   NaviCore.ino.bootloader.bin        ← second-stage bootloader
 #   NaviCore.ino.partitions.bin        ← partition table
 $AppSrc  = Join-Path $BuildDir 'NaviCore.ino.bin'
-$BootSrc = Join-Path $BuildDir 'NaviCore.ino.bootloader.bin'
+# Ship the CUSTOM short-WDT 16MB bootloader (cold-boot auto-retry) instead of
+# arduino-cli's stock bootloader (NaviCore.ino.bootloader.bin): a board that
+# stalls in the pre-app boot window auto-resets in ~3s instead of sitting dark.
+# Committed in firmware/ (sourced from the WCB repo's Code/bin). It is the matched
+# pair of the in-app boot guard in NaviCore.ino — never ship one without the other.
+# NOTE: .github/workflows still compiles the STOCK bootloader, so the CI-published
+# _ESP32S3_boot.bin is stock; the in-browser flasher therefore reads the fixed
+# custom bin by name. Update the workflow too if you want CI's boot artifact custom.
+$BootSrc = Join-Path $FwDir 'WCB_S3_custom_bootloader_16MB_wdt3s.bin'
 $PartSrc = Join-Path $BuildDir 'NaviCore.ino.partitions.bin'
 
 foreach ($f in @($AppSrc, $BootSrc, $PartSrc)) {

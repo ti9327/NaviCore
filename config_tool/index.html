@@ -2204,7 +2204,7 @@
         <img src="../Images/r2logo.png" alt="R2 logo"
              style="width:72px;height:72px;object-fit:contain;opacity:0.9">
         <div style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.3px">
-          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">172213QJUN26</span>
+          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">181326QJUN26</span>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap">
@@ -2601,6 +2601,15 @@
               <span style="color:var(--muted);font-size:12px">ms</span>
             </div>
             <div class="noconn" style="margin-top:4px">Time window for multi-tap detection</div>
+          </div>
+          <div class="sb-section">
+            <h3>SBUS Output</h3>
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+              <input type="checkbox" id="sbus-out-toggle"
+                     onchange="config.sbusOutEnabled = this.checked">
+              <span>Re-emit SBUS passthrough on GPIO9</span>
+            </label>
+            <div class="noconn" style="margin-top:4px">Off by default. Enable only if you daisy-chain a downstream SBUS device — leaving it off saves the per-frame CPU of re-transmitting. Applies on Save (no reboot).</div>
           </div>
         </section>
 
@@ -3054,6 +3063,7 @@ function hcrAudioChanOptions(selected) {
 let config = {
   txModel:          0,        // TX_MODEL_X18 default
   threeAxisGimbals: false,    // X20 hardware option (off by default)
+  sbusOutEnabled:   false,    // SBUS-OUT passthrough (off by default — saves CPU when unused)
   tapWindowMs:   500,
   matrixChannel: 7,
   matrixDebounceFrames: 1,
@@ -4332,6 +4342,7 @@ function applyConfig(data) {
     config.txModel = +data.txModel | 0;
     applyTxModel(config.txModel, false);
   }
+  if (data.sbusOutEnabled !== undefined) config.sbusOutEnabled = !!data.sbusOutEnabled;
   if (data.tapWindowMs   !== undefined) {
     const t = +data.tapWindowMs;                    // coerce: a string here would show
     if (Number.isFinite(t)) config.tapWindowMs = t; // as a false "dirty" diff on save
@@ -4381,6 +4392,7 @@ function applyConfig(data) {
     config.auxBaud = { ...config.auxBaud, ...data.auxBaud };
   }
   document.getElementById('tapwin-input').value = config.tapWindowMs;
+  { const sb = document.getElementById('sbus-out-toggle'); if (sb) sb.checked = !!config.sbusOutEnabled; }
   { const el = document.getElementById('matrix-debounce-input');
     if (el) el.value = config.matrixDebounceFrames ?? 1; }
   applyHcrDestUI();

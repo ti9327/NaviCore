@@ -372,6 +372,7 @@ struct RcConfig {
   // layer already gates each knob/button on its `channel` field, so a build
   // without 3-axis hardware just leaves J5/J6/slot-19/slot-20 at channel=0.
   bool           threeAxisGimbals;
+  bool           sbusOutEnabled;        // re-emit SBUS frames on SBUS_OUT_PIN; off saves the per-byte passthrough tee
   int            tapWindowMs;
   int            matrixChannel;   // SBUS channel carrying the multiplexed button matrix
   // Consecutive in-band SBUS frames a matrix button must hold before a press
@@ -474,6 +475,7 @@ static inline void setTier3(RcTier& tier, RcAction a0, RcAction a1, RcAction a2)
 void rcConfigLoadDefaults() {
   rcConfig.txModel          = TX_MODEL_X18;  // GUI default; user picks via Config → Transmitter
   rcConfig.threeAxisGimbals = false;         // X20 hardware option, off by default
+  rcConfig.sbusOutEnabled   = false;         // SBUS-OUT passthrough off by default (saves CPU when unused)
   rcConfig.tapWindowMs      = 500;
   rcConfig.matrixChannel    = 7;            // button matrix on CH7
   rcConfig.matrixDebounceFrames = 1;     // digital SBUS source — fastest; bump for analog matrix
@@ -716,6 +718,7 @@ String rcConfigToJSON() {
 
   doc["txModel"]              = rcConfig.txModel;          // RcTxModel — GUI uses this to swap SVG / labels
   doc["threeAxisGimbals"]     = rcConfig.threeAxisGimbals; // X20 hardware option (shows/hides J5/J6 + stick-click matrix slots)
+  doc["sbusOutEnabled"]       = rcConfig.sbusOutEnabled;   // SBUS-OUT passthrough enable
   doc["tapWindowMs"]          = rcConfig.tapWindowMs;
   doc["matrixChannel"]        = rcConfig.matrixChannel;
   doc["matrixDebounceFrames"] = rcConfig.matrixDebounceFrames;
@@ -848,6 +851,7 @@ String rcConfigToJSON() {
 bool rcConfigFromJSON(const JsonObject& doc) {
   if (doc.containsKey("txModel"))       rcConfig.txModel       = (uint8_t)(doc["txModel"] | (int)TX_MODEL_X18);
   if (doc.containsKey("threeAxisGimbals")) rcConfig.threeAxisGimbals = doc["threeAxisGimbals"] | false;
+  if (doc.containsKey("sbusOutEnabled"))   rcConfig.sbusOutEnabled   = doc["sbusOutEnabled"]   | false;
   if (doc.containsKey("tapWindowMs"))   rcConfig.tapWindowMs   = doc["tapWindowMs"];
   // A sub-100 ms window makes the multi-tap test (now - lastTap < tapWindowMs)
   // effectively always-false, silently killing double/triple taps while single
@@ -1153,6 +1157,7 @@ bool rcConfigSaveNVS() {
 
   prefs.putUChar("tx",     rcConfig.txModel);   // transmitter model (RcTxModel)
   prefs.putBool("3xg",     rcConfig.threeAxisGimbals);   // X20 3-axis hw option
+  prefs.putBool("sbusout", rcConfig.sbusOutEnabled);     // SBUS-OUT passthrough enable
   prefs.putInt("cfg",      rcConfig.tapWindowMs);
   prefs.putInt("matrixCh", rcConfig.matrixChannel);
   prefs.putInt("mtxDeb",   rcConfig.matrixDebounceFrames);
@@ -1331,6 +1336,7 @@ void rcConfigLoadNVS() {
 
   if (prefs.isKey("tx"))       rcConfig.txModel          = prefs.getUChar("tx", rcConfig.txModel);
   if (prefs.isKey("3xg"))      rcConfig.threeAxisGimbals = prefs.getBool("3xg", rcConfig.threeAxisGimbals);
+  if (prefs.isKey("sbusout"))  rcConfig.sbusOutEnabled   = prefs.getBool("sbusout", rcConfig.sbusOutEnabled);
   if (prefs.isKey("cfg"))      rcConfig.tapWindowMs   = prefs.getInt("cfg",      rcConfig.tapWindowMs);
   if (rcConfig.tapWindowMs < 100) rcConfig.tapWindowMs = 500;   // guard a stale/zero NVS value that would disable multi-tap
   if (prefs.isKey("matrixCh")) rcConfig.matrixChannel = prefs.getInt("matrixCh", rcConfig.matrixChannel);

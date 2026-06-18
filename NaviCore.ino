@@ -61,16 +61,24 @@
 //  RX pins: GPIO5 confirmed by user; others assumed — verify against schematic.
 // =============================================================================
 #define SBUS_RX_PIN      5    // Serial1/UART1 RX — SBUS from RC receiver (confirmed)
-// SBUS OUT runs on its OWN hardware UART (UART0 / Serial0), TX-only on
-// SBUS_OUT_PIN below.  This is the third iteration:
-//   v1 bit-banged via SoftwareSerial on GPIO9 — blocking ~110µs/byte spin
-//      monopolised ~31% of a core and tripped the stack-canary watchdog.
-//   v2 teed into Serial1's TX (shared with SBUS RX) — still panicked.
-//   v3 (current) uses UART0, which freed up when the debug console moved
-//      to native USB CDC (USBMode=hwcdc / CDCOnBoot=cdc — Serial is no
-//      longer UART0).  Hardware UART = ~1µs FIFO push per byte, and a
-//      separate peripheral from SBUS RX = no FIFO contention.  Configured
-//      in setup(); see the SBUS OUT block there.
+// SBUS OUT. Two layouts, selected by SBUS_SHARED_UART below (default 0):
+//   0 (default, proven on WCB 3.2): SBUS OUT gets its OWN hardware UART
+//      (UART0 / Serial0), TX-only on SBUS_OUT_PIN. This replaced the original
+//      SBUS-out implementation — a SoftwareSerial bit-bang on GPIO9 whose
+//      ~110µs/byte blocking spin ate ~31% of a core and tripped the watchdog.
+//      UART0 became free once the debug console moved to native USB CDC
+//      (USBMode=hwcdc / CDCOnBoot=cdc — Serial is no longer UART0).
+//   1 (experimental): SBUS IN + OUT share ONE full-duplex UART (UART1/Serial1),
+//      RX GPIO5 + TX GPIO9. A UART is full-duplex and SBUS in/out are identical
+//      (100k 8E2 inverted), so this works with a non-blocking TX buffer — and
+//      it frees UART0 so the S3 aux port can be a real hardware UART (>57600).
+// HISTORY NOTE: an earlier version of this comment claimed a "shared Serial1
+// TX" attempt panicked. That was never substantiated — the only reproduced
+// failure was the SoftwareSerial bit-bang above. The shared UART just needs a
+// buffered, non-blocking TX (same as the dedicated path). Validate on hardware.
+#ifndef SBUS_SHARED_UART
+#define SBUS_SHARED_UART 0   // 0 = dedicated UART0 for SBUS OUT (proven); 1 = share UART1 for SBUS IN+OUT, free UART0 for hardware S3
+#endif
 
 #define MAESTRO_TX_PIN   6    // Serial2 TX — local Maestro command bus
 #define MAESTRO_RX_PIN   7    // Serial2 RX — optional Maestro feedback (verify pin)
@@ -133,12 +141,23 @@ WCBStream* maestroBroadcast = nullptr;
 //    • Serial0 → UART0 → SBUS OUT (TX-only, GPIO9, 100k 8E2 inverted)
 //    • Serial1 → UART1 → SBUS RX
 //    • Serial2 → UART2 → local Maestro TX
-//  That leaves no spare hardware UART for the aux command ports, so S3/S4
-//  stay bit-banged via SoftwareSerial (fine at ≤57600 baud; they never run
-//  the 100k SBUS rate).
+//  By default that leaves no spare hardware UART for the aux command ports, so
+//  S3/S4 are bit-banged via SoftwareSerial (≤57600 baud; they never run the
+//  100k SBUS rate). With SBUS_SHARED_UART=1, SBUS IN+OUT share UART1 — freeing
+//  UART0 — and S3 is bound to that hardware UART0 so it can exceed 57600 baud.
+//  S4 stays SoftwareSerial. Default 0 keeps the proven WCB 3.2 layout.
 // =============================================================================
-SoftwareSerial Serial3;    // Aux command-line port, bound in setup()
-SoftwareSerial Serial4;    // Aux command-line port, bound in setup()
+#if SBUS_SHARED_UART
+// S3 promoted to the hardware UART0 (Serial0) that SBUS_SHARED_UART frees up by
+// sharing SBUS IN+OUT on UART1. As a real hardware UART, S3 is no longer capped
+// at ~57600 baud the way bit-banged SoftwareSerial is. (UART0's old console
+// role is gone — debug/config is native USB CDC.) S4 stays bit-banged.
+HardwareSerial& Serial3 = Serial0;   // alias: S3 == hardware UART0
+SoftwareSerial  Serial4;             // Aux command-line port (bit-banged), bound in setup()
+#else
+SoftwareSerial Serial3;    // Aux command-line port (bit-banged), bound in setup()
+SoftwareSerial Serial4;    // Aux command-line port (bit-banged), bound in setup()
+#endif
 // SBUS OUT uses the real UART0 (Serial0) — see setup() and SBUS_OUT_PIN above.
 
 // =============================================================================
@@ -1313,7 +1332,11 @@ static void applySerialBauds(bool initial) {
   }
   if (initial || rcConfig.auxBaud[0] != appliedAuxBaud[0]) {
     if (!initial) Serial3.end();
-    Serial3.begin(rcConfig.auxBaud[0], SWSERIAL_8N1, S3_RX_PIN, S3_TX_PIN, false, 95);
+#if SBUS_SHARED_UART
+    Serial3.begin(rcConfig.auxBaud[0], SERIAL_8N1, S3_RX_PIN, S3_TX_PIN);              // hardware UART0 — no ~57600 cap
+#else
+    Serial3.begin(rcConfig.auxBaud[0], SWSERIAL_8N1, S3_RX_PIN, S3_TX_PIN, false, 95); // SoftwareSerial (bit-banged)
+#endif
     appliedAuxBaud[0] = rcConfig.auxBaud[0];
     Serial.printf("[AUX] S3 %s @ %lu baud\n",
                   initial ? "open" : "re-open", (unsigned long)rcConfig.auxBaud[0]);
@@ -1325,6 +1348,41 @@ static void applySerialBauds(bool initial) {
     Serial.printf("[AUX] S4 %s @ %lu baud\n",
                   initial ? "open" : "re-open", (unsigned long)rcConfig.auxBaud[1]);
   }
+}
+
+// =============================================================================
+//  SBUS OUT enable/disable  (rcConfig.sbusOutEnabled)
+//  The SBUS-OUT passthrough re-emits every received frame on SBUS_OUT_PIN. Its
+//  only recurring cost is the per-byte tee in SbusReader::read() (one sink
+//  write per received SBUS byte). When OFF we drop the sink entirely — no tee,
+//  no CPU — and, in the dedicated-UART layout, release UART0. Called once after
+//  the config load AND after every SET_CONFIG, so the toggle applies live (no
+//  reboot). A guard skips the work when the setting hasn't changed.
+// =============================================================================
+static bool sbusOutApplied = false;
+static void applySbusOut(bool initial) {
+  bool want = rcConfig.sbusOutEnabled;
+  if (!initial && want == sbusOutApplied) return;   // no change since last apply
+  if (want) {
+#if SBUS_SHARED_UART
+    // Shared UART1: TX (GPIO9) is already configured by sbusRx.begin(); enabling
+    // OUT just starts teeing each received byte to it.
+    sbusRx.setPassthroughSink(&Serial1);
+#else
+    // Dedicated UART0: bring it up (TX-only, GPIO9, 100k 8E2 inverted) and tee.
+    Serial0.setTxBufferSize(256);                    // must precede begin()
+    Serial0.begin(100000, SERIAL_8E2, /*rxPin=*/-1, /*txPin=*/SBUS_OUT_PIN, /*invert=*/true);
+    sbusRx.setPassthroughSink(&Serial0);
+#endif
+    Serial.printf("[SBUS] OUT enabled — re-emit on GPIO%d (100k 8E2 inverted)\n", SBUS_OUT_PIN);
+  } else {
+    sbusRx.setPassthroughSink(nullptr);              // stop the tee — zero CPU when unused
+#if !SBUS_SHARED_UART
+    if (!initial) Serial0.end();                     // release UART0 when toggled off (dedicated layout)
+#endif
+    Serial.println("[SBUS] OUT disabled (passthrough off — no CPU cost)");
+  }
+  sbusOutApplied = want;
 }
 
 // =============================================================================
@@ -1399,6 +1457,7 @@ void handleSerialInput() {
               // Apply baud changes live (Serial2/3/4) so HCR / MP3 / Maestro
               // pick up a new rate immediately — no reboot required.
               applySerialBauds(false);
+              applySbusOut(false);     // apply a flipped SBUS-OUT toggle live
               // rcConfigSaveLFS() (flash write) + applySerialBauds()
               // block loop() for 100+ ms, during which processSbus() can't
               // run.  If the operator was holding a matrix button across
@@ -1755,29 +1814,39 @@ void setup() {
   // / rcConfig.auxBaud). Nothing uses them before setup() finishes, so
   // deferring the open is safe.
 
-  // SBUS reader on Serial1 (UART1) — RX = SBUS_RX_PIN, TX disabled (-1).
-  // SBUS RX and SBUS OUT now live on SEPARATE hardware UARTs (see the
-  // dedicated UART0 block just below), so Serial1 is RX-only and never
-  // shares its FIFO with the re-emit path.
-  sbusRx.begin(&Serial1, SBUS_RX_PIN, /*txPin=*/-1);
-
-  // ── SBUS OUT on a DEDICATED hardware UART (UART0 / Serial0) ──────────────
-  // See the SBUS_RX_PIN comment block above for the three-attempt history.
-  // Short version: bit-banging (v1) and sharing Serial1's TX (v2) both
-  // failed; UART0 became free when the debug console moved to native USB
-  // CDC, so SBUS OUT now owns a real hardware UART — TX-only, GPIO9,
-  // 100k 8E2 INVERTED (matching the SBUS line format), no RX pin.
+#if SBUS_SHARED_UART
+  // SBUS IN + OUT share ONE full-duplex hardware UART (UART1 / Serial1):
+  //   RX = SBUS_RX_PIN (GPIO5), TX = SBUS_OUT_PIN (GPIO9), 100k 8E2 INVERTED.
+  // A UART is full-duplex and SBUS in/out are identical format, so the invert
+  // flag (which inverts BOTH directions) is exactly right. The byte-tee in
+  // SbusReader::read() writes each RX byte straight to TX; the 256-byte
+  // non-blocking TX buffer keeps that write from stalling the RX-drain loop —
+  // the SAME fix the dedicated path relies on, just on one peripheral. This
+  // frees UART0/Serial0 for the hardware S3 aux port (see the Serial3 alias).
+  // Pins are unchanged from the dedicated layout, so this runs as-is on WCB 3.2.
+  Serial1.setTxBufferSize(256);                       // MUST precede begin()
+  sbusRx.begin(&Serial1, SBUS_RX_PIN, /*txPin=*/SBUS_OUT_PIN);
+  // SBUS OUT (the per-byte tee to this UART's TX) is turned on/off at runtime by
+  // applySbusOut() per rcConfig.sbusOutEnabled — called after the config loads.
+  Serial.printf("[SBUS] IN+OUT share Serial1/UART1 — RX GPIO%d / TX GPIO%d, 100k 8E2 inverted. UART0 freed for S3.\n",
+                SBUS_RX_PIN, SBUS_OUT_PIN);
+#else
+  // SBUS IN on Serial1 (UART1), RX-only (txPin=-1). SBUS OUT on a DEDICATED
+  // hardware UART (UART0 / Serial0), TX-only, GPIO9, 100k 8E2 INVERTED — UART0
+  // is available because the debug console is on native USB CDC, not UART0.
   //
-  // A 256-byte TX ring buffer (≈7 frames) guarantees the byte-tee write in
-  // SbusReader::read() never blocks loop(): frames drain at 100k baud
-  // (~3-4 ms each) far faster than they arrive (~7-14 ms), so the buffer
-  // never fills.  Non-blocking TX is what keeps this off the watchdog.
-  // setTxBufferSize() MUST be called before begin().
-  Serial0.setTxBufferSize(256);
-  Serial0.begin(100000, SERIAL_8E2, /*rxPin=*/-1, /*txPin=*/SBUS_OUT_PIN, /*invert=*/true);
-  sbusRx.setPassthroughSink(&Serial0);
+  // A 256-byte TX ring buffer (≈7 frames) keeps the byte-tee write in
+  // SbusReader::read() non-blocking: frames drain at 100k baud (~3-4 ms each)
+  // far faster than they arrive (~7-14 ms), so the buffer never fills.
+  // setTxBufferSize() MUST be called before begin().  (The original SBUS-out
+  // was a blocking SoftwareSerial bit-bang on GPIO9 — that is the failure mode
+  // that drove the move to a hardware UART.)
+  sbusRx.begin(&Serial1, SBUS_RX_PIN, /*txPin=*/-1);
+  // SBUS OUT (Serial0/UART0) is brought up on demand by applySbusOut() only when
+  // rcConfig.sbusOutEnabled — so UART0 stays free when OUT is off. Called after
+  // the config loads, and again on every SET_CONFIG so the toggle applies live.
   Serial.printf("[SBUS] IN  on Serial1/UART1 RX (GPIO%d)\n", SBUS_RX_PIN);
-  Serial.printf("[SBUS] OUT on Serial0/UART0 TX (GPIO%d) — 100k 8E2 inverted, byte passthrough\n", SBUS_OUT_PIN);
+#endif
 
   // RC Config lives in PSRAM — allocate it BEFORE any rcConfig.* access.
   // ps_calloc() pulls from the PSRAM heap (Tools → PSRAM must be "OPI PSRAM").
@@ -1823,6 +1892,7 @@ void setup() {
   // Keep aux baud ≤ ~57600 (higher rates choke bit-banged SWSerial on
   // ESP32-S3). One port = one device = one baud.
   applySerialBauds(true);
+  applySbusOut(/*initial=*/true);     // bring up SBUS OUT only if rcConfig.sbusOutEnabled
 
   // Initialize rc_telemetry's deferred-queue mutex BEFORE WCB_Client
   // brings the ESP-NOW receive callback online.  Otherwise the very

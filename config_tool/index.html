@@ -2204,7 +2204,7 @@
         <img src="../Images/r2logo.png" alt="R2 logo"
              style="width:72px;height:72px;object-fit:contain;opacity:0.9">
         <div style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.3px">
-          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">172153QJUN26</span>
+          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">172213QJUN26</span>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap">
@@ -3071,7 +3071,7 @@ let config = {
   // WCB network credentials — populated from device's wcb_config.h on first
   // GET_CONFIG; user edits via the WCB Network sidebar section. Changes need
   // a reboot to take effect (WCBClient initialises once in setup()).
-  wcbNetwork:    { macOct2: 0, macOct3: 0, password: '', quantity: 4, deviceId: 3 },
+  wcbNetwork:    { macOct2: 0, macOct3: 0, password: '', quantity: 4, deviceId: 20 },
   // Global MP3 Trigger destination — every "MP3 Trigger" action routes here.
   // transport 'serial' → local S3/S4 (port); 'wcb' → unicast WCB ID.
   // (Serial baud is NOT here — it's per-port in auxBaud below.)
@@ -3253,6 +3253,13 @@ const maestroCommands = {
 // for the board to boot.
 async function openPortAndStart(p, settleMs = 4000) {
   window._loggedMissingSbus = false;
+  // Every fresh connection starts in DIRECT-USB mode. viaWcbActive must track
+  // the LIVE transport, never a stale localStorage preference — otherwise a USB
+  // session inherits a previous Via-WCB flag and silently strips WCB Network
+  // edits out of Save (see saveConfigToBoard). The user re-enables Via WCB per
+  // session if they're actually bridging through a tethered WCB.
+  viaWcbActive = false;
+  { const tg = document.getElementById('via-wcb-toggle'); if (tg) tg.checked = false; }
   await p.open({ baudRate: 115200 });
   let w;
   try {
@@ -3285,10 +3292,6 @@ async function openPortAndStart(p, settleMs = 4000) {
   // Push current debug-chip state to the firmware so it knows which
   // categories to emit. Default = all off → firmware stays quiet.
   sendDebugFlagsToBoard();
-  // If Via WCB was already enabled from a previous session (restored
-  // from localStorage on page load), kick off the keep-alive PING timer
-  // now — onViaWcbToggle() only fires when the checkbox actually flips.
-  if (viaWcbActive) onViaWcbToggle(true);
   return pongOk;
 }
 
@@ -3356,6 +3359,11 @@ async function disconnect() {
     // Stop the Via-WCB keep-alive PING timer so it doesn't keep firing
     // sendJSON() on a torn-down port.
     if (_wcbKeepaliveTimer) { clearInterval(_wcbKeepaliveTimer); _wcbKeepaliveTimer = null; }
+    // Reset Via WCB to Direct-USB. The flag must reflect the LIVE transport,
+    // not survive across reconnects — a stale "true" silently strips WCB
+    // Network edits from Save (see saveConfigToBoard).
+    viaWcbActive = false;
+    { const tg = document.getElementById('via-wcb-toggle'); if (tg) tg.checked = false; }
     // Stop the SBUS-staleness watchdog.  If we don't, the timer keeps
     // running across reconnects with stale _rcLastChMs values, and the
     // first rc_hb on the next connect won't recreate it (the guard
@@ -3550,17 +3558,12 @@ function onViaWcbToggle(checked) {
 }
 let _wcbKeepaliveTimer = null;
 
-// Restore Via WCB state on page load (checkbox + module-level cache).
-(function restoreViaWcbState() {
-  try {
-    const saved = localStorage.getItem('rc_via_wcb_on') === '1';
-    if (saved) {
-      viaWcbActive = true;
-      const el = document.getElementById('via-wcb-toggle');
-      if (el) el.checked = true;
-    }
-  } catch (_) {}
-})();
+// Via WCB is a PER-SESSION transport mode: it is reset to Direct-USB on every
+// connect and disconnect (see openPortAndStart and the disconnect handler), so
+// it always reflects the LIVE link. We intentionally do NOT auto-restore it
+// from localStorage on page load — a stale "true" used to make a Direct-USB
+// session silently strip WCB Network edits from Save. The user re-enables Via
+// WCB each session when actually bridging through a tethered WCB.
 
 // ── Via WCB fragmentation ─────────────────────────────────────────────────
 // ESP-NOW packets cap at 252 bytes; SET_CONFIG / GET_CONFIG payloads run to
@@ -4589,7 +4592,7 @@ function updateWcbDirtyBadge() {
 // rendered as uppercase 2-digit strings; password and counts are plain values.
 function applyWcbNetworkUI() {
   const w = config.wcbNetwork
-    || (config.wcbNetwork = { macOct2: 0, macOct3: 0, password: '', quantity: 4, deviceId: 3 });
+    || (config.wcbNetwork = { macOct2: 0, macOct3: 0, password: '', quantity: 4, deviceId: 20 });
   const oct2 = document.getElementById('wcb-oct2');
   const oct3 = document.getElementById('wcb-oct3');
   const pw   = document.getElementById('wcb-password');
@@ -4599,7 +4602,7 @@ function applyWcbNetworkUI() {
   if (oct3) oct3.value = (w.macOct3 || 0).toString(16).toUpperCase().padStart(2, '0');
   if (pw)   pw.value   = w.password || '';
   if (qty)  qty.value  = w.quantity || 4;
-  if (did)  did.value  = w.deviceId || 3;
+  if (did)  did.value  = w.deviceId || 20;
   updateWcbDirtyBadge();
 }
 
@@ -6681,8 +6684,15 @@ async function saveConfigToBoard() {
   // policy in one place the user can see.  Same reasoning as on the
   // firmware side: changing wcbNetwork over the WCB transport breaks the
   // very transport we just sent the message on.
+  // Track whether the user actually edited WCB Network TRANSPORT fields that
+  // we're about to strip — so we can (a) warn plainly instead of a misleading
+  // "No changes to save", and (b) keep the un-sent values OUT of the pending
+  // baseline below (else a later Save diffs them to "no change" and the edit is
+  // lost silently).
+  let wcbStrippedOverBridge = false;
   if (viaWcbActive && payload.wcbNetwork) {
     const { deviceId, macOct2, macOct3, password, quantity, ...rest } = payload.wcbNetwork;
+    wcbStrippedOverBridge = [deviceId, macOct2, macOct3, password, quantity].some(v => v !== undefined);
     payload.wcbNetwork = rest;   // preserve any non-transport fields
     // If everything was transport-related, drop the empty object entirely
     if (Object.keys(payload.wcbNetwork).length === 0) delete payload.wcbNetwork;
@@ -6691,9 +6701,18 @@ async function saveConfigToBoard() {
   // No changes? Skip the round-trip entirely — saves wire time AND avoids
   // confusing the user with an apparent "save" that does nothing.
   if (Object.keys(payload).length === 0) {
-    console.log('saveConfigToBoard: no changes since last load — skipping');
-    appendTerminalLine('< [config] No changes to save', 'rx');
+    if (wcbStrippedOverBridge) {
+      // The only edit was WCB Network, and it can't travel over the very bridge
+      // we'd send it on. Say so plainly instead of "No changes to save".
+      appendTerminalLine('< [config] WCB Network changes can only be saved over a DIRECT USB connection — not over Via WCB. Connect via USB, then Save again.', 'rx');
+    } else {
+      console.log('saveConfigToBoard: no changes since last load — skipping');
+      appendTerminalLine('< [config] No changes to save', 'rx');
+    }
     return;
+  }
+  if (wcbStrippedOverBridge) {
+    appendTerminalLine('< [config] Note: WCB Network changes were NOT sent (only possible over Direct USB). Saving the other changes.', 'rx');
   }
 
   const branches = Object.keys(payload).join(', ');
@@ -6706,6 +6725,12 @@ async function saveConfigToBoard() {
   // board is in a state it isn't, and subsequent diff-Saves would
   // compute deltas against fiction.
   _pendingSaveBaseline = _deepClone(config);
+  // WCB Network was stripped (Via WCB) and NOT sent — don't let the baseline
+  // advance over it, or a later Save would diff it to "no change" and the edit
+  // would vanish silently. Keep the last-known on-board value instead.
+  if (wcbStrippedOverBridge && _configBaseline && _configBaseline.wcbNetwork) {
+    _pendingSaveBaseline.wcbNetwork = _deepClone(_configBaseline.wcbNetwork);
+  }
   _pendingSaveStartedAt = Date.now();
 
   await sendJSON({ type: 'SET_CONFIG', data: payload });
@@ -7857,7 +7882,7 @@ function handleConfigImportFile(event) {
                     : Array.from({ length: NUM_MAESTRO_SLOTS }, (_, i) => ({ type: 0, device: 1 + i })),
         wcbNetwork: config.wcbNetwork
                       ? { ...config.wcbNetwork }
-                      : { macOct2: 0, macOct3: 0, password: '', quantity: 4, deviceId: 3 },
+                      : { macOct2: 0, macOct3: 0, password: '', quantity: 4, deviceId: 20 },
         mp3Dest: config.mp3Dest ? { ...config.mp3Dest }
                                  : { transport: 'wcb', target: '2', port: 'S3' },
         auxBaud: config.auxBaud ? { ...config.auxBaud } : { S3: 9600, S4: 9600, maestro: 115200 },
@@ -7917,7 +7942,7 @@ function handleConfigImportFile(event) {
                      control === 'wcbpassword' || control === 'wcbquantity' ||
                      control === 'wcbdeviceid') {
             imported.wcbNetwork = imported.wcbNetwork
-              || { macOct2: 0, macOct3: 0, password: '', quantity: 4, deviceId: 3 };
+              || { macOct2: 0, macOct3: 0, password: '', quantity: 4, deviceId: 20 };
             const raw = value || channel || '';
             if (control === 'wcbmacoct2') {
               imported.wcbNetwork.macOct2 = (parseInt(raw, 16) | 0) & 0xFF;

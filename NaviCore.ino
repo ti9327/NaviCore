@@ -1389,9 +1389,9 @@ void handleSerialInput() {
         } else if (strcmp(type,"SET_CONFIG")==0) {
           DynamicJsonDocument bigDoc(98304);
           if (deserializeJson(bigDoc, serialInputBuf) != DeserializationError::Ok) {
-            Serial.println("{\"type\":\"ACK\",\"ok\":false,\"msg\":\"parse failed\"}");
+            Serial.println("{\"type\":\"ACK\",\"of\":\"SET_CONFIG\",\"ok\":false,\"msg\":\"parse failed\"}");
           } else if (!bigDoc.containsKey("data")) {
-            Serial.println("{\"type\":\"ACK\",\"ok\":false,\"msg\":\"missing data\"}");
+            Serial.println("{\"type\":\"ACK\",\"of\":\"SET_CONFIG\",\"ok\":false,\"msg\":\"missing data\"}");
           } else {
             bool ok = rcConfigFromJSON(bigDoc["data"].as<JsonObject>());
             if (ok) {
@@ -1410,10 +1410,10 @@ void handleSerialInput() {
               matrixCandidate    = 0;
               matrixCandCount    = 0;
               matrixNeutralCount = 0;
-              if (saved) Serial.println("{\"type\":\"ACK\",\"ok\":true}");
-              else       Serial.println("{\"type\":\"ACK\",\"ok\":false,\"msg\":\"applied to RAM but could not be saved to flash (LittleFS write error)\"}");
+              if (saved) Serial.println("{\"type\":\"ACK\",\"of\":\"SET_CONFIG\",\"ok\":true}");
+              else       Serial.println("{\"type\":\"ACK\",\"of\":\"SET_CONFIG\",\"ok\":false,\"msg\":\"applied to RAM but could not be saved to flash (LittleFS write error)\"}");
             } else {
-              Serial.println("{\"type\":\"ACK\",\"ok\":false,\"msg\":\"config apply failed\"}");
+              Serial.println("{\"type\":\"ACK\",\"of\":\"SET_CONFIG\",\"ok\":false,\"msg\":\"config apply failed\"}");
             }
           }
 

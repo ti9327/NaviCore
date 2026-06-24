@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="240" viewBox="0 0 380 120" role="img" aria-label="NaviCore wordmark — PCB artwork">
+  <defs>
+    
+  </defs>
+  <g color="#000000">
+    <text class="wm" x="190" y="70" text-anchor="middle" font-size="76" letter-spacing="0.5" fill="currentColor">NaviCore</text>
+    <rect x="74" y="90" width="232" height="3" rx="1.5" fill="currentColor"></rect>
+    <text class="tag" x="190" y="114" text-anchor="middle" font-size="15" letter-spacing="3" fill="currentColor">ASTROMECH ANIMATION CTRL</text>
+  </g>
+</svg>

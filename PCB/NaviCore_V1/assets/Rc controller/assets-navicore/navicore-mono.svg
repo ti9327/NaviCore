@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 200 200" style="color:#11151c" role="img" aria-label="NaviCore mark, one color">
+  <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+    
+    <g stroke-width="2.4">
+      <path d="M22 100 H8"></path><path d="M22 86 H13 V80"></path><path d="M22 114 H13 V120"></path>
+      <path d="M178 100 H192"></path><path d="M178 86 H187 V80"></path><path d="M178 114 H187 V120"></path>
+    </g>
+    
+    <polygon points="100,16 172.7,58 172.7,142 100,184 27.3,142 27.3,58" stroke-width="6"></polygon>
+    <polygon points="100,32 159,66 159,134 100,168 41,134 41,66" stroke-width="2"></polygon>
+    
+    <path d="M40 100 Q47 84 54 100 T68 100" stroke-width="3"></path>
+    <path d="M118 100 Q125 116 132 100 T146 100" stroke-width="3"></path>
+    
+    <circle cx="100" cy="100" r="22" stroke-width="2.4"></circle>
+    <circle cx="100" cy="100" r="11" stroke-width="2"></circle>
+  </g>
+  <g fill="currentColor">
+    
+    <circle cx="6" cy="100" r="3"></circle><circle cx="13" cy="76" r="2.4"></circle><circle cx="13" cy="124" r="2.4"></circle>
+    <circle cx="194" cy="100" r="3"></circle><circle cx="187" cy="76" r="2.4"></circle><circle cx="187" cy="124" r="2.4"></circle>
+    
+    <rect x="88" y="40" width="24" height="4.4" rx="2.2"></rect><rect x="83" y="47" width="34" height="4.4" rx="2.2"></rect>
+    <rect x="88" y="155.6" width="24" height="4.4" rx="2.2"></rect><rect x="83" y="148.6" width="34" height="4.4" rx="2.2"></rect>
+    
+    <circle cx="100" cy="70" r="2.6"></circle><circle cx="100" cy="130" r="2.6"></circle>
+    <circle cx="100" cy="100" r="5"></circle>
+  </g>
+</svg>

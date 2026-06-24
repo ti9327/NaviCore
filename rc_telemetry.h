@@ -662,6 +662,15 @@ inline void emitMode(int mode) {
 // dispatched (caller should NOT route it further); false if it's something
 // the caller still needs to handle (e.g. another RC's heartbeat we want
 // to ignore, or a non-JSON legacy WCB command intended for some other path).
+// Cache of each WCB's friendly alias (its ?ALIAS name), learned from the
+// {"type":"wcb_alias"} reply a board sends when we query it with "?WHOAMI".
+// Index = WCB board number (1..20); "" = not yet known. Read by GET_WCB_STATUS
+// to label the config tool's WCB-status panel. Written in the receive callback
+// (Core 0) and read from loop() (Core 1) — a torn read at worst shows a
+// momentarily-garbled name for one 3 s poll, so no lock is warranted.
+static char _wcbAlias[21][25] = {{0}};
+inline const char* wcbAlias(int id) { return (id >= 1 && id <= 20) ? _wcbAlias[id] : ""; }
+
 inline bool handle(uint8_t senderID, const char* command) {
   if (!wcb || !wcbReady) return false;   // WCB down — can't be receiving anyway
   if (!command || command[0] != '{') return false;
@@ -785,6 +794,16 @@ inline bool handle(uint8_t senderID, const char* command) {
     wcb->send(senderID, buf);
     _lastHb = 0;   // force re-broadcast
     _lastCh = 0;
+    return true;
+  }
+
+  // ── wcb_alias ─────────────────────────────────────────────────────────────
+  // A WCB's reply to our "?WHOAMI": cache its friendly name so GET_WCB_STATUS
+  // can label it in the config tool. id = the replying board's WCB number.
+  if (!strcmp(type, "wcb_alias")) {
+    int id = doc["id"] | 0;
+    const char* a = doc["alias"] | "";
+    if (id >= 1 && id <= 20) strlcpy(_wcbAlias[id], a, sizeof(_wcbAlias[id]));
     return true;
   }
 

@@ -1552,7 +1552,18 @@ void handleSerialInput() {
           for (int i = 1; i <= q; i++) {
             bool up = (i == selfId) ? true : (wcb && wcb->isOnline(i));
             Serial.printf("%s%s", (i > 1) ? "," : "", up ? "1" : "0");
+            // Lazily learn each online board's friendly alias: ask once with
+            // "?WHOAMI"; the {"type":"wcb_alias"} reply is cached by
+            // rcTelemetry::handle(). Re-asks each poll only until cached.
+            if (up && i != selfId && wcb && wcbReady && !rcTelemetry::wcbAlias(i)[0])
+              wcb->send((uint8_t)i, "?WHOAMI");
           }
+          // Friendly names (from the ?WHOAMI replies); "" until a board answers
+          // (a board must have ?SPECIAL,ON to unicast its reply back to us).
+          Serial.print("],\"aliases\":[");
+          for (int i = 1; i <= q; i++)
+            Serial.printf("%s\"%s\"", (i > 1) ? "," : "",
+                          (i == selfId) ? "" : rcTelemetry::wcbAlias(i));
           Serial.println("]}");
 
         } else {

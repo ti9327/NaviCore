@@ -671,6 +671,40 @@ inline void emitMode(int mode) {
 static char _wcbAlias[21][25] = {{0}};
 inline const char* wcbAlias(int id) { return (id >= 1 && id <= 20) ? _wcbAlias[id] : ""; }
 
+// Build the WCB_STATUS reply (board liveness + friendly aliases) into buf — the
+// same payload NaviCore.ino emits to USB, but reusable over the WCB bridge.
+// relayId = the WCB that relayed the query (0 = direct USB; non-zero lets the
+// config tool badge the relay node). includeAliases=false omits names so a
+// large network's reply still fits one ESP-NOW packet (structCommand[200]).
+// Also lazily fires "?WHOAMI" at online-but-unnamed boards so names fill in.
+// Returns the JSON length (clamped to n-1 if it overflowed buf).
+inline size_t buildWcbStatus(char* buf, size_t n, uint8_t relayId, bool includeAliases) {
+  if (!buf || n == 0) return 0;
+  int q = rcConfig.wcbNetwork.quantity;
+  if (q < 0) q = 0;
+  if (q > WCB_MAX_BOARDS) q = WCB_MAX_BOARDS;
+  const int selfId = rcConfig.wcbNetwork.deviceId;
+  size_t len = snprintf(buf, n,
+      "{\"type\":\"WCB_STATUS\",\"quantity\":%d,\"self\":%d,\"relay\":%d,\"online\":[",
+      q, selfId, (int)relayId);
+  for (int i = 1; i <= q && len < n; i++) {
+    const bool up = (i == selfId) ? true : (wcb && wcb->isOnline(i));
+    if (up && i != selfId && wcb && wcbReady && !wcbAlias(i)[0])
+      wcb->send((uint8_t)i, "?WHOAMI");
+    len += snprintf(buf + len, n - len, "%s%s", (i > 1) ? "," : "", up ? "1" : "0");
+  }
+  if (len < n) len += snprintf(buf + len, n - len, "]");
+  if (includeAliases) {
+    if (len < n) len += snprintf(buf + len, n - len, ",\"aliases\":[");
+    for (int i = 1; i <= q && len < n; i++)
+      len += snprintf(buf + len, n - len, "%s\"%s\"", (i > 1) ? "," : "",
+                      (i == selfId) ? "" : wcbAlias(i));
+    if (len < n) len += snprintf(buf + len, n - len, "]");
+  }
+  if (len < n) len += snprintf(buf + len, n - len, "}");
+  return (len < n) ? len : (n - 1);
+}
+
 inline bool handle(uint8_t senderID, const char* command) {
   if (!wcb || !wcbReady) return false;   // WCB down — can't be receiving anyway
   if (!command || command[0] != '{') return false;
@@ -894,17 +928,31 @@ inline bool handle(uint8_t senderID, const char* command) {
     return true;
   }
 
+  // ── GET_WCB_STATUS — answer it over the WCB bridge too ─────────────────
+  // Direct USB builds this same WCB_STATUS payload in NaviCore.ino; when the
+  // config tool is bridged through a WCB the query arrives here instead, so
+  // build the reply and unicast it back to the relaying WCB (senderID).  We
+  // tag senderID as "relay" so the tool can badge that node, and fall back to
+  // a names-less reply if a big network wouldn't fit one ESP-NOW packet.
+  if (!strcmp(type, "GET_WCB_STATUS")) {
+    char wbuf[200];
+    size_t l = buildWcbStatus(wbuf, sizeof(wbuf), senderID, true);
+    if (l >= sizeof(wbuf) - 1)                       // names overflowed one packet
+      buildWcbStatus(wbuf, sizeof(wbuf), senderID, false);
+    if (wcb) wcb->send(senderID, wbuf);
+    return true;
+  }
+
   // ── Direct-USB-only commands that mean nothing over the WCB transport ──
   // The config tool fires these on every connect/poll cycle (live-monitor
-  // start/stop, debug-flag bitmask, WCB peer status query, calibration
-  // mute toggle).  Over USB they have local effects (gating PWM_UPDATE
-  // emission, etc.).  Over WCB the equivalent live-state already streams
-  // via rc_hb / rc_ch broadcasts, so just silently accept these so the
-  // config tool's connect sequence runs cleanly without filling the
-  // RC's serial log with "Unknown inbound type" noise on every PING.
+  // start/stop, debug-flag bitmask, calibration mute toggle).  Over USB they
+  // have local effects (gating PWM_UPDATE emission, etc.).  Over WCB the
+  // equivalent live-state already streams via rc_hb / rc_ch broadcasts, so
+  // just silently accept these so the config tool's connect sequence runs
+  // cleanly without filling the RC's serial log with "Unknown inbound type"
+  // noise on every PING.
   if (!strcmp(type, "START_MONITOR")  || !strcmp(type, "STOP_MONITOR") ||
-      !strcmp(type, "SET_DEBUG_FLAGS") || !strcmp(type, "GET_WCB_STATUS") ||
-      !strcmp(type, "CALIB")) {
+      !strcmp(type, "SET_DEBUG_FLAGS") || !strcmp(type, "CALIB")) {
     return true;
   }
 

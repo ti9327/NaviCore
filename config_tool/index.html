@@ -2204,7 +2204,7 @@
         <img src="../Images/r2logo.png" alt="R2 logo"
              style="width:72px;height:72px;object-fit:contain;opacity:0.9">
         <div style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.3px">
-          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">241443QJUN26</span>
+          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">241451QJUN26</span>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap">
@@ -3557,6 +3557,10 @@ let _rcSbusTimer   = null;
 
 function onViaWcbToggle(checked) {
   viaWcbActive = !!checked;
+  // Keep the checkbox in sync with the flag — onViaWcbToggle is also called
+  // programmatically (connect auto-detect), where the element's .checked
+  // wouldn't otherwise update to reflect the detected transport.
+  { const tg = document.getElementById('via-wcb-toggle'); if (tg) tg.checked = viaWcbActive; }
   try { localStorage.setItem('rc_via_wcb_on', viaWcbActive ? '1' : '0'); } catch (_) {}
   const status = document.getElementById('status-text');
   if (port && status) {
@@ -4165,7 +4169,7 @@ function handleBoardMessage(line) {
       // 0 (display says "0 fps") rather than lying with a synthesized 5.
       const hb = _rcLastHbSbus;
       updateSbusStatus({
-        ok:       hb ? (!hb.lost && !hb.failsafe) : true,
+        ok:       hb ? (hb.fps > 0 && !hb.lost && !hb.failsafe) : false,
         lost:     hb ? hb.lost     : false,
         failsafe: hb ? hb.failsafe : false,
         chCount:  msg.ch.length,
@@ -4210,7 +4214,7 @@ function handleBoardMessage(line) {
       // right when rc_hb arrives, even if rc_ch hasn't fired in this
       // interval yet (or if SBUS is genuinely lost — fps will read 0).
       updateSbusStatus({
-        ok:       !_rcLastHbSbus.lost && !_rcLastHbSbus.failsafe,
+        ok:       _rcLastHbSbus.fps > 0 && !_rcLastHbSbus.lost && !_rcLastHbSbus.failsafe,
         lost:     _rcLastHbSbus.lost,
         failsafe: _rcLastHbSbus.failsafe,
         chCount:  0,                  // unknown until next rc_ch

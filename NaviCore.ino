@@ -56,45 +56,51 @@
 #include "rc_telemetry.h"   // WCB-network remote-management bridge (Phase 1 — see file header)
 
 // =============================================================================
-//  WCB HW 3.2 — Pin Definitions
-//  TX pins from wcb_pin_map.cpp v3.2 (matches SBUSController.ino comments).
-//  RX pins: GPIO5 confirmed by user; others assumed — verify against schematic.
+//  Pin assignments — RUNTIME, selected by the active board profile
 // =============================================================================
-#define SBUS_RX_PIN      5    // Serial1/UART1 RX — SBUS from RC receiver (confirmed)
-// SBUS OUT. Two layouts, selected by SBUS_SHARED_UART below (default 0):
-//   0 (default, proven on WCB 3.2): SBUS OUT gets its OWN hardware UART
-//      (UART0 / Serial0), TX-only on SBUS_OUT_PIN. This replaced the original
-//      SBUS-out implementation — a SoftwareSerial bit-bang on GPIO9 whose
+//  These were compile-time #defines for the WCB HW 3.2 layout. They are now
+//  plain globals set at boot by applyBoardProfile() from rcConfig.boardType, so
+//  ONE firmware image runs on both the WCB 3.2 hardware and the NaviCore v2 PCB.
+//  Every use site is a runtime .begin()/printf(), so a variable is a drop-in.
+//  Initialised to the NaviCore v2 defaults; applyBoardProfile() overwrites them
+//  AFTER the config loads and BEFORE any port opens (see setup()).
+//  (STATUS_LED_PIN stays a constant — GPIO48 onboard NeoPixel on both boards.)
+//
+//    Board 0 = NaviCore v2 PCB (default)      Board 1 = WCB HW 3.2
+//      SBUS in 4  / SBUS out 5                   SBUS in 5  / SBUS out 9
+//      Maestro TX6 / RX7                         Maestro TX6 / RX7
+//      S3 (v2 "Serial 1") TX8  / RX9             S3 TX15 / RX16
+//      S4 (v2 "Serial 2") TX10 / RX21            S4 TX17 / RX18
+//  (NaviCore v2's third aux serial — "Serial 3", GPIO38/47 — is a follow-up.)
+// =============================================================================
+enum BoardType : uint8_t { BOARD_NAVICORE_V2 = 0, BOARD_WCB_HW_32 = 1 };
+
+uint8_t SBUS_RX_PIN    = 4;   // Serial1/UART1 RX — SBUS from RC receiver
+uint8_t SBUS_OUT_PIN   = 5;   // SBUS OUT TX (UART0/Serial0 dedicated, or shared UART1 TX)
+uint8_t MAESTRO_TX_PIN = 6;   // Serial2 TX — local Maestro command bus
+uint8_t MAESTRO_RX_PIN = 7;   // Serial2 RX — optional Maestro feedback
+uint8_t S3_TX_PIN      = 8;   // Aux serial S3 TX (v2 "Serial 1")
+uint8_t S3_RX_PIN      = 9;   // Aux serial S3 RX
+uint8_t S4_TX_PIN      = 10;  // Aux serial S4 TX (v2 "Serial 2")
+uint8_t S4_RX_PIN      = 21;  // Aux serial S4 RX
+
+// SBUS OUT layout, selected by SBUS_SHARED_UART (COMPILE-time, applies to both
+// boards):
+//   0 (default, proven): SBUS OUT gets its OWN hardware UART (UART0 / Serial0),
+//      TX-only on SBUS_OUT_PIN. UART0 is free because the debug console is on
+//      native USB CDC (USBMode=hwcdc / CDCOnBoot=cdc — Serial is no longer
+//      UART0). The original SBUS-out was a SoftwareSerial bit-bang whose
 //      ~110µs/byte blocking spin ate ~31% of a core and tripped the watchdog.
-//      UART0 became free once the debug console moved to native USB CDC
-//      (USBMode=hwcdc / CDCOnBoot=cdc — Serial is no longer UART0).
 //   1 (experimental): SBUS IN + OUT share ONE full-duplex UART (UART1/Serial1),
-//      RX GPIO5 + TX GPIO9. A UART is full-duplex and SBUS in/out are identical
-//      (100k 8E2 inverted), so this works with a non-blocking TX buffer — and
-//      it frees UART0 so the S3 aux port can be a real hardware UART (>57600).
-// HISTORY NOTE: an earlier version of this comment claimed a "shared Serial1
-// TX" attempt panicked. That was never substantiated — the only reproduced
-// failure was the SoftwareSerial bit-bang above. The shared UART just needs a
-// buffered, non-blocking TX (same as the dedicated path). Validate on hardware.
+//      RX SBUS_RX_PIN + TX SBUS_OUT_PIN. Both are 100k 8E2 inverted, so the
+//      invert flag is correct for both directions; needs a non-blocking TX
+//      buffer (same as the dedicated path). Frees UART0 for a hardware S3.
+//      Validate on hardware before relying on it.
 #ifndef SBUS_SHARED_UART
-#define SBUS_SHARED_UART 0   // 0 = dedicated UART0 for SBUS OUT (proven); 1 = share UART1 for SBUS IN+OUT, free UART0 for hardware S3
+#define SBUS_SHARED_UART 0   // 0 = dedicated UART0 for SBUS OUT (proven); 1 = share UART1 for SBUS IN+OUT
 #endif
 
-#define MAESTRO_TX_PIN   6    // Serial2 TX — local Maestro command bus
-#define MAESTRO_RX_PIN   7    // Serial2 RX — optional Maestro feedback (verify pin)
-
-#define S3_TX_PIN       15    // Aux serial S3 TX (SoftwareSerial)
-#define S3_RX_PIN       16    // Aux serial S3 RX
-#define S4_TX_PIN       17    // Aux serial S4 TX (SoftwareSerial)
-#define S4_RX_PIN       18    // Aux serial S4 RX
-
-// SBUS OUT — pure passthrough re-emission of the SBUS RX stream so downstream
-// devices can consume the same channel data.  Emitted on UART0 (Serial0) at
-// 100k 8E2 inverted, TX-only; each byte is teed into the UART TX FIFO as it
-// arrives on Serial1 RX (~1 µs push).  See SbusReader::setPassthroughSink().
-#define SBUS_OUT_PIN     9    // UART0 (Serial0) TX → downstream SBUS consumer
-
-#define STATUS_LED_PIN  48    // WCB 3.2 onboard NeoPixel — verify against schematic
+#define STATUS_LED_PIN  48    // onboard NeoPixel — GPIO48 on both WCB 3.2 and NaviCore v2
 #define STATUS_LED_COUNT 1
 
 // =============================================================================
@@ -1311,6 +1317,28 @@ void sendPWMUpdate() {
 }
 
 // =============================================================================
+//  applyBoardProfile — load the selected board's pin map into the runtime pin
+//  globals. Called ONCE in setup() after the config loads and BEFORE any port
+//  is opened (SBUS / Maestro / aux). boardType 0 = NaviCore v2, 1 = WCB HW 3.2.
+//  Status LED is GPIO48 on both, so it isn't profiled.
+// =============================================================================
+static void applyBoardProfile() {
+  if (rcConfig.boardType == BOARD_WCB_HW_32) {
+    SBUS_RX_PIN = 5;   SBUS_OUT_PIN = 9;
+    MAESTRO_TX_PIN = 6; MAESTRO_RX_PIN = 7;
+    S3_TX_PIN = 15;    S3_RX_PIN = 16;
+    S4_TX_PIN = 17;    S4_RX_PIN = 18;
+    Serial.println("[BOARD] WCB HW 3.2 pin profile");
+  } else {                                   // BOARD_NAVICORE_V2 (default)
+    SBUS_RX_PIN = 4;   SBUS_OUT_PIN = 5;
+    MAESTRO_TX_PIN = 6; MAESTRO_RX_PIN = 7;
+    S3_TX_PIN = 8;     S3_RX_PIN = 9;
+    S4_TX_PIN = 10;    S4_RX_PIN = 21;
+    Serial.println("[BOARD] NaviCore v2 pin profile");
+  }
+}
+
+// =============================================================================
 //  Serial-port baud (re)application
 //  Serial2 (Maestro) and Serial3/4 (aux SWSerial) are opened from rcConfig.
 //  Called once at boot AND again after every SET_CONFIG save, so a baud
@@ -1812,7 +1840,7 @@ void setup() {
   Serial.setTxTimeoutMs(50);
 #endif
   delay(1500);
-  Serial.println("\n\n=== NaviCore (WCB HW 3.2) ===");
+  Serial.println("\n\n=== NaviCore ===");   // active board profile logged at boot by applyBoardProfile()
   printBootloaderInfo();
   printBootTelemetry();
 
@@ -1820,44 +1848,11 @@ void setup() {
   statusLed.begin();
   setStatusLed(C_RED, 255);
 
-  // Serial2 (local Maestro bus) and Serial3-4 (aux SoftwareSerial) are opened
-  // AFTER the config loads, below, at their configured baud (rcConfig.maestroBaud
-  // / rcConfig.auxBaud). Nothing uses them before setup() finishes, so
-  // deferring the open is safe.
-
-#if SBUS_SHARED_UART
-  // SBUS IN + OUT share ONE full-duplex hardware UART (UART1 / Serial1):
-  //   RX = SBUS_RX_PIN (GPIO5), TX = SBUS_OUT_PIN (GPIO9), 100k 8E2 INVERTED.
-  // A UART is full-duplex and SBUS in/out are identical format, so the invert
-  // flag (which inverts BOTH directions) is exactly right. The byte-tee in
-  // SbusReader::read() writes each RX byte straight to TX; the 256-byte
-  // non-blocking TX buffer keeps that write from stalling the RX-drain loop —
-  // the SAME fix the dedicated path relies on, just on one peripheral. This
-  // frees UART0/Serial0 for the hardware S3 aux port (see the Serial3 alias).
-  // Pins are unchanged from the dedicated layout, so this runs as-is on WCB 3.2.
-  Serial1.setTxBufferSize(256);                       // MUST precede begin()
-  sbusRx.begin(&Serial1, SBUS_RX_PIN, /*txPin=*/SBUS_OUT_PIN);
-  // SBUS OUT (the per-byte tee to this UART's TX) is turned on/off at runtime by
-  // applySbusOut() per rcConfig.sbusOutEnabled — called after the config loads.
-  Serial.printf("[SBUS] IN+OUT share Serial1/UART1 — RX GPIO%d / TX GPIO%d, 100k 8E2 inverted. UART0 freed for S3.\n",
-                SBUS_RX_PIN, SBUS_OUT_PIN);
-#else
-  // SBUS IN on Serial1 (UART1), RX-only (txPin=-1). SBUS OUT on a DEDICATED
-  // hardware UART (UART0 / Serial0), TX-only, GPIO9, 100k 8E2 INVERTED — UART0
-  // is available because the debug console is on native USB CDC, not UART0.
-  //
-  // A 256-byte TX ring buffer (≈7 frames) keeps the byte-tee write in
-  // SbusReader::read() non-blocking: frames drain at 100k baud (~3-4 ms each)
-  // far faster than they arrive (~7-14 ms), so the buffer never fills.
-  // setTxBufferSize() MUST be called before begin().  (The original SBUS-out
-  // was a blocking SoftwareSerial bit-bang on GPIO9 — that is the failure mode
-  // that drove the move to a hardware UART.)
-  sbusRx.begin(&Serial1, SBUS_RX_PIN, /*txPin=*/-1);
-  // SBUS OUT (Serial0/UART0) is brought up on demand by applySbusOut() only when
-  // rcConfig.sbusOutEnabled — so UART0 stays free when OUT is off. Called after
-  // the config loads, and again on every SET_CONFIG so the toggle applies live.
-  Serial.printf("[SBUS] IN  on Serial1/UART1 RX (GPIO%d)\n", SBUS_RX_PIN);
-#endif
+  // SBUS IN, Serial2 (local Maestro), and Serial3/4 (aux SWSerial) are ALL
+  // opened AFTER the config loads (below): their pins come from the selected
+  // board profile (applyBoardProfile), which needs rcConfig.boardType, and the
+  // Maestro/aux baud comes from rcConfig too. Nothing uses these ports before
+  // setup() finishes, so deferring the open is safe.
 
   // RC Config lives in PSRAM — allocate it BEFORE any rcConfig.* access.
   // ps_calloc() pulls from the PSRAM heap (Tools → PSRAM must be "OPI PSRAM").
@@ -1895,6 +1890,45 @@ void setup() {
         Serial.println("[CONFIG] migrated existing config: NVS -> LittleFS");
     }
   }
+
+  // Pin map is known now — load the selected board's profile into the pin
+  // globals BEFORE opening any port (SBUS / Maestro / aux all read these pins).
+  applyBoardProfile();
+
+  // SBUS IN (and, in shared mode, OUT) on Serial1/UART1 — brought up here, after
+  // applyBoardProfile(), so it uses the selected board's SBUS pins.
+#if SBUS_SHARED_UART
+  // SBUS IN + OUT share ONE full-duplex hardware UART (UART1 / Serial1):
+  //   RX = SBUS_RX_PIN, TX = SBUS_OUT_PIN, 100k 8E2 INVERTED.
+  // A UART is full-duplex and SBUS in/out are identical format, so the invert
+  // flag (which inverts BOTH directions) is exactly right. The byte-tee in
+  // SbusReader::read() writes each RX byte straight to TX; the 256-byte
+  // non-blocking TX buffer keeps that write from stalling the RX-drain loop —
+  // the SAME fix the dedicated path relies on, just on one peripheral. This
+  // frees UART0/Serial0 for the hardware S3 aux port (see the Serial3 alias).
+  Serial1.setTxBufferSize(256);                       // MUST precede begin()
+  sbusRx.begin(&Serial1, SBUS_RX_PIN, /*txPin=*/SBUS_OUT_PIN);
+  // SBUS OUT (the per-byte tee to this UART's TX) is turned on/off at runtime by
+  // applySbusOut() per rcConfig.sbusOutEnabled — called after the config loads.
+  Serial.printf("[SBUS] IN+OUT share Serial1/UART1 — RX GPIO%d / TX GPIO%d, 100k 8E2 inverted. UART0 freed for S3.\n",
+                SBUS_RX_PIN, SBUS_OUT_PIN);
+#else
+  // SBUS IN on Serial1 (UART1), RX-only (txPin=-1). SBUS OUT on a DEDICATED
+  // hardware UART (UART0 / Serial0), TX-only, 100k 8E2 INVERTED — UART0 is
+  // available because the debug console is on native USB CDC, not UART0.
+  //
+  // A 256-byte TX ring buffer (≈7 frames) keeps the byte-tee write in
+  // SbusReader::read() non-blocking: frames drain at 100k baud (~3-4 ms each)
+  // far faster than they arrive (~7-14 ms), so the buffer never fills.
+  // setTxBufferSize() MUST be called before begin().  (The original SBUS-out
+  // was a blocking SoftwareSerial bit-bang on GPIO9 — that is the failure mode
+  // that drove the move to a hardware UART.)
+  sbusRx.begin(&Serial1, SBUS_RX_PIN, /*txPin=*/-1);
+  // SBUS OUT (Serial0/UART0) is brought up on demand by applySbusOut() only when
+  // rcConfig.sbusOutEnabled — so UART0 stays free when OUT is off. Called after
+  // the config loads, and again on every SET_CONFIG so the toggle applies live.
+  Serial.printf("[SBUS] IN  on Serial1/UART1 RX (GPIO%d)\n", SBUS_RX_PIN);
+#endif
 
   // Open Serial2 (local Maestro) + Serial3/4 (aux SWSerial) at their
   // configured baud. Single source of truth: rcConfig (maestroBaud /

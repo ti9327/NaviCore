@@ -2204,7 +2204,7 @@
         <img src="../Images/r2logo.png" alt="R2 logo"
              style="width:72px;height:72px;object-fit:contain;opacity:0.9">
         <div style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.3px">
-          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">251230QJUN26</span>
+          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">251258QJUN26</span>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap">
@@ -2594,6 +2594,15 @@
              ════════════════════════════════════════════════════════════ -->
         <section class="cfg-pane" id="cfg-pane-general">
           <h2 class="cfg-pane-title">General</h2>
+          <div class="sb-section">
+            <h3>Board / PCB</h3>
+            <select id="board-select" onchange="config.boardType = +this.value"
+                    style="font-size:13px;padding:4px 8px">
+              <option value="0">NaviCore v2 PCB</option>
+              <option value="1">WCB HW 3.2</option>
+            </select>
+            <div class="noconn" style="margin-top:4px">Selects the GPIO pin map for your hardware. <b>Save, then reboot the board</b> for a change to take effect — pins are assigned at boot. Default: NaviCore v2.</div>
+          </div>
           <div class="sb-section">
             <h3>Tap Window</h3>
             <div class="tapwin-row">
@@ -3064,6 +3073,7 @@ let config = {
   txModel:          0,        // TX_MODEL_X18 default
   threeAxisGimbals: false,    // X20 hardware option (off by default)
   sbusOutEnabled:   false,    // SBUS-OUT passthrough (off by default — saves CPU when unused)
+  boardType:        0,        // hardware pin profile: 0 = NaviCore v2 PCB (default), 1 = WCB HW 3.2
   tapWindowMs:   500,
   matrixChannel: 7,
   matrixDebounceFrames: 1,
@@ -4390,6 +4400,7 @@ function applyConfig(data) {
     applyTxModel(config.txModel, false);
   }
   if (data.sbusOutEnabled !== undefined) config.sbusOutEnabled = !!data.sbusOutEnabled;
+  if (data.boardType      !== undefined) config.boardType      = +data.boardType | 0;
   if (data.tapWindowMs   !== undefined) {
     const t = +data.tapWindowMs;                    // coerce: a string here would show
     if (Number.isFinite(t)) config.tapWindowMs = t; // as a false "dirty" diff on save
@@ -4440,6 +4451,7 @@ function applyConfig(data) {
   }
   document.getElementById('tapwin-input').value = config.tapWindowMs;
   { const sb = document.getElementById('sbus-out-toggle'); if (sb) sb.checked = !!config.sbusOutEnabled; }
+  { const bd = document.getElementById('board-select'); if (bd) bd.value = String(config.boardType ?? 0); }
   { const el = document.getElementById('matrix-debounce-input');
     if (el) el.value = config.matrixDebounceFrames ?? 1; }
   applyHcrDestUI();

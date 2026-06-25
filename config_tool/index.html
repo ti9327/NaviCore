@@ -2204,7 +2204,7 @@
         <img src="../Images/r2logo.png" alt="R2 logo"
              style="width:72px;height:72px;object-fit:contain;opacity:0.9">
         <div style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.3px">
-          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">251504QJUN26</span>
+          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">251540QJUN26</span>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap">
@@ -3072,6 +3072,7 @@ function hcrAudioChanOptions(selected) {
     `<option value="0"${+selected===0?' selected':''}>V (vocalizer)</option>`,
     `<option value="1"${+selected===1?' selected':''}>A</option>`,
     `<option value="2"${+selected===2?' selected':''}>B</option>`,
+    `<option value="3"${+selected===3?' selected':''}>All (V+A+B)</option>`,
   ].join('');
 }
 
@@ -3233,7 +3234,7 @@ const HCR_AUDIO_CHANS = [
 const HCR_FN_USES_EMOTION    = new Set([2, 3, 4]);
 const HCR_FN_USES_AUDIO_CHAN = new Set([14, 16, 17]);
 function emotionName(v) { return (HCR_EMOTIONS.find(e=>e.v===+v)||{}).n || `chan ${v}`; }
-function audioChanName(v) { return (HCR_AUDIO_CHANS.find(e=>e.v===+v)||{}).n || `chan ${v}`; }
+function audioChanName(v) { return (+v === 3) ? 'All (V+A+B)' : ((HCR_AUDIO_CHANS.find(e=>e.v===+v)||{}).n || `chan ${v}`); }
 
 // MP3 Trigger (SparkFun v2.x via WCB ";A,..." commands). fn codes match the
 // firmware RcMp3Fn enum and the WCB MP3 driver's command set.
@@ -5862,7 +5863,9 @@ function renderHcrParamFields(container, fn, curChan, curTrack) {
     if (HCR_FN_USES_EMOTION.has(fn)) {
       chanW = mkSelect('-chan', HCR_EMOTIONS.map(e => [e.v, e.n]), curChan); chanL = 'Emotion';
     } else if (HCR_FN_USES_AUDIO_CHAN.has(fn)) {
-      chanW = mkSelect('-chan', HCR_AUDIO_CHANS.map(e => [e.v, e.n]), curChan); chanL = 'Audio chan';
+      // SetVolume (17) can target ALL channels at once; PlayWAV/StopWAV (14/16) can't.
+      const chans = (fn === 17) ? [...HCR_AUDIO_CHANS, { v: 3, n: 'All (V+A+B)' }] : HCR_AUDIO_CHANS;
+      chanW = mkSelect('-chan', chans.map(e => [e.v, e.n]), curChan); chanL = 'Audio chan';
     } else {
       chanW = mkNum('-chan', curChan, 99); chanL = 'Chan';
     }

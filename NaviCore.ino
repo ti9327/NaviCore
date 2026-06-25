@@ -552,8 +552,8 @@ static bool hcrNormalizeAction(uint8_t& fn, int& chan, int& track) {
       return (chan >= 0 && chan <= 2 && track >= 0 && track <= 9999);
     case 16:  // StopWAV(ch)
       return (chan >= 0 && chan <= 2);
-    case 17:  // SetVolume(ch, vol)
-      return (chan >= 0 && chan <= 2 && track >= 0 && track <= 99);
+    case 17:  // SetVolume(ch, vol). chan 3 = ALL (V+A+B) in one message — see hcrFormat*.
+      return (chan >= 0 && chan <= 3 && track >= 0 && track <= 99);
     case 18:  // VolumeUpAll(step)   — WCB ;H,VOLUP across V+A+B; track = step (0 = WCB default 5)
     case 19:  // VolumeDownAll(step) — WCB ;H,VOLDN across V+A+B; chan unused
       return (track >= 0 && track <= 99);
@@ -591,7 +591,8 @@ static String hcrFormatCommand(uint8_t fn, int chan, int track) {
     case 16:  // StopWAV(ch)
       inner = String("PS") + audioprefix[chan] + ",QP" + audioprefix[chan];
       break;
-    case 17:  // SetVolume(ch, vol)
+    case 17:  // SetVolume(ch, vol). chan 3 = ALL → V, A, B set in one serial write.
+      if (chan == 3) return String("<PVV") + track + ">\n<PVA" + track + ">\n<PVB" + track + ">\n";
       inner = String("PV") + audioprefix[chan] + String(track);
       break;
     case 18:  // VolumeUpAll / VolumeDownAll — a RELATIVE step across V+A+B. WCB-only:
@@ -623,6 +624,11 @@ static String hcrFormatWcbCommand(uint8_t fn, int chan, int track) {
     case 7:  return String(";H,MUSE,GAP,") + chan + "," + track;  // Muse(min,max)
     case 10: return String(";H,OVERRIDE,") + chan;                // OverrideEmotions(v)
     case 13: return String(";H,MUSE,") + track;                   // SetMuse(v)
+    // SetVolume: a specific channel rides the numeric WCB FN-17 (SetVolume(ch,v));
+    // chan 3 = ALL uses the WCB's ;H,VOL with the channel OMITTED (set V+A+B to the
+    // value) — ONE message. Requires the matching WCB "VOL all" case (ch<0 → loop).
+    case 17: return (chan == 3) ? (String(";H,VOL,") + track)
+                                : (String(";H,FN,17,") + chan + "," + track);
     // Volume Up/Down across ALL channels (V+A+B) in ONE message: the WCB's
     // ;H,VOLUP/VOLDN with the channel omitted loops V/A/B itself (WCB_HCR.cpp
     // processHCRRuntimeCommand). track = step (0 → the WCB's default of 5).
@@ -1053,17 +1059,17 @@ void processSwitches() {
 // =============================================================================
 
 // HCR volume rate-limiter — only re-emit when value changes AND a minimum
-// interval has elapsed.  One slot per audio channel (V/A/B).
+// interval has elapsed.  One slot per audio channel: 0=V, 1=A, 2=B, 3=All.
 struct HcrVolCache {
-  int8_t        lastVol[3] = { -1, -1, -1 };
-  unsigned long lastSent[3] = { 0, 0, 0 };
+  int8_t        lastVol[4]  = { -1, -1, -1, -1 };
+  unsigned long lastSent[4] = {  0,  0,  0,  0 };
 };
 static HcrVolCache hcrVolCache;
 static const unsigned long HCR_VOLUME_MIN_INTERVAL_MS = 80;  // ~12 Hz max per chan
 
 static void dispatchHcrVolume(uint8_t audioChan, uint8_t vol) {
-  if (audioChan > 2) {
-    dlog(DBG_HCR, "[DISPATCH] HCR volume: audio channel %u out of range (0-2) — "
+  if (audioChan > 3) {
+    dlog(DBG_HCR, "[DISPATCH] HCR volume: audio channel %u out of range (0-3 = V/A/B/All) — "
          "check the knob's HCR output target; skipped\n", audioChan);
     return;
   }

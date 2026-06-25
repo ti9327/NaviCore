@@ -51,6 +51,28 @@ function getFirmwareBranch() {
   }
 }
 
+// ── Latest-version check ─────────────────────────────────────────
+// Lists /firmware/ (the SAME GitHub Contents API the flasher uses) and parses
+// the version out of the NaviCore app image's filename
+// (NaviCore_<version>_ESP32S3.bin). A flashed board reports the SAME string
+// (FW_VERSION = base_DTG) in its PONG, so the two compare directly. This is the
+// exact image the "Update Firmware" button would write, so it's the right
+// notion of "latest". Returns { version, filename, branch }; throws on
+// network / API error / missing image.
+async function fetchLatestFirmwareVersion() {
+  const branch = getFirmwareBranch();
+  const apiUrl = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${GITHUB_BIN_PATH}?ref=${branch}`;
+  const resp = await fetch(apiUrl);
+  if (!resp.ok) throw new Error(`GitHub API: HTTP ${resp.status}`);
+  const files = await resp.json();
+  if (!Array.isArray(files)) throw new Error('unexpected GitHub API response');
+  // Match ONLY the NaviCore app image — not _boot/_part, not RC-Controller_*.
+  const app = files.find(f => f.type === 'file' && /^NaviCore_.+_ESP32S3\.bin$/.test(f.name));
+  if (!app) throw new Error('no NaviCore app image (NaviCore_*_ESP32S3.bin) in firmware/');
+  const m = app.name.match(/^NaviCore_(.+)_ESP32S3\.bin$/);
+  return { version: m ? m[1] : null, filename: app.name, branch };
+}
+
 // ── Script loader ────────────────────────────────────────────────
 function loadScript(src) {
   return new Promise((resolve, reject) => {

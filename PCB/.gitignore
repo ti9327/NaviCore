@@ -1,0 +1,16 @@
+# KiCad — ignore auto-generated / transient files.
+# The real design files (.kicad_pcb / .kicad_sch / .kicad_pro) and the
+# exported Gerbers are kept; only backups, autosaves, and caches are ignored.
+
+# Auto-backup archives (KiCad's <project>-backups/ folder of timestamped .zip snapshots)
+*-backups/
+
+# Autosave files and their lock files
+_autosave-*
+*.lck
+
+# Legacy single-file backups (e.g. KiCad 5 *.kicad_pcb-bak)
+*-bak
+
+# Regenerable footprint info cache
+fp-info-cache

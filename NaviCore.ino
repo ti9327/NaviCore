@@ -554,6 +554,9 @@ static bool hcrNormalizeAction(uint8_t& fn, int& chan, int& track) {
       return (chan >= 0 && chan <= 2);
     case 17:  // SetVolume(ch, vol)
       return (chan >= 0 && chan <= 2 && track >= 0 && track <= 99);
+    case 18:  // VolumeUpAll(step)   — WCB ;H,VOLUP across V+A+B; track = step (0 = WCB default 5)
+    case 19:  // VolumeDownAll(step) — WCB ;H,VOLDN across V+A+B; chan unused
+      return (track >= 0 && track <= 99);
     default:
       return false;
   }
@@ -591,6 +594,9 @@ static String hcrFormatCommand(uint8_t fn, int chan, int track) {
     case 17:  // SetVolume(ch, vol)
       inner = String("PV") + audioprefix[chan] + String(track);
       break;
+    case 18:  // VolumeUpAll / VolumeDownAll — a RELATIVE step across V+A+B. WCB-only:
+    case 19:  // the WCB tracks each channel's current volume to compute the step; the
+      return "";  // local HCR path keeps no shadow, so it can't (see hcrFormatWcbCommand).
     default: return "";   // unreachable — hcrNormalizeAction rejects unknown fn
   }
   return String("<") + inner + ">\n";
@@ -617,6 +623,11 @@ static String hcrFormatWcbCommand(uint8_t fn, int chan, int track) {
     case 7:  return String(";H,MUSE,GAP,") + chan + "," + track;  // Muse(min,max)
     case 10: return String(";H,OVERRIDE,") + chan;                // OverrideEmotions(v)
     case 13: return String(";H,MUSE,") + track;                   // SetMuse(v)
+    // Volume Up/Down across ALL channels (V+A+B) in ONE message: the WCB's
+    // ;H,VOLUP/VOLDN with the channel omitted loops V/A/B itself (WCB_HCR.cpp
+    // processHCRRuntimeCommand). track = step (0 → the WCB's default of 5).
+    case 18: return (track > 0) ? (String(";H,VOLUP,") + track) : String(";H,VOLUP");
+    case 19: return (track > 0) ? (String(";H,VOLDN,") + track) : String(";H,VOLDN");
     default: return String(";H,FN,") + (int)fn + "," + chan + "," + track;
   }
 }

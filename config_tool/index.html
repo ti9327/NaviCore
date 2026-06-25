@@ -2204,7 +2204,7 @@
         <img src="../Images/r2logo.png" alt="R2 logo"
              style="width:72px;height:72px;object-fit:contain;opacity:0.9">
         <div style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.3px">
-          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">251323QJUN26</span>
+          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">251504QJUN26</span>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap">
@@ -3210,6 +3210,8 @@ const hcrFnLabels = {
   14: 'PlayWAV',
   16: 'StopWAV',
   17: 'SetVolume',
+  18: 'Volume Up (all)',
+  19: 'Volume Down (all)',
 };
 // The "chan" param is an EMOTION enum for SetEmotion/Trigger/Stimulate (fn 2/3/4)
 // and an AUDIO CHANNEL enum for PlayWAV/StopWAV/SetVolume (fn 14/16/17). fn 7
@@ -5470,6 +5472,7 @@ function actionSummary(a) {
     if (+a.fn === 7)        core = `HCR ${fnLbl}(${a.chan ?? 0}-${a.track ?? 0}s)`;
     else if (+a.fn === 10)  core = `HCR ${fnLbl}(${(+a.chan) ? 'On' : 'Off'})`;
     else if (+a.fn === 13)  core = `HCR ${fnLbl}(${(+a.track) ? 'On' : 'Off'})`;
+    else if (+a.fn === 18 || +a.fn === 19) core = `HCR ${fnLbl}(step ${(+a.track) > 0 ? a.track : 5})`;
     else {
       let chanLbl;
       if (HCR_FN_USES_EMOTION.has(+a.fn))         chanLbl = emotionName(a.chan);
@@ -5852,6 +5855,9 @@ function renderHcrParamFields(container, fn, curChan, curTrack) {
     chanW = mkSelect('-chan', [[0, 'Off'], [1, 'On']], curChan); chanL = 'Override';
   } else if (fn === 13) {         // SetMuse(v) — v=track (0/1); chan unused
     trackW = mkSelect('-track', [[0, 'Off'], [1, 'On']], curTrack); trackL = 'Auto-muse';
+  } else if (fn === 18 || fn === 19) {   // Volume Up/Down (ALL channels) — no chan; optional step
+    trackW = mkNum('-track', curTrack, 99); trackL = 'Step (0 = 5)';
+    trackTitle = 'Volume step per trigger across V + A + B (1-99). 0 or blank uses the WCB default of 5.';
   } else {                        // the original 11 fns — behavior unchanged
     if (HCR_FN_USES_EMOTION.has(fn)) {
       chanW = mkSelect('-chan', HCR_EMOTIONS.map(e => [e.v, e.n]), curChan); chanL = 'Emotion';
@@ -5976,7 +5982,9 @@ function appendActionFields(container, action) {
     fnSel.id = fid + '-fn';
     fnSel.style.minWidth = '140px';
     [[14,'PlayWAV'],[16,'StopWAV'],[9,'StopEmote'],[8,'Stop All'],[4,'Stimulate'],
-     [3,'Trigger'],[2,'SetEmotion'],[17,'SetVolume'],[5,'Overload'],[10,'Override Emotions'],
+     [3,'Trigger'],[2,'SetEmotion'],[17,'SetVolume'],
+     [18,'Volume Up (all)'],[19,'Volume Down (all)'],
+     [5,'Overload'],[10,'Override Emotions'],
      [6,'Muse'],[7,'Muse Gap'],[13,'Auto-Muse On/Off'],[11,'ResetEmotions']
     ].forEach(([v,lbl]) => {
       const o = document.createElement('option');

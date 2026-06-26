@@ -666,8 +666,8 @@ static String hcrFormatWcbCommand(uint8_t fn, int chan, int track) {
     case 13: return String(";H,MUSE,") + track;                   // SetMuse(v)
     // SetVolume: a specific channel rides the numeric WCB FN-17 (SetVolume(ch,v));
     // chan 3 = ALL uses the WCB's ;H,VOL with the channel OMITTED (set V+A+B to the
-    // value) in ONE message. Requires the matching WCB "VOL all" case (ch<0 → loop),
-    // which Greg is adding to the WCB firmware.
+    // value) in ONE message — the WCB's ;H,VOL handler treats a leading non-channel
+    // field as the value and loops V/A/B (WCB_HCR.cpp, ch<0 → all). Works end-to-end.
     case 17: return (chan == 3) ? (String(";H,VOL,") + track)
                                 : (String(";H,FN,17,") + chan + "," + track);
     // Volume Up/Down across ALL channels (V+A+B) in ONE message: the WCB's

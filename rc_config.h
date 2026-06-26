@@ -394,7 +394,7 @@ struct RcConfig {
   // Aux SoftwareSerial port baud — [0]=S3, [1]=S4. One source of truth for
   // the port line rate; HCR / MP3-local / Serial actions all just use the
   // port at this baud (the firmware opens S3/S4 with these in setup()).
-  uint32_t       auxBaud[2];
+  uint32_t       auxBaud[3];   // [0]=S3, [1]=S4, [2]=S5 (S5 = NaviCore v2 "Serial 3"; unused on 3.2)
   // Local Maestro bus baud (Serial2 hardware UART). Must match each wired
   // Maestro's Serial Settings (or its "Detect baud" mode). Remote/Kyber
   // Maestros are unaffected — that path is binary over ESP-NOW.
@@ -565,6 +565,7 @@ void rcConfigLoadDefaults() {
   // for faster peripherals (e.g. an MP3 Trigger v2 on that port wants 38400).
   rcConfig.auxBaud[0] = 9600;   // S3
   rcConfig.auxBaud[1] = 9600;   // S4
+  rcConfig.auxBaud[2] = 9600;   // S5 (NaviCore v2 "Serial 3")
   rcConfig.maestroBaud = LOCAL_MAESTRO_BAUD_RATE;   // local Maestro bus (Serial2)
 
   // Default Maestro slots — all 8 disabled until user enables them in the
@@ -833,6 +834,7 @@ String rcConfigToJSON() {
   JsonObject auxObj = doc.createNestedObject("auxBaud");
   auxObj["S3"]      = rcConfig.auxBaud[0];
   auxObj["S4"]      = rcConfig.auxBaud[1];
+  auxObj["S5"]      = rcConfig.auxBaud[2];
   auxObj["maestro"] = rcConfig.maestroBaud;   // local Maestro bus (Serial2)
 
   // Truncation guard — see the note at the top of this function. Better to
@@ -1022,6 +1024,7 @@ bool rcConfigFromJSON(const JsonObject& doc) {
     JsonObject auxObj = doc["auxBaud"];
     rcConfig.auxBaud[0] = (uint32_t)(auxObj["S3"]      | rcConfig.auxBaud[0]);
     rcConfig.auxBaud[1] = (uint32_t)(auxObj["S4"]      | rcConfig.auxBaud[1]);
+    rcConfig.auxBaud[2] = (uint32_t)(auxObj["S5"]      | rcConfig.auxBaud[2]);
     rcConfig.maestroBaud = (uint32_t)(auxObj["maestro"] | rcConfig.maestroBaud);
   }
   return true;
@@ -1317,10 +1320,11 @@ bool rcConfigSaveNVS() {
 
   // Serial port baud — aux S3/S4 + local Maestro bus (Serial2)
   {
-    DynamicJsonDocument doc(96);
+    DynamicJsonDocument doc(128);
     JsonObject root = doc.to<JsonObject>();
     root["S3"]      = rcConfig.auxBaud[0];
     root["S4"]      = rcConfig.auxBaud[1];
+    root["S5"]      = rcConfig.auxBaud[2];
     root["maestro"] = rcConfig.maestroBaud;
     ok &= _nvsPutJson(prefs, "aux", doc);
   }
@@ -1529,11 +1533,12 @@ void rcConfigLoadNVS() {
 
   if (prefs.isKey("aux")) {
     String s = prefs.getString("aux", "");
-    DynamicJsonDocument doc(96);
+    DynamicJsonDocument doc(128);
     if (deserializeJson(doc, s) == DeserializationError::Ok) {
       JsonObject root = doc.as<JsonObject>();
       rcConfig.auxBaud[0]  = (uint32_t)(root["S3"]      | rcConfig.auxBaud[0]);
       rcConfig.auxBaud[1]  = (uint32_t)(root["S4"]      | rcConfig.auxBaud[1]);
+      rcConfig.auxBaud[2]  = (uint32_t)(root["S5"]      | rcConfig.auxBaud[2]);
       rcConfig.maestroBaud = (uint32_t)(root["maestro"] | rcConfig.maestroBaud);
     }
   }

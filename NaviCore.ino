@@ -83,22 +83,19 @@ uint8_t S3_TX_PIN      = 8;   // Aux serial S3 TX (v2 "Serial 1")
 uint8_t S3_RX_PIN      = 9;   // Aux serial S3 RX
 uint8_t S4_TX_PIN      = 10;  // Aux serial S4 TX (v2 "Serial 2")
 uint8_t S4_RX_PIN      = 21;  // Aux serial S4 RX
+uint8_t S5_TX_PIN      = 38;  // Aux serial S5 TX (v2 "Serial 3") — NaviCore v2 only
+uint8_t S5_RX_PIN      = 47;  // Aux serial S5 RX
 
-// SBUS OUT layout, selected by SBUS_SHARED_UART (COMPILE-time, applies to both
-// boards):
-//   0 (default, proven): SBUS OUT gets its OWN hardware UART (UART0 / Serial0),
-//      TX-only on SBUS_OUT_PIN. UART0 is free because the debug console is on
-//      native USB CDC (USBMode=hwcdc / CDCOnBoot=cdc — Serial is no longer
-//      UART0). The original SBUS-out was a SoftwareSerial bit-bang whose
-//      ~110µs/byte blocking spin ate ~31% of a core and tripped the watchdog.
-//   1 (experimental): SBUS IN + OUT share ONE full-duplex UART (UART1/Serial1),
-//      RX SBUS_RX_PIN + TX SBUS_OUT_PIN. Both are 100k 8E2 inverted, so the
-//      invert flag is correct for both directions; needs a non-blocking TX
-//      buffer (same as the dedicated path). Frees UART0 for a hardware S3.
-//      Validate on hardware before relying on it.
-#ifndef SBUS_SHARED_UART
-#define SBUS_SHARED_UART 0   // 0 = dedicated UART0 for SBUS OUT (proven); 1 = share UART1 for SBUS IN+OUT
-#endif
+// SBUS layout is RUNTIME via the `sbusSharedUart` flag (set by applyBoardProfile();
+// replaces the old compile-time SBUS_SHARED_UART):
+//   • BOTH current boards (WCB 3.2 and NaviCore v2) use SHARED: SBUS IN + OUT on ONE
+//     full-duplex UART (UART1/Serial1), RX SBUS_RX_PIN + TX SBUS_OUT_PIN, 100k 8E2
+//     inverted (the invert flag is right for both directions; a non-blocking TX
+//     buffer keeps the byte-tee from stalling). That frees UART0 to be the hardware
+//     S3 aux port (>57600 capable). NOTE: the shared path is not yet bench-validated.
+//   • sbusSharedUart=false is the DEDICATED fallback (SBUS OUT on its own UART0/Serial0,
+//     TX-only; S3 then bit-banged SoftwareSerial). Not used by either current board —
+//     flip a board's flag in applyBoardProfile() if shared SBUS proves unreliable.
 
 #define STATUS_LED_PIN  48    // onboard NeoPixel — GPIO48 on both WCB 3.2 and NaviCore v2
 #define STATUS_LED_COUNT 1
@@ -153,17 +150,33 @@ WCBStream* maestroBroadcast = nullptr;
 //  UART0 — and S3 is bound to that hardware UART0 so it can exceed 57600 baud.
 //  S4 stays SoftwareSerial. Default 0 keeps the proven WCB 3.2 layout.
 // =============================================================================
-#if SBUS_SHARED_UART
-// S3 promoted to the hardware UART0 (Serial0) that SBUS_SHARED_UART frees up by
-// sharing SBUS IN+OUT on UART1. As a real hardware UART, S3 is no longer capped
-// at ~57600 baud the way bit-banged SoftwareSerial is. (UART0's old console
-// role is gone — debug/config is native USB CDC.) S4 stays bit-banged.
-HardwareSerial& Serial3 = Serial0;   // alias: S3 == hardware UART0
-SoftwareSerial  Serial4;             // Aux command-line port (bit-banged), bound in setup()
-#else
-SoftwareSerial Serial3;    // Aux command-line port (bit-banged), bound in setup()
-SoftwareSerial Serial4;    // Aux command-line port (bit-banged), bound in setup()
-#endif
+// Aux command ports — their TYPE is RUNTIME board-dependent, so they're reached
+// through Stream* pointers bound in setup() AFTER applyBoardProfile():
+//   • NaviCore v2 (shared SBUS frees UART0): s3 = HARDWARE Serial0/UART0 ("Serial 1",
+//     not capped at ~57600); s4 + s5 = SoftwareSerial ("Serial 2" / "Serial 3").
+//   • WCB 3.2 (dedicated SBUS-out on UART0): s3 + s4 = SoftwareSerial; no s5.
+// Two SoftwareSerial instances back whichever slots are software on the active
+// board; the core's Serial0 backs s3 on v2. s3IsHw tells applySerialBauds which
+// .begin() overload to use. (This replaces the old compile-time #if SBUS_SHARED_UART
+// HardwareSerial&/SoftwareSerial alias — that choice is now runtime, per board.)
+SoftwareSerial swAux0;      // backing SoftwareSerial A
+SoftwareSerial swAux1;      // backing SoftwareSerial B
+Stream* s3 = nullptr;       // aux "S3"  (v2 "Serial 1")
+Stream* s4 = nullptr;       // aux "S4"  (v2 "Serial 2")
+Stream* s5 = nullptr;       // aux "S5"  (v2 "Serial 3"; v2 only — nullptr on 3.2)
+bool    s3IsHw = false;     // true when s3 points at the hardware UART0 (Serial0)
+
+// Open/close an aux port, dispatching on hardware-UART vs bit-banged SoftwareSerial.
+static inline void auxBegin(Stream* p, bool isHw, uint32_t baud, uint8_t rxPin, uint8_t txPin) {
+  if (!p) return;
+  if (isHw) ((HardwareSerial*)p)->begin(baud, SERIAL_8N1, rxPin, txPin);
+  else      ((SoftwareSerial*)p)->begin(baud, SWSERIAL_8N1, rxPin, txPin, false, 95);
+}
+static inline void auxEnd(Stream* p, bool isHw) {
+  if (!p) return;
+  if (isHw) ((HardwareSerial*)p)->end();
+  else      ((SoftwareSerial*)p)->end();
+}
 // SBUS OUT uses the real UART0 (Serial0) — see setup() and SBUS_OUT_PIN above.
 
 // =============================================================================
@@ -491,8 +504,9 @@ static void executeMaestroCmd(uint8_t id, const char* cmd) {
 // String every call AND wrote one byte at a time; on a bit-banged port
 // each write blocks ~1 byte-time, so a long command stalled loop() (and
 // thus SBUS) for many ms.  One block write + one CR minimizes the hit.
-void writeS3(const String& s) { Serial3.write((const uint8_t*)s.c_str(), s.length()); Serial3.write('\r'); }
-void writeS4(const String& s) { Serial4.write((const uint8_t*)s.c_str(), s.length()); Serial4.write('\r'); }
+void writeS3(const String& s) { if (s3) { s3->write((const uint8_t*)s.c_str(), s.length()); s3->write('\r'); } }
+void writeS4(const String& s) { if (s4) { s4->write((const uint8_t*)s.c_str(), s.length()); s4->write('\r'); } }
+void writeS5(const String& s) { if (s5) { s5->write((const uint8_t*)s.c_str(), s.length()); s5->write('\r'); } }
 
 // =============================================================================
 //  HCR command formatter
@@ -713,8 +727,9 @@ static void executeHcrAction(const RcAction& a) {
   // not a valid HCR destination; legacy configs pointing at S5 fall through
   // to the "unknown port" log below.
   Stream* hcrSerial = nullptr;
-  if      (!strcmp(dest.target, "S3")) hcrSerial = &Serial3;
-  else if (!strcmp(dest.target, "S4")) hcrSerial = &Serial4;
+  if      (!strcmp(dest.target, "S3")) hcrSerial = s3;
+  else if (!strcmp(dest.target, "S4")) hcrSerial = s4;
+  else if (!strcmp(dest.target, "S5")) hcrSerial = s5;   // v2 only (nullptr on 3.2)
   if (!hcrSerial) {
     dlog(DBG_HCR, "[DISPATCH] HCR: unknown serial port '%s' — skipped\n", dest.target);
     return;
@@ -806,8 +821,9 @@ static void executeMp3Action(const RcAction& a) {
   if (dest.transport == 0) {
     // ── Local serial transport ───────────────────────────────────────────
     Stream* p = nullptr;
-    if      (!strcmp(dest.target, "S3")) p = &Serial3;
-    else if (!strcmp(dest.target, "S4")) p = &Serial4;
+    if      (!strcmp(dest.target, "S3")) p = s3;
+    else if (!strcmp(dest.target, "S4")) p = s4;
+    else if (!strcmp(dest.target, "S5")) p = s5;   // v2 only (nullptr on 3.2)
     if (!p) {
       dlog(DBG_MP3, "[DISPATCH] MP3-local: unknown serial port '%s' — skipped\n", dest.target);
       return;
@@ -903,8 +919,7 @@ static void rcExecuteActionNow(const RcAction& a) {
       dlog(DBG_SERIAL, "[DISPATCH] Serial %s  %s\n", a.target, a.cmd);
       if      (!strcmp(a.target, "S3")) writeS3(s);
       else if (!strcmp(a.target, "S4")) writeS4(s);
-      // S5 is reserved for SBUS OUT — actions targeting S5 are silently
-      // ignored (legacy configs may still reference it).
+      else if (!strcmp(a.target, "S5")) writeS5(s);   // v2's "Serial 3"; no-op on 3.2 (s5 == nullptr)
       break;
     }
     case RA_HCR:
@@ -1339,18 +1354,27 @@ void sendPWMUpdate() {
 //  is opened (SBUS / Maestro / aux). boardType 0 = NaviCore v2, 1 = WCB HW 3.2.
 //  Status LED is GPIO48 on both, so it isn't profiled.
 // =============================================================================
+// Runtime equivalent of the old compile-time SBUS_SHARED_UART flag: true on
+// NaviCore v2 (SBUS IN+OUT share UART1, freeing UART0 for the hardware S3 aux),
+// false on WCB 3.2 (SBUS OUT is a dedicated UART0). Set by applyBoardProfile().
+bool sbusSharedUart = false;
+
 static void applyBoardProfile() {
   if (rcConfig.boardType == BOARD_WCB_HW_32) {
+    sbusSharedUart = true;                    // shared SBUS on UART1 (in GPIO5 / out GPIO9); UART0 freed → hardware S3
     SBUS_RX_PIN = 5;   SBUS_OUT_PIN = 9;
     MAESTRO_TX_PIN = 6; MAESTRO_RX_PIN = 7;
     S3_TX_PIN = 15;    S3_RX_PIN = 16;
     S4_TX_PIN = 17;    S4_RX_PIN = 18;
+    S5_TX_PIN = 0;     S5_RX_PIN = 0;         // no third aux port on 3.2
     Serial.println("[BOARD] WCB HW 3.2 pin profile");
   } else {                                   // BOARD_NAVICORE_V2 (default)
+    sbusSharedUart = true;                    // shared SBUS on UART1; S3 = hardware UART0
     SBUS_RX_PIN = 4;   SBUS_OUT_PIN = 5;
     MAESTRO_TX_PIN = 6; MAESTRO_RX_PIN = 7;
     S3_TX_PIN = 8;     S3_RX_PIN = 9;
     S4_TX_PIN = 10;    S4_RX_PIN = 21;
+    S5_TX_PIN = 38;    S5_RX_PIN = 47;
     Serial.println("[BOARD] NaviCore v2 pin profile");
   }
 }
@@ -1364,7 +1388,7 @@ static void applyBoardProfile() {
 //  drops the line, so unrelated saves must not disturb live ports.
 // =============================================================================
 static uint32_t appliedMaestroBaud = 0;
-static uint32_t appliedAuxBaud[2]  = { 0, 0 };
+static uint32_t appliedAuxBaud[3]  = { 0, 0, 0 };
 
 static void applySerialBauds(bool initial) {
   if (initial || rcConfig.maestroBaud != appliedMaestroBaud) {
@@ -1376,22 +1400,26 @@ static void applySerialBauds(bool initial) {
                   (unsigned long)rcConfig.maestroBaud, MAESTRO_TX_PIN);
   }
   if (initial || rcConfig.auxBaud[0] != appliedAuxBaud[0]) {
-    if (!initial) Serial3.end();
-#if SBUS_SHARED_UART
-    Serial3.begin(rcConfig.auxBaud[0], SERIAL_8N1, S3_RX_PIN, S3_TX_PIN);              // hardware UART0 — no ~57600 cap
-#else
-    Serial3.begin(rcConfig.auxBaud[0], SWSERIAL_8N1, S3_RX_PIN, S3_TX_PIN, false, 95); // SoftwareSerial (bit-banged)
-#endif
+    if (!initial) auxEnd(s3, s3IsHw);
+    auxBegin(s3, s3IsHw, rcConfig.auxBaud[0], S3_RX_PIN, S3_TX_PIN);   // hw UART0 (v2) or SoftwareSerial (3.2)
     appliedAuxBaud[0] = rcConfig.auxBaud[0];
-    Serial.printf("[AUX] S3 %s @ %lu baud\n",
-                  initial ? "open" : "re-open", (unsigned long)rcConfig.auxBaud[0]);
+    Serial.printf("[AUX] S3 %s @ %lu baud (%s)\n",
+                  initial ? "open" : "re-open", (unsigned long)rcConfig.auxBaud[0], s3IsHw ? "hw UART0" : "sw");
   }
   if (initial || rcConfig.auxBaud[1] != appliedAuxBaud[1]) {
-    if (!initial) Serial4.end();
-    Serial4.begin(rcConfig.auxBaud[1], SWSERIAL_8N1, S4_RX_PIN, S4_TX_PIN, false, 95);
+    if (!initial) auxEnd(s4, false);
+    auxBegin(s4, false, rcConfig.auxBaud[1], S4_RX_PIN, S4_TX_PIN);
     appliedAuxBaud[1] = rcConfig.auxBaud[1];
     Serial.printf("[AUX] S4 %s @ %lu baud\n",
                   initial ? "open" : "re-open", (unsigned long)rcConfig.auxBaud[1]);
+  }
+  // S5 — NaviCore v2 only (s5 == nullptr on WCB 3.2, so this block is skipped there).
+  if (s5 && (initial || rcConfig.auxBaud[2] != appliedAuxBaud[2])) {
+    if (!initial) auxEnd(s5, false);
+    auxBegin(s5, false, rcConfig.auxBaud[2], S5_RX_PIN, S5_TX_PIN);
+    appliedAuxBaud[2] = rcConfig.auxBaud[2];
+    Serial.printf("[AUX] S5 %s @ %lu baud\n",
+                  initial ? "open" : "re-open", (unsigned long)rcConfig.auxBaud[2]);
   }
 }
 
@@ -1409,22 +1437,22 @@ static void applySbusOut(bool initial) {
   bool want = rcConfig.sbusOutEnabled;
   if (!initial && want == sbusOutApplied) return;   // no change since last apply
   if (want) {
-#if SBUS_SHARED_UART
-    // Shared UART1: TX (GPIO9) is already configured by sbusRx.begin(); enabling
-    // OUT just starts teeing each received byte to it.
-    sbusRx.setPassthroughSink(&Serial1);
-#else
-    // Dedicated UART0: bring it up (TX-only, GPIO9, 100k 8E2 inverted) and tee.
-    Serial0.setTxBufferSize(256);                    // must precede begin()
-    Serial0.begin(100000, SERIAL_8E2, /*rxPin=*/-1, /*txPin=*/SBUS_OUT_PIN, /*invert=*/true);
-    sbusRx.setPassthroughSink(&Serial0);
-#endif
+    if (sbusSharedUart) {
+      // v2 shared UART1: TX is already configured by sbusRx.begin(); enabling OUT
+      // just starts teeing each received byte to it. (Serial0/UART0 is the aux S3.)
+      sbusRx.setPassthroughSink(&Serial1);
+    } else {
+      // 3.2 dedicated UART0: bring it up (TX-only, 100k 8E2 inverted) and tee.
+      Serial0.setTxBufferSize(256);                  // must precede begin()
+      Serial0.begin(100000, SERIAL_8E2, /*rxPin=*/-1, /*txPin=*/SBUS_OUT_PIN, /*invert=*/true);
+      sbusRx.setPassthroughSink(&Serial0);
+    }
     Serial.printf("[SBUS] OUT enabled — re-emit on GPIO%d (100k 8E2 inverted)\n", SBUS_OUT_PIN);
   } else {
     sbusRx.setPassthroughSink(nullptr);              // stop the tee — zero CPU when unused
-#if !SBUS_SHARED_UART
-    if (!initial) Serial0.end();                     // release UART0 when toggled off (dedicated layout)
-#endif
+    // Release UART0 ONLY on 3.2 (dedicated). On v2, UART0 is the hardware aux S3,
+    // NOT SBUS-out, so it must never be ended here.
+    if (!sbusSharedUart && !initial) Serial0.end();
     Serial.println("[SBUS] OUT disabled (passthrough off — no CPU cost)");
   }
   sbusOutApplied = want;
@@ -1686,8 +1714,8 @@ void handleSerialInput() {
             // (TX/RX swap, ground, 3V3 vs 5V) or the EspSoftwareSerial port.
             case 20:
             case 21: {
-              Stream*     h  = (fn == 20) ? (Stream*)&Serial3 : (Stream*)&Serial4;
-              const char* pn = (fn == 20) ? "S3 (GPIO15)"     : "S4 (GPIO17)";
+              Stream*     h  = (fn == 20) ? s3 : s4;
+              const char* pn = (fn == 20) ? "S3" : "S4";
               Serial.printf("[HCR TEST] -> %s : SetEmotion(HAPPY,80) via hcrFormatCommand + raw frame\n", pn);
               // Send the SetEmotion(HAPPY,80) payload we'd normally dispatch
               // through hcrFormatCommand, plus a second raw line in case a
@@ -1912,40 +1940,41 @@ void setup() {
   // globals BEFORE opening any port (SBUS / Maestro / aux all read these pins).
   applyBoardProfile();
 
+  // Bind the aux command ports to their backing objects for THIS board — their
+  // type (hardware UART0 vs SoftwareSerial) is board-dependent (see the Stream*
+  // declarations above). Done before applySerialBauds() opens them.
+  if (sbusSharedUart) {            // shared SBUS frees UART0 → S3 = hardware UART0, S4 = SoftwareSerial
+    s3 = &Serial0; s3IsHw = true;
+    s4 = &swAux0;
+    // Only the NaviCore v2 PCB has a third aux port — 3.2 has no S5 (GPIO38/47 unwired,
+    // and its S5 pins are 0, so it must NOT be opened). Key S5 on the board, not the flag.
+    s5 = (rcConfig.boardType == BOARD_NAVICORE_V2) ? (Stream*)&swAux1 : nullptr;
+  } else {                         // dedicated SBUS-out on UART0 (fallback layout, not used by
+    s3 = &swAux0; s3IsHw = false;  //   either current board): S3/S4 SoftwareSerial, no hardware aux.
+    s4 = &swAux1;
+    s5 = nullptr;
+  }
+
   // SBUS IN (and, in shared mode, OUT) on Serial1/UART1 — brought up here, after
-  // applyBoardProfile(), so it uses the selected board's SBUS pins.
-#if SBUS_SHARED_UART
-  // SBUS IN + OUT share ONE full-duplex hardware UART (UART1 / Serial1):
-  //   RX = SBUS_RX_PIN, TX = SBUS_OUT_PIN, 100k 8E2 INVERTED.
-  // A UART is full-duplex and SBUS in/out are identical format, so the invert
-  // flag (which inverts BOTH directions) is exactly right. The byte-tee in
-  // SbusReader::read() writes each RX byte straight to TX; the 256-byte
-  // non-blocking TX buffer keeps that write from stalling the RX-drain loop —
-  // the SAME fix the dedicated path relies on, just on one peripheral. This
-  // frees UART0/Serial0 for the hardware S3 aux port (see the Serial3 alias).
-  Serial1.setTxBufferSize(256);                       // MUST precede begin()
-  sbusRx.begin(&Serial1, SBUS_RX_PIN, /*txPin=*/SBUS_OUT_PIN);
-  // SBUS OUT (the per-byte tee to this UART's TX) is turned on/off at runtime by
-  // applySbusOut() per rcConfig.sbusOutEnabled — called after the config loads.
-  Serial.printf("[SBUS] IN+OUT share Serial1/UART1 — RX GPIO%d / TX GPIO%d, 100k 8E2 inverted. UART0 freed for S3.\n",
-                SBUS_RX_PIN, SBUS_OUT_PIN);
-#else
-  // SBUS IN on Serial1 (UART1), RX-only (txPin=-1). SBUS OUT on a DEDICATED
-  // hardware UART (UART0 / Serial0), TX-only, 100k 8E2 INVERTED — UART0 is
-  // available because the debug console is on native USB CDC, not UART0.
-  //
-  // A 256-byte TX ring buffer (≈7 frames) keeps the byte-tee write in
-  // SbusReader::read() non-blocking: frames drain at 100k baud (~3-4 ms each)
-  // far faster than they arrive (~7-14 ms), so the buffer never fills.
-  // setTxBufferSize() MUST be called before begin().  (The original SBUS-out
-  // was a blocking SoftwareSerial bit-bang on GPIO9 — that is the failure mode
-  // that drove the move to a hardware UART.)
-  sbusRx.begin(&Serial1, SBUS_RX_PIN, /*txPin=*/-1);
-  // SBUS OUT (Serial0/UART0) is brought up on demand by applySbusOut() only when
-  // rcConfig.sbusOutEnabled — so UART0 stays free when OUT is off. Called after
-  // the config loads, and again on every SET_CONFIG so the toggle applies live.
-  Serial.printf("[SBUS] IN  on Serial1/UART1 RX (GPIO%d)\n", SBUS_RX_PIN);
-#endif
+  // applyBoardProfile(), so it uses the selected board's SBUS pins + layout.
+  if (sbusSharedUart) {
+    // v2: SBUS IN + OUT share ONE full-duplex hardware UART (UART1 / Serial1):
+    //   RX = SBUS_RX_PIN, TX = SBUS_OUT_PIN, 100k 8E2 INVERTED. The byte-tee in
+    // SbusReader::read() writes each RX byte straight to TX; the 256-byte
+    // non-blocking TX buffer keeps that write from stalling the RX-drain loop.
+    // This is why UART0 is free here — it's the hardware S3 aux, not SBUS-out.
+    Serial1.setTxBufferSize(256);                       // MUST precede begin()
+    sbusRx.begin(&Serial1, SBUS_RX_PIN, /*txPin=*/SBUS_OUT_PIN);
+    Serial.printf("[SBUS] IN+OUT share Serial1/UART1 — RX GPIO%d / TX GPIO%d, 100k 8E2 inverted. UART0 = hardware S3.\n",
+                  SBUS_RX_PIN, SBUS_OUT_PIN);
+  } else {
+    // 3.2: SBUS IN on Serial1 (UART1), RX-only (txPin=-1). SBUS OUT is a DEDICATED
+    // hardware UART (UART0 / Serial0), TX-only, brought up on demand by
+    // applySbusOut() per rcConfig.sbusOutEnabled — so UART0 stays free when OUT is
+    // off. UART0 is available because the debug console is on native USB CDC.
+    sbusRx.begin(&Serial1, SBUS_RX_PIN, /*txPin=*/-1);
+    Serial.printf("[SBUS] IN  on Serial1/UART1 RX (GPIO%d)\n", SBUS_RX_PIN);
+  }
 
   // Open Serial2 (local Maestro) + Serial3/4 (aux SWSerial) at their
   // configured baud. Single source of truth: rcConfig (maestroBaud /

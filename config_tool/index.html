@@ -2204,7 +2204,7 @@
         <img src="../Images/r2logo.png" alt="R2 logo"
              style="width:72px;height:72px;object-fit:contain;opacity:0.9">
         <div style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.3px">
-          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">260957QJUN26</span>
+          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">261011QJUN26</span>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap">
@@ -2275,15 +2275,15 @@
     </div>
     <div class="cfg-body">
       <nav class="cfg-tabs" id="cfg-tabs">
-        <button class="cfg-tab active" type="button" data-tab="channels">Channels</button>
+        <button class="cfg-tab active" type="button" data-tab="general">General</button>
+        <button class="cfg-tab"        type="button" data-tab="channels">Channels</button>
         <button class="cfg-tab"        type="button" data-tab="logical">Logical Buttons</button>
         <button class="cfg-tab"        type="button" data-tab="transmitter">Transmitter</button>
         <button class="cfg-tab"        type="button" data-tab="wcb">WCB Network</button>
         <button class="cfg-tab"        type="button" data-tab="hcr">HCR</button>
         <button class="cfg-tab"        type="button" data-tab="mp3">MP3 Trigger</button>
         <button class="cfg-tab"        type="button" data-tab="maestro">Maestro</button>
-        <button class="cfg-tab"        type="button" data-tab="serial">Aux Serial</button>
-        <button class="cfg-tab"        type="button" data-tab="general">General</button>
+        <button class="cfg-tab"        type="button" data-tab="serial">Baud Rates</button>
         <button class="cfg-tab"        type="button" data-tab="firmware">Firmware</button>
       </nav>
       <div class="cfg-content">
@@ -2562,7 +2562,7 @@
              Aux Serial tab — S2 (Maestro) + S3/S4 baud rates.
              ════════════════════════════════════════════════════════════ -->
         <section class="cfg-pane" id="cfg-pane-serial">
-          <h2 class="cfg-pane-title">Aux Serial Baud</h2>
+          <h2 class="cfg-pane-title">Baud Rates</h2>
           <div class="sb-section">
             <div class="wcb-send-row">
               <label>Maestro (S2):</label>
@@ -2572,21 +2572,21 @@
                      oninput="config.auxBaud.maestro = Math.max(1200, Math.min(115200, parseInt(this.value,10)||115200))">
             </div>
             <div class="wcb-send-row">
-              <label>S3 baud:</label>
+              <label id="lbl-baud-s3">S3 baud:</label>
               <input type="number" id="aux-baud-s3" min="1200" max="115200" step="100" value="9600"
                      style="width:80px;font-size:12px"
                      title="S3 line rate. S3 is the hardware UART0 (both boards), so it can exceed 57600 (up to 115200). 9600 for HCR; 38400 for an MP3 Trigger v2."
                      oninput="config.auxBaud.S3 = Math.max(1200, Math.min(115200, parseInt(this.value,10)||9600))">
             </div>
             <div class="wcb-send-row">
-              <label>S4 baud:</label>
+              <label id="lbl-baud-s4">S4 baud:</label>
               <input type="number" id="aux-baud-s4" min="1200" max="57600" step="100" value="9600"
                      style="width:80px;font-size:12px"
                      title="S4 line rate. 9600 for HCR; 38400 for an MP3 Trigger v2. Keep ≤57600 (bit-banged SoftwareSerial)."
                      oninput="config.auxBaud.S4 = Math.max(1200, Math.min(57600, parseInt(this.value,10)||9600))">
             </div>
-            <div class="wcb-send-row">
-              <label>S5 baud:</label>
+            <div class="wcb-send-row" id="row-baud-s5">
+              <label id="lbl-baud-s5">S5 baud:</label>
               <input type="number" id="aux-baud-s5" min="1200" max="57600" step="100" value="9600"
                      style="width:80px;font-size:12px"
                      title="S5 line rate — NaviCore v2 'Serial 3' (GPIO38/47 SoftwareSerial). 9600 for HCR; 38400 for an MP3 Trigger v2. Keep ≤57600. Unused on WCB 3.2."
@@ -2603,7 +2603,7 @@
           <h2 class="cfg-pane-title">General</h2>
           <div class="sb-section">
             <h3>Board / PCB</h3>
-            <select id="board-select" onchange="config.boardType = +this.value"
+            <select id="board-select" onchange="config.boardType = +this.value; applyBaudRateLabels()"
                     style="font-size:13px;padding:4px 8px">
               <option value="0">NaviCore v2 PCB</option>
               <option value="1">WCB HW 3.2</option>
@@ -4603,6 +4603,20 @@ function applyAuxBaudUI() {
   if (s4) s4.value = a.S4;
   if (s5) s5.value = a.S5;
   if (ms) ms.value = a.maestro;
+  applyBaudRateLabels();
+}
+
+// Board-aware labels for the Baud Rates pane: NaviCore v2 (boardType 0) shows
+// "Serial 1/2/3" with S5 visible; WCB 3.2 (boardType 1) shows "S3/S4" and hides
+// the S5 row (the WCB has no third aux port).
+function applyBaudRateLabels() {
+  const v2 = (config.boardType | 0) === 0;
+  const set = (id, t) => { const e = document.getElementById(id); if (e) e.textContent = t; };
+  set('lbl-baud-s3', v2 ? 'Serial 1 baud:' : 'S3 baud:');
+  set('lbl-baud-s4', v2 ? 'Serial 2 baud:' : 'S4 baud:');
+  set('lbl-baud-s5', v2 ? 'Serial 3 baud:' : 'S5 baud:');
+  const row5 = document.getElementById('row-baud-s5');
+  if (row5) row5.style.display = v2 ? '' : 'none';
 }
 
 // ── MP3 Destination sidebar ────────────────────────────────────────────────
@@ -6906,7 +6920,7 @@ function openHwSetup() {
   renderSwitchesTable();
   renderAxesTable();
   // Restore the last-active tab (or default to Channels).
-  const lastTab = localStorage.getItem('rcConfigLastTab') || 'channels';
+  const lastTab = localStorage.getItem('rcConfigLastTab') || 'general';
   setConfigTab(lastTab);
   document.getElementById('hwsetup-modal').classList.add('open');
 }
@@ -6961,6 +6975,7 @@ function setConfigTab(name) {
   panes.forEach(p => p.classList.toggle('active', p.id === 'cfg-pane-' + name));
   if (name === 'logical') renderLogicalButtons();   // (re)populate rows when opened
   if (name === 'firmware') checkFirmwareLatest();    // fetch + compare latest GitHub version (cached)
+  if (name === 'serial')  applyBaudRateLabels();     // board-aware S3/S4/S5 ↔ Serial 1/2/3 labels + hide S5 on 3.2
   if (!found) setConfigTab('channels');   // fallback if stored name is stale
   else try { localStorage.setItem('rcConfigLastTab', name); } catch {}
 }

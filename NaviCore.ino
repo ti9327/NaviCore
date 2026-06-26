@@ -67,11 +67,11 @@
 //  (STATUS_LED_PIN stays a constant — GPIO48 onboard NeoPixel on both boards.)
 //
 //    Board 0 = NaviCore v2 PCB (default)      Board 1 = WCB HW 3.2
-//      SBUS in 4  / SBUS out 5                   SBUS in 5  / SBUS out 9
+//      SBUS in 4  / SBUS out 5                   SBUS in 5  / SBUS out 4
 //      Maestro TX6 / RX7                         Maestro TX6 / RX7
-//      S3 (v2 "Serial 1") TX8  / RX9             S3 TX15 / RX16
-//      S4 (v2 "Serial 2") TX10 / RX21            S4 TX17 / RX18
-//  (NaviCore v2's third aux serial — "Serial 3", GPIO38/47 — is a follow-up.)
+//      S3 (v2 "Serial 1") TX8  / RX9             S3 TX15 / RX16  (WCB "Serial 3")
+//      S4 (v2 "Serial 2") TX10 / RX21            S4 TX17 / RX18  (WCB "Serial 4")
+//      S5 (v2 "Serial 3") TX38 / RX47            S5 TX9  / RX10  (WCB "Serial 5")
 // =============================================================================
 enum BoardType : uint8_t { BOARD_NAVICORE_V2 = 0, BOARD_WCB_HW_32 = 1 };
 
@@ -83,7 +83,7 @@ uint8_t S3_TX_PIN      = 8;   // Aux serial S3 TX (v2 "Serial 1")
 uint8_t S3_RX_PIN      = 9;   // Aux serial S3 RX
 uint8_t S4_TX_PIN      = 10;  // Aux serial S4 TX (v2 "Serial 2")
 uint8_t S4_RX_PIN      = 21;  // Aux serial S4 RX
-uint8_t S5_TX_PIN      = 38;  // Aux serial S5 TX (v2 "Serial 3") — NaviCore v2 only
+uint8_t S5_TX_PIN      = 38;  // Aux serial S5 TX (v2 "Serial 3"; WCB 3.2 "Serial 5" GPIO9/10)
 uint8_t S5_RX_PIN      = 47;  // Aux serial S5 RX
 
 // SBUS layout is RUNTIME via the `sbusSharedUart` flag (set by applyBoardProfile();
@@ -163,7 +163,7 @@ SoftwareSerial swAux0;      // backing SoftwareSerial A
 SoftwareSerial swAux1;      // backing SoftwareSerial B
 Stream* s3 = nullptr;       // aux "S3"  (v2 "Serial 1")
 Stream* s4 = nullptr;       // aux "S4"  (v2 "Serial 2")
-Stream* s5 = nullptr;       // aux "S5"  (v2 "Serial 3"; v2 only — nullptr on 3.2)
+Stream* s5 = nullptr;       // aux "S5"  (v2 "Serial 3" GPIO38/47; WCB 3.2 "Serial 5" GPIO9/10)
 bool    s3IsHw = false;     // true when s3 points at the hardware UART0 (Serial0)
 
 // Open/close an aux port, dispatching on hardware-UART vs bit-banged SoftwareSerial.
@@ -197,7 +197,7 @@ static inline void auxEnd(Stream* p, bool isHw) {
 //  Eliminating the dependency keeps CI builds clean and removes a third-party
 //  library from the install chain.
 //
-//  S5 is reserved for SBUS OUT — not a valid HCR destination.
+//  S3/S4/S5 are all valid local HCR destinations (S5 = v2 "Serial 3" / WCB 3.2 "Serial 5").
 // =============================================================================
 
 // =============================================================================
@@ -497,7 +497,7 @@ static void executeMaestroCmd(uint8_t id, const char* cmd) {
 }
 
 // =============================================================================
-//  Serial port write helpers (S3, S4 only — S5 is now SBUS OUT)
+//  Serial port write helpers (S3, S4, S5 aux ports)
 // =============================================================================
 // Write the payload + a trailing CR in as few SoftwareSerial calls as
 // possible.  The old form `for (char c : (s + '\r'))` allocated a fresh
@@ -723,13 +723,13 @@ static void executeHcrAction(const RcAction& a) {
   // We format the same byte string the HCRVocalizer library would have
   // written and push it directly to the bound aux-serial port.  No library
   // dependency required — see hcrFormatCommand() for the formatter that
-  // mirrors HCRVocalizer's protocol.  S5 is reserved for SBUS OUT and is
-  // not a valid HCR destination; legacy configs pointing at S5 fall through
-  // to the "unknown port" log below.
+  // mirrors HCRVocalizer's protocol.  S3/S4/S5 are all valid local HCR
+  // destinations; an unbound/unknown port falls through to the "unknown
+  // port" log below.
   Stream* hcrSerial = nullptr;
   if      (!strcmp(dest.target, "S3")) hcrSerial = s3;
   else if (!strcmp(dest.target, "S4")) hcrSerial = s4;
-  else if (!strcmp(dest.target, "S5")) hcrSerial = s5;   // v2 only (nullptr on 3.2)
+  else if (!strcmp(dest.target, "S5")) hcrSerial = s5;   // both boards (v2 GPIO38/47, WCB 3.2 GPIO9/10)
   if (!hcrSerial) {
     dlog(DBG_HCR, "[DISPATCH] HCR: unknown serial port '%s' — skipped\n", dest.target);
     return;
@@ -823,7 +823,7 @@ static void executeMp3Action(const RcAction& a) {
     Stream* p = nullptr;
     if      (!strcmp(dest.target, "S3")) p = s3;
     else if (!strcmp(dest.target, "S4")) p = s4;
-    else if (!strcmp(dest.target, "S5")) p = s5;   // v2 only (nullptr on 3.2)
+    else if (!strcmp(dest.target, "S5")) p = s5;   // both boards (v2 GPIO38/47, WCB 3.2 GPIO9/10)
     if (!p) {
       dlog(DBG_MP3, "[DISPATCH] MP3-local: unknown serial port '%s' — skipped\n", dest.target);
       return;
@@ -919,7 +919,7 @@ static void rcExecuteActionNow(const RcAction& a) {
       dlog(DBG_SERIAL, "[DISPATCH] Serial %s  %s\n", a.target, a.cmd);
       if      (!strcmp(a.target, "S3")) writeS3(s);
       else if (!strcmp(a.target, "S4")) writeS4(s);
-      else if (!strcmp(a.target, "S5")) writeS5(s);   // v2's "Serial 3"; no-op on 3.2 (s5 == nullptr)
+      else if (!strcmp(a.target, "S5")) writeS5(s);   // both boards (v2 "Serial 3", WCB 3.2 "Serial 5")
       break;
     }
     case RA_HCR:
@@ -1361,12 +1361,12 @@ bool sbusSharedUart = false;
 
 static void applyBoardProfile() {
   if (rcConfig.boardType == BOARD_WCB_HW_32) {
-    sbusSharedUart = true;                    // shared SBUS on UART1 (in GPIO5 / out GPIO9); UART0 freed → hardware S3
-    SBUS_RX_PIN = 5;   SBUS_OUT_PIN = 9;
+    sbusSharedUart = true;                    // shared SBUS on UART1 (in GPIO5 / out GPIO4, both on the WCB Serial1 header); UART0 freed → hardware S3
+    SBUS_RX_PIN = 5;   SBUS_OUT_PIN = 4;      // SBUS OUT moved 9→4 (Serial1 TX) to free the Serial5 header for S5
     MAESTRO_TX_PIN = 6; MAESTRO_RX_PIN = 7;
     S3_TX_PIN = 15;    S3_RX_PIN = 16;
     S4_TX_PIN = 17;    S4_RX_PIN = 18;
-    S5_TX_PIN = 0;     S5_RX_PIN = 0;         // no third aux port on 3.2
+    S5_TX_PIN = 9;     S5_RX_PIN = 10;        // WCB "Serial 5" header (freed by moving SBUS OUT to GPIO4)
     Serial.println("[BOARD] WCB HW 3.2 pin profile");
   } else {                                   // BOARD_NAVICORE_V2 (default)
     sbusSharedUart = true;                    // shared SBUS on UART1; S3 = hardware UART0
@@ -1413,7 +1413,8 @@ static void applySerialBauds(bool initial) {
     Serial.printf("[AUX] S4 %s @ %lu baud\n",
                   initial ? "open" : "re-open", (unsigned long)rcConfig.auxBaud[1]);
   }
-  // S5 — NaviCore v2 only (s5 == nullptr on WCB 3.2, so this block is skipped there).
+  // S5 — both boards (v2 GPIO38/47, WCB 3.2 GPIO9/10). s5 is nullptr only in the unused
+  // dedicated-SBUS fallback, so the guard still applies.
   if (s5 && (initial || rcConfig.auxBaud[2] != appliedAuxBaud[2])) {
     if (!initial) auxEnd(s5, false);
     auxBegin(s5, false, rcConfig.auxBaud[2], S5_RX_PIN, S5_TX_PIN);
@@ -1946,9 +1947,10 @@ void setup() {
   if (sbusSharedUart) {            // shared SBUS frees UART0 → S3 = hardware UART0, S4 = SoftwareSerial
     s3 = &Serial0; s3IsHw = true;
     s4 = &swAux0;
-    // Only the NaviCore v2 PCB has a third aux port — 3.2 has no S5 (GPIO38/47 unwired,
-    // and its S5 pins are 0, so it must NOT be opened). Key S5 on the board, not the flag.
-    s5 = (rcConfig.boardType == BOARD_NAVICORE_V2) ? (Stream*)&swAux1 : nullptr;
+    // Both boards now expose a third aux port (S5): NaviCore v2 on GPIO38/47, WCB 3.2 on
+    // the freed Serial5 header GPIO9/10. swAux1 is the spare SoftwareSerial (s3 is hardware
+    // UART0 in shared mode), so it backs S5 on both.
+    s5 = &swAux1;
   } else {                         // dedicated SBUS-out on UART0 (fallback layout, not used by
     s3 = &swAux0; s3IsHw = false;  //   either current board): S3/S4 SoftwareSerial, no hardware aux.
     s4 = &swAux1;

@@ -2206,7 +2206,7 @@
         <img src="../Images/r2logo.png" alt="R2 logo"
              style="width:72px;height:72px;object-fit:contain;opacity:0.9">
         <div style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.3px">
-          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">261026QJUN26</span>
+          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">261056QJUN26</span>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap">
@@ -2591,10 +2591,10 @@
               <label id="lbl-baud-s5">S5 baud:</label>
               <input type="number" id="aux-baud-s5" min="1200" max="57600" step="100" value="9600"
                      style="width:80px;font-size:12px"
-                     title="S5 line rate — NaviCore v2 'Serial 3' (GPIO38/47 SoftwareSerial). 9600 for HCR; 38400 for an MP3 Trigger v2. Keep ≤57600. Unused on WCB 3.2."
+                     title="S5 line rate — NaviCore v2 'Serial 3' (GPIO38/47) or WCB 3.2 'Serial 5' (GPIO9/10), bit-banged SoftwareSerial. 9600 for HCR; 38400 for an MP3 Trigger v2. Keep ≤57600."
                      oninput="config.auxBaud.S5 = Math.max(1200, Math.min(57600, parseInt(this.value,10)||9600))">
             </div>
-            <div class="noconn" style="margin-top:4px"><b>Maestro (S2)</b> = local Pololu Maestro bus (up to 115200). <b>S3</b> runs on the hardware UART0 (both boards) so it can exceed 57600 (up to 115200); <b>S4/S5</b> are bit-banged SoftwareSerial (≤57600). All are aux ports for HCR-local / MP3-local / Serial actions (one port = one device = one baud). On <b>NaviCore v2</b> they're the silkscreen <b>Serial 1/2/3</b>; <b>WCB 3.2</b> has only S3/S4. Reboot (or re-save) for changes to take effect.</div>
+            <div class="noconn" style="margin-top:4px"><b>Maestro (S2)</b> = local Pololu Maestro bus (up to 115200). <b>S3</b> runs on the hardware UART0 (both boards) so it can exceed 57600 (up to 115200); <b>S4/S5</b> are bit-banged SoftwareSerial (≤57600). All are aux ports for HCR-local / MP3-local / Serial actions (one port = one device = one baud). On <b>NaviCore v2</b> they're the silkscreen <b>Serial 1/2/3</b>; on <b>WCB 3.2</b> they map to its <b>Serial 3/4/5</b> headers. Reboot (or re-save) for changes to take effect.</div>
           </div>
         </section>
 
@@ -3201,7 +3201,7 @@ const actionTypeLabels = {
 const serialPorts = [
   { v: 'S3', n: 'S3 — Aux serial 3' },
   { v: 'S4', n: 'S4 — Aux serial 4' },
-  { v: 'S5', n: 'S5 — Aux serial 5 (NaviCore v2 only)' },
+  { v: 'S5', n: 'S5 — Aux serial 5' },
 ];
 
 // HCR lookup tables (mirrors BC config tool — same fn numbers + chan
@@ -4609,8 +4609,8 @@ function applyAuxBaudUI() {
 }
 
 // Board-aware labels for the Baud Rates pane: NaviCore v2 (boardType 0) shows
-// "Serial 1/2/3" with S5 visible; WCB 3.2 (boardType 1) shows "S3/S4" and hides
-// the S5 row (the WCB has no third aux port).
+// "Serial 1/2/3"; WCB 3.2 (boardType 1) shows "S3/S4/S5". Both boards now have a
+// third aux port, so the S5 row is always visible.
 function applyBaudRateLabels() {
   const v2 = (config.boardType | 0) === 0;
   const set = (id, t) => { const e = document.getElementById(id); if (e) e.textContent = t; };
@@ -4618,7 +4618,7 @@ function applyBaudRateLabels() {
   set('lbl-baud-s4', v2 ? 'Serial 2 baud:' : 'S4 baud:');
   set('lbl-baud-s5', v2 ? 'Serial 3 baud:' : 'S5 baud:');
   const row5 = document.getElementById('row-baud-s5');
-  if (row5) row5.style.display = v2 ? '' : 'none';
+  if (row5) row5.style.display = '';   // both boards have S5 now
 }
 
 // ── MP3 Destination sidebar ────────────────────────────────────────────────

@@ -64,11 +64,13 @@
   body { background-color: var(--bg); color: var(--text); font-family: var(--font-ui); font-size: 14px; min-height: 100vh; }
   h1, h2, h3, .cfg-pane-title, .modal-title { font-family: var(--font-display); }
 
-  /* ── Themed scrollbars ── */
-  * { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
-  ::-webkit-scrollbar { width: 10px; height: 10px; }
-  ::-webkit-scrollbar-track { background: var(--hover-2); border-radius: 6px; }
-  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 6px; border: 2px solid var(--bg); }
+  /* ── Themed scrollbars ── thumb uses --muted (a clearly visible mid-gray) rather
+     than --border, which is nearly the same color as the background and vanishes;
+     the track is a defined channel so the scrollbar reads as scrollable. */
+  * { scrollbar-width: thin; scrollbar-color: var(--muted) var(--border); }
+  ::-webkit-scrollbar { width: 13px; height: 13px; }
+  ::-webkit-scrollbar-track { background: var(--border); border-radius: 6px; }
+  ::-webkit-scrollbar-thumb { background: var(--muted); border-radius: 6px; border: 2px solid var(--bg); }
   ::-webkit-scrollbar-thumb:hover { background: var(--accent2); }
   ::-webkit-scrollbar-thumb:active { background: var(--accent); }
   ::-webkit-scrollbar-corner { background: var(--bg); }
@@ -2204,7 +2206,7 @@
         <img src="../Images/r2logo.png" alt="R2 logo"
              style="width:72px;height:72px;object-fit:contain;opacity:0.9">
         <div style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.3px">
-          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">261011QJUN26</span>
+          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">261026QJUN26</span>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap">

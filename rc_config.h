@@ -6,9 +6,9 @@
 //  Key changes vs. BC version:
 //    • Action types: RA_ESPNOW/RA_HCR/RA_ANIM → RA_WCB_UNICAST/RA_WCB_BROADCAST/
 //                   RA_MAESTRO_LOCAL/RA_MAESTRO_REMOTE
-//    • RA_SERIAL ports: S3/S4 (Serial3-4 SoftwareSerial on WCB HW 3.2 —
-//      Serial5 is now reserved for SBUS OUT passthrough)
-//    • Knob functions: removed HCR volume; added KF_MAESTRO_LOCAL
+//    • RA_SERIAL ports: S3/S4/S5 (S3 = hardware UART0, S4/S5 SoftwareSerial;
+//      SBUS OUT now shares UART1, freeing the S5 header on both boards)
+//    • Knob functions: KF_NONE / KF_MAESTRO_PASSTHROUGH / KF_HCR_VOLUME
 //    • Default mappings: empty (all actions user-configured via GUI)
 //    • Same NVS namespace "rcfg" and same JSON shape for GET_CONFIG/SET_CONFIG
 // ─────────────────────────────────────────────────────────────────────────────
@@ -29,8 +29,7 @@ enum RcActionType : uint8_t {
                                //   or "goHome" / "stopScript" / "restartScript,n"
   RA_MAESTRO_REMOTE    = 4,   // remote Maestro via WCBStream — target[] = "1"-"4",
                                //   cmd = same format as RA_MAESTRO_LOCAL
-  RA_SERIAL            = 5,   // write cmd to S3/S4 (target[] = port label).
-                               // S5 is reserved for SBUS OUT — not selectable.
+  RA_SERIAL            = 5,   // write cmd to S3/S4/S5 (target[] = port label).
   RA_HCR               = 6,   // Human-Cyborg Relations vocalizer command —
                                //   fn/chan/track describe the HCR call.
                                //   Destination (serial port OR WCB ID+port) is
@@ -55,10 +54,6 @@ enum RcMp3Fn : uint8_t {
   MP3_VOLUP  = 7,   // ;A,VOLUP
   MP3_VOLDN  = 8,   // ;A,VOLDN
 };
-
-// Serial port labels for RA_SERIAL dispatch.
-// Keep in sync with rcExecuteAction() in the .ino.
-#define RA_SERIAL_PORTS_LIST   "S3,S4"
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  RcAction — a single atomic action fired by a button press or switch change
@@ -391,10 +386,11 @@ struct RcConfig {
   RcMaestroSlot  maestros[RC_NUM_MAESTROS];  // ID 1-8 → maestros[0..7]
   RcWcbNetwork   wcbNetwork;
   RcMp3Dest      mp3Dest;
-  // Aux SoftwareSerial port baud — [0]=S3, [1]=S4. One source of truth for
-  // the port line rate; HCR / MP3-local / Serial actions all just use the
-  // port at this baud (the firmware opens S3/S4 with these in setup()).
-  uint32_t       auxBaud[3];   // [0]=S3, [1]=S4, [2]=S5 (S5 = NaviCore v2 "Serial 3"; unused on 3.2)
+  // Aux serial port baud — [0]=S3 (hardware UART0), [1]=S4, [2]=S5 (S4/S5
+  // SoftwareSerial). One source of truth for the port line rate; HCR / MP3-local /
+  // Serial actions all just use the port at this baud (the firmware opens S3/S4/S5
+  // with these in setup()).
+  uint32_t       auxBaud[3];   // [0]=S3, [1]=S4, [2]=S5 — all used on both boards (S5: v2 GPIO38/47, WCB 3.2 GPIO9/10)
   // Local Maestro bus baud (Serial2 hardware UART). Must match each wired
   // Maestro's Serial Settings (or its "Detect baud" mode). Remote/Kyber
   // Maestros are unaffected — that path is binary over ESP-NOW.

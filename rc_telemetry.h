@@ -379,7 +379,7 @@ inline bool _hasWcbSubscriber(uint32_t now) {
 // ── Deferred SET_CONFIG queue (callback → main loop) ────────────────────────
 // rcTelemetry::handle() runs in the WCB_Client receive-callback chain, which
 // fires from the ESP-NOW WiFi-task context on Core 0.  rcConfigFromJSON()
-// can be a multi-KB JSON parse and rcConfigSaveNVS() blocks 100+ ms doing
+// can be a multi-KB JSON parse and rcConfigSaveLFS() blocks 100+ ms doing
 // a flash erase + write — running either inline blocks the WiFi task and
 // trips Core 0's interrupt watchdog ("Guru Meditation Error: Core 0
 // panic'ed (Interrupt wdt timeout on CPU0)").
@@ -425,7 +425,7 @@ inline uint8_t _pendingReassembledSender = 0;
 // Uses a DynamicJsonDocument sized to 2× the input length — enough for the
 // expected SET_CONFIG / CONFIG envelopes without the StaticJsonDocument<512>
 // truncation that breaks the inline-recursion path.  Safe to call
-// rcConfigFromJSON + rcConfigSaveNVS here — flash I/O blocks the main task
+// rcConfigFromJSON + rcConfigSaveLFS here — flash I/O blocks the main task
 // but the WiFi/ESP-NOW task on Core 0 stays unblocked.
 inline void _applyReassembled(uint8_t senderID, const String& json) {
   // 2x heuristic: ArduinoJson docs need roughly the input size plus overhead
@@ -702,7 +702,10 @@ inline size_t buildWcbStatus(char* buf, size_t n, uint8_t relayId, bool includeA
     if (len < n) len += snprintf(buf + len, n - len, "]");
   }
   if (len < n) len += snprintf(buf + len, n - len, "}");
-  return (len < n) ? len : (n - 1);
+  // Return the would-be length (snprintf semantics): a value >= n means the JSON
+  // was truncated. The per-statement `len < n` guards above prevent any overrun,
+  // so this is used only by the caller to detect overflow (test: l >= bufsize).
+  return len;
 }
 
 inline bool handle(uint8_t senderID, const char* command) {
@@ -779,7 +782,7 @@ inline bool handle(uint8_t senderID, const char* command) {
       // ── DEFER to main loop ────────────────────────────────────────────
       // Do NOT recurse into handle() here.  We're in the WCB_Client
       // receive-callback chain (WiFi-task context on Core 0); doing the
-      // 1–4 KB JSON parse + rcConfigFromJSON + rcConfigSaveNVS inline
+      // 1–4 KB JSON parse + rcConfigFromJSON + rcConfigSaveLFS inline
       // blocks the WiFi task long enough to trip Core 0's interrupt
       // watchdog.  Stash the payload; tick() picks it up from loop()
       // where blocking flash I/O is safe.  If a second large message
@@ -837,7 +840,18 @@ inline bool handle(uint8_t senderID, const char* command) {
   if (!strcmp(type, "wcb_alias")) {
     int id = doc["id"] | 0;
     const char* a = doc["alias"] | "";
-    if (id >= 1 && id <= 20) strlcpy(_wcbAlias[id], a, sizeof(_wcbAlias[id]));
+    if (id >= 1 && id <= 20) {
+      // Sanitize: drop characters that would break the JSON we emit UNescaped in
+      // buildWcbStatus() and the USB status line (double-quote, backslash, controls).
+      char*  dst = _wcbAlias[id];
+      size_t cap = sizeof(_wcbAlias[id]) - 1, j = 0;
+      for (size_t k = 0; a[k] && j < cap; k++) {
+        char c = a[k];
+        if (c == '"' || c == '\\' || (unsigned char)c < 0x20) continue;
+        dst[j++] = c;
+      }
+      dst[j] = '\0';
+    }
     return true;
   }
 
@@ -902,7 +916,7 @@ inline bool handle(uint8_t senderID, const char* command) {
   }
 
   // ── SET_CONFIG ────────────────────────────────────────────────────────────
-  // Always defer to main loop — rcConfigFromJSON + rcConfigSaveNVS block
+  // Always defer to main loop — rcConfigFromJSON + rcConfigSaveLFS block
   // 100+ ms on flash I/O and we're in the WCB_Client receive-callback
   // chain (WiFi-task on Core 0).  Stash the WHOLE message (caller's JSON
   // string, not our 512-byte truncated parse) so tick() can re-parse with
@@ -937,7 +951,7 @@ inline bool handle(uint8_t senderID, const char* command) {
   if (!strcmp(type, "GET_WCB_STATUS")) {
     char wbuf[200];
     size_t l = buildWcbStatus(wbuf, sizeof(wbuf), senderID, true);
-    if (l >= sizeof(wbuf) - 1)                       // names overflowed one packet
+    if (l >= sizeof(wbuf))                           // names overflowed one packet (would-be len >= buf size)
       buildWcbStatus(wbuf, sizeof(wbuf), senderID, false);
     if (wcb) wcb->send(senderID, wbuf);
     return true;

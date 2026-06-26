@@ -2206,7 +2206,7 @@
         <img src="../Images/r2logo.png" alt="R2 logo"
              style="width:72px;height:72px;object-fit:contain;opacity:0.9">
         <div style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.3px">
-          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">261056QJUN26</span>
+          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">261451QJUN26</span>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap">
@@ -2561,7 +2561,7 @@
         </section>
 
         <!-- ════════════════════════════════════════════════════════════
-             Aux Serial tab — S2 (Maestro) + S3/S4 baud rates.
+             Baud Rates tab — S2 (Maestro) + S3/S4/S5 baud rates.
              ════════════════════════════════════════════════════════════ -->
         <section class="cfg-pane" id="cfg-pane-serial">
           <h2 class="cfg-pane-title">Baud Rates</h2>
@@ -4589,8 +4589,8 @@ function applyHcrDestUI() {
 }
 
 // ── Serial port baud panel ─────────────────────────────────────────────────
-// Single source of truth for S3/S4 (bit-banged SoftwareSerial, clamp ≤57600)
-// and the local Maestro bus on Serial2 (hardware UART, allows up to 115200).
+// Single source of truth for S3 (hardware UART0, up to 115200), S4/S5 (bit-banged
+// SoftwareSerial, clamp ≤57600), and the local Maestro bus on Serial2 (up to 115200).
 function applyAuxBaudUI() {
   const a = config.auxBaud || (config.auxBaud = { S3: 9600, S4: 9600, S5: 9600, maestro: 115200 });
   a.S3 = Math.max(1200, Math.min(115200, parseInt(a.S3, 10) || 9600));   // S3 = hardware UART0 (both boards)
@@ -6977,7 +6977,7 @@ function setConfigTab(name) {
   panes.forEach(p => p.classList.toggle('active', p.id === 'cfg-pane-' + name));
   if (name === 'logical') renderLogicalButtons();   // (re)populate rows when opened
   if (name === 'firmware') checkFirmwareLatest();    // fetch + compare latest GitHub version (cached)
-  if (name === 'serial')  applyBaudRateLabels();     // board-aware S3/S4/S5 ↔ Serial 1/2/3 labels + hide S5 on 3.2
+  if (name === 'serial')  applyBaudRateLabels();     // board-aware S3/S4/S5 ↔ Serial 1/2/3 labels
   if (!found) setConfigTab('channels');   // fallback if stored name is stale
   else try { localStorage.setItem('rcConfigLastTab', name); } catch {}
 }
@@ -7865,6 +7865,7 @@ function exportConfigCsv() {
   if (config.funcBindings && config.funcBindings.mode !== undefined) {
     rows.push(csvRow(pad(['config','funcBinding_mode','','' + config.funcBindings.mode])));
   }
+  rows.push(csvRow(pad(['config','boardType','','' + (config.boardType | 0)])));   // 0 = NaviCore v2, 1 = WCB 3.2
 
   // WCB Network credentials — one row per field. MAC octets are exported as
   // uppercase 2-digit hex strings; the import parser uses parseInt(_, 16) to
@@ -7905,10 +7906,11 @@ function exportConfigCsv() {
     }
   }
 
-  // Serial port baud (S3/S4 + local Maestro bus) — single source of truth.
+  // Serial port baud (S3/S4/S5 + local Maestro bus) — single source of truth.
   if (config.auxBaud) {
     rows.push(csvRow(pad(['config','auxBaudS3','','' + (config.auxBaud.S3 || 9600)])));
     rows.push(csvRow(pad(['config','auxBaudS4','','' + (config.auxBaud.S4 || 9600)])));
+    rows.push(csvRow(pad(['config','auxBaudS5','','' + (config.auxBaud.S5 || 9600)])));
     rows.push(csvRow(pad(['config','maestroBaud','','' + (config.auxBaud.maestro || 115200)])));
   }
 
@@ -8074,7 +8076,8 @@ function handleConfigImportFile(event) {
         const row = rows[r];
         if (!row.some(cell => cell !== undefined && String(cell).trim() !== '')) continue;
         const type = cellStr(row, indexes.type).toLowerCase();
-        const control = cellStr(row, indexes.control);
+        const control = cellStr(row, indexes.control).toLowerCase();   // config/hcrDest controls compare lowercase; export writes camelCase
+        const controlName = cellStr(row, indexes.control);             // original case — button/switch/knob names below
         const buttonId = cellNum(row, indexes.buttonId);
         const channel = cellNum(row, indexes.channel);
         const positions = cellNum(row, indexes.positions);
@@ -8110,6 +8113,8 @@ function handleConfigImportFile(event) {
           } else if (control === 'funcbinding_mode') {
             imported.funcBindings = imported.funcBindings || {};
             imported.funcBindings.mode = Number(value || channel || imported.funcBindings.mode || 0);
+          } else if (control === 'boardtype') {
+            imported.boardType = Math.max(0, Math.min(1, parseInt(value || channel, 10) || 0));
           } else if (control === 'wcbmacoct2' || control === 'wcbmacoct3' ||
                      control === 'wcbpassword' || control === 'wcbquantity' ||
                      control === 'wcbdeviceid') {
@@ -8139,13 +8144,15 @@ function handleConfigImportFile(event) {
             } else if (control === 'mp3port') {
               imported.mp3Dest.port = (String(raw).toUpperCase() === 'S4') ? 'S4' : 'S3';
             }
-          } else if (control === 'auxbauds3' || control === 'auxbauds4') {
-            imported.auxBaud = imported.auxBaud || { S3: 9600, S4: 9600, maestro: 115200 };
-            const b = Math.max(1200, Math.min(57600, parseInt(value || channel, 10) || 9600));
-            if (control === 'auxbauds3') imported.auxBaud.S3 = b;
-            else                         imported.auxBaud.S4 = b;
+          } else if (control === 'auxbauds3' || control === 'auxbauds4' || control === 'auxbauds5') {
+            imported.auxBaud = imported.auxBaud || { S3: 9600, S4: 9600, S5: 9600, maestro: 115200 };
+            const maxB = (control === 'auxbauds3') ? 115200 : 57600;   // S3 = hardware UART0; S4/S5 ≤57600
+            const b = Math.max(1200, Math.min(maxB, parseInt(value || channel, 10) || 9600));
+            if      (control === 'auxbauds3') imported.auxBaud.S3 = b;
+            else if (control === 'auxbauds4') imported.auxBaud.S4 = b;
+            else                              imported.auxBaud.S5 = b;
           } else if (control === 'maestrobaud') {
-            imported.auxBaud = imported.auxBaud || { S3: 9600, S4: 9600, maestro: 115200 };
+            imported.auxBaud = imported.auxBaud || { S3: 9600, S4: 9600, S5: 9600, maestro: 115200 };
             imported.auxBaud.maestro = Math.max(1200, Math.min(115200, parseInt(value || channel, 10) || 115200));
           }
           continue;
@@ -8229,7 +8236,7 @@ function handleConfigImportFile(event) {
               id: buttonId,
               // Logical buttons carry the user's custom name in the CSV's
               // `control` column — restore it so names survive a round-trip.
-              label: (buttonId > RC_PHYSICAL_SLOTS && control) ? control : getBtnLabel(buttonId),
+              label: (buttonId > RC_PHYSICAL_SLOTS && controlName) ? controlName : getBtnLabel(buttonId),
               minPwm: center - 10,
               maxPwm: center + 10,
             };
@@ -8252,7 +8259,7 @@ function handleConfigImportFile(event) {
         }
 
         if (type === 'switch-hw' || type === 'switch') {
-          const swName = control;
+          const swName = controlName;
           if (!swName) continue;
           const sw = newSwitches[swName] || {};
           if (Number.isFinite(channel)) sw.channel = Number(channel);
@@ -8273,7 +8280,7 @@ function handleConfigImportFile(event) {
         }
 
         if (type === 'knob') {
-          const knobName = control;
+          const knobName = controlName;
           if (!knobName) continue;
           const kn = newKnobs[knobName] || {};
           if (Number.isFinite(channel)) kn.channel = Number(channel);
@@ -8307,6 +8314,9 @@ function handleConfigImportFile(event) {
       applyWcbNetworkUI();
       applyMp3DestUI();
       applyAuxBaudUI();
+      { const bsel = document.getElementById('board-select');
+        if (bsel) bsel.value = String(config.boardType | 0); }   // reflect imported board profile
+      applyBaudRateLabels();
       renderMaestroLocations();
     } catch (err) {
       alert('Import failed: ' + err.message);

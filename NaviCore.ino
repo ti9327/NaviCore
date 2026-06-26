@@ -1,15 +1,17 @@
 // =============================================================================
 //  NaviCore.ino — WCB-based RC Controller (formerly RC-Controller / HyperCore)
-//  Target hardware: WCB HW 3.2 (ESP32-S3)
+//  Target hardware: NaviCore v2 PCB (default) or WCB HW 3.2 — ESP32-S3,
+//  selected at runtime by rcConfig.boardType (see applyBoardProfile()).
 //
 //  Features:
-//    • SBUS input (16 or 24 channel, auto-detected) on Serial1/UART1 RX (GPIO5)
-//    • SBUS output passthrough on UART0 TX (GPIO9) — byte-streamed re-emit of
-//      the RX frame so a downstream device sees the same channel data
+//    • SBUS input (16 or 24 channel, auto-detected) on shared UART1 RX
+//    • SBUS output passthrough on the SAME shared UART1 TX (per board profile:
+//      v2 GPIO5 / WCB 3.2 GPIO4) — byte-streamed re-emit of the RX frame so a
+//      downstream device sees the same channel data
 //    • Local Pololu Maestro on Serial2 @ 115200 baud (GPIO6 TX)
 //    • Up to 8 remote Maestros via WCBStream broadcast over ESP-NOW
 //    • WCB unicast and broadcast command dispatch
-//    • Serial3, Serial4 available as general-purpose SoftwareSerial ports
+//    • Three aux serial ports S3/S4/S5 (S3 = hardware UART0; S4/S5 SoftwareSerial)
 //    • Multi-mode RC button/switch/knob mapping (NVS-backed, GUI-configurable)
 //    • USB Serial JSON protocol for config tool and CLI debugging
 //      (open config_tool/index.html on your PC, connect via Web Serial API)
@@ -136,25 +138,26 @@ bool wcbReady = false;
 WCBStream* maestroBroadcast = nullptr;
 
 // =============================================================================
-//  Aux serial ports S3, S4  +  dedicated SBUS OUT
+//  Aux serial ports S3, S4, S5  (shared-SBUS layout)
 //
 //  ESP32-S3 has 3 hardware UARTs (UART0/1/2).  Allocation once the debug
 //  console moved to native USB CDC (USBMode=hwcdc, CDCOnBoot=cdc):
 //    • Serial  → native USB CDC (debug + config tool)  — no UART consumed
-//    • Serial0 → UART0 → SBUS OUT (TX-only, GPIO9, 100k 8E2 inverted)
-//    • Serial1 → UART1 → SBUS RX
+//    • Serial1 → UART1 → SBUS IN + OUT (shared, 100k 8E2 inverted)
 //    • Serial2 → UART2 → local Maestro TX
-//  By default that leaves no spare hardware UART for the aux command ports, so
-//  S3/S4 are bit-banged via SoftwareSerial (≤57600 baud; they never run the
-//  100k SBUS rate). With SBUS_SHARED_UART=1, SBUS IN+OUT share UART1 — freeing
-//  UART0 — and S3 is bound to that hardware UART0 so it can exceed 57600 baud.
-//  S4 stays SoftwareSerial. Default 0 keeps the proven WCB 3.2 layout.
+//    • Serial0 → UART0 → aux S3 (freed because SBUS IN+OUT share UART1)
+//  Both current boards use the shared-SBUS layout (sbusSharedUart=true), so the
+//  first aux port S3 runs on HARDWARE UART0/Serial0 (can exceed 57600, up to
+//  115200); S4 and S5 are bit-banged via SoftwareSerial (≤57600 baud; they never
+//  run the 100k SBUS rate). The dedicated-SBUS-out-on-UART0 layout
+//  (sbusSharedUart=false) is a kept-but-unused fallback — see applyBoardProfile().
 // =============================================================================
 // Aux command ports — their TYPE is RUNTIME board-dependent, so they're reached
-// through Stream* pointers bound in setup() AFTER applyBoardProfile():
-//   • NaviCore v2 (shared SBUS frees UART0): s3 = HARDWARE Serial0/UART0 ("Serial 1",
-//     not capped at ~57600); s4 + s5 = SoftwareSerial ("Serial 2" / "Serial 3").
-//   • WCB 3.2 (dedicated SBUS-out on UART0): s3 + s4 = SoftwareSerial; no s5.
+// through Stream* pointers bound in setup() AFTER applyBoardProfile(). On both
+// current (shared-SBUS) boards: s3 = HARDWARE Serial0/UART0, s4 + s5 =
+// SoftwareSerial. v2 silkscreen = "Serial 1/2/3"; WCB 3.2 = its "Serial 3/4/5"
+// headers (S5 = GPIO9/10). The dedicated-SBUS fallback would make s3 + s4
+// SoftwareSerial with s5 = nullptr.
 // Two SoftwareSerial instances back whichever slots are software on the active
 // board; the core's Serial0 backs s3 on v2. s3IsHw tells applySerialBauds which
 // .begin() overload to use. (This replaces the old compile-time #if SBUS_SHARED_UART
@@ -576,6 +579,14 @@ static bool hcrNormalizeAction(uint8_t& fn, int& chan, int& track) {
   }
 }
 
+// Local-serial HCR volume shadow for VolumeUp/DownAll (fn 18/19). The local
+// HCRVocalizer protocol has no relative-step command and no way to read back the
+// live volume, so NaviCore tracks the last volume it COMMANDED per channel
+// (V/A/B) and emits absolute <PVx..> sets stepped from there. Seeded to a mid
+// default until the first SetVolume; exact thereafter on this transport. (WCB
+// transport uses the WCB's own ;H,VOLUP/VOLDN step instead.)
+static int8_t hcrLocalVol[3] = { 50, 50, 50 };   // V, A, B (0-99)
+
 static String hcrFormatCommand(uint8_t fn, int chan, int track) {
   static const char emoteprefix[] = "HSMC";   // HAPPY / SAD / MAD / sCared
   static const char audioprefix[] = "VAB";    // Vocalizer / A / B
@@ -605,13 +616,28 @@ static String hcrFormatCommand(uint8_t fn, int chan, int track) {
     case 16:  // StopWAV(ch)
       inner = String("PS") + audioprefix[chan] + ",QP" + audioprefix[chan];
       break;
-    case 17:  // SetVolume(ch, vol). chan 3 = ALL → V, A, B set in one serial write.
-      if (chan == 3) return String("<PVV") + track + ">\n<PVA" + track + ">\n<PVB" + track + ">\n";
+    case 17:  // SetVolume(ch, vol). chan 3 = ALL = V, A, B set in one serial write.
+      if (chan == 3) {
+        hcrLocalVol[0] = hcrLocalVol[1] = hcrLocalVol[2] = (int8_t)track;   // keep the shadow in sync
+        return String("<PVV") + track + ">\n<PVA" + track + ">\n<PVB" + track + ">\n";
+      }
+      hcrLocalVol[chan] = (int8_t)track;                                    // keep the shadow in sync
       inner = String("PV") + audioprefix[chan] + String(track);
       break;
-    case 18:  // VolumeUpAll / VolumeDownAll — a RELATIVE step across V+A+B. WCB-only:
-    case 19:  // the WCB tracks each channel's current volume to compute the step; the
-      return "";  // local HCR path keeps no shadow, so it can't (see hcrFormatWcbCommand).
+    case 18:  // VolumeUpAll(step) / VolumeDownAll(step) — RELATIVE step across V+A+B.
+    case 19:  // The local HCR protocol has no step command, so step the per-channel
+    {         // shadow (hcrLocalVol) and emit absolute <PVx..> sets for V/A/B.
+      int step = (track > 0) ? track : 5;          // track = step; 0 = default 5 (matches WCB)
+      if (fn == 19) step = -step;
+      String allCh;
+      for (int c = 0; c < 3; c++) {
+        int v = hcrLocalVol[c] + step;
+        if (v < 0) v = 0; else if (v > 99) v = 99;
+        hcrLocalVol[c] = (int8_t)v;
+        allCh += String("<PV") + audioprefix[c] + v + ">\n";
+      }
+      return allCh;
+    }
     default: return "";   // unreachable — hcrNormalizeAction rejects unknown fn
   }
   return String("<") + inner + ">\n";
@@ -640,7 +666,8 @@ static String hcrFormatWcbCommand(uint8_t fn, int chan, int track) {
     case 13: return String(";H,MUSE,") + track;                   // SetMuse(v)
     // SetVolume: a specific channel rides the numeric WCB FN-17 (SetVolume(ch,v));
     // chan 3 = ALL uses the WCB's ;H,VOL with the channel OMITTED (set V+A+B to the
-    // value) — ONE message. Requires the matching WCB "VOL all" case (ch<0 → loop).
+    // value) in ONE message. Requires the matching WCB "VOL all" case (ch<0 → loop),
+    // which Greg is adding to the WCB firmware.
     case 17: return (chan == 3) ? (String(";H,VOL,") + track)
                                 : (String(";H,FN,17,") + chan + "," + track);
     // Volume Up/Down across ALL channels (V+A+B) in ONE message: the WCB's
@@ -1065,7 +1092,7 @@ void processSwitches() {
 //    KF_MAESTRO_PASSTHROUGH  → each output.target is a Maestro ID (1-8) and
 //                              maestroCh/posMin/posMax describe the servo.
 //    KF_HCR_VOLUME           → each output.target is an HCR audio chan
-//                              (0=V, 1=A, 2=B); posMin/posMax are volume
+//                              (0=V, 1=A, 2=B, 3=All); posMin/posMax are volume
 //                              endpoints (0-99). Rate-limited to avoid
 //                              saturating ESP-NOW / HCR serial input.
 //
@@ -1149,7 +1176,7 @@ void processKnobs() {
         // out.target is the Maestro slot ID (1-8)
         maestroSetTarget(out.target, out.maestroCh, mapped);
       } else if (kn.function == KF_HCR_VOLUME) {
-        // out.target is the HCR audio chan (0/1/2); mapped is volume 0-99
+        // out.target is the HCR audio chan (0/1/2/3 = V/A/B/All); mapped is volume 0-99
         dispatchHcrVolume(out.target, (uint8_t)mapped);
       }
     }
@@ -1354,10 +1381,15 @@ void sendPWMUpdate() {
 //  is opened (SBUS / Maestro / aux). boardType 0 = NaviCore v2, 1 = WCB HW 3.2.
 //  Status LED is GPIO48 on both, so it isn't profiled.
 // =============================================================================
-// Runtime equivalent of the old compile-time SBUS_SHARED_UART flag: true on
-// NaviCore v2 (SBUS IN+OUT share UART1, freeing UART0 for the hardware S3 aux),
-// false on WCB 3.2 (SBUS OUT is a dedicated UART0). Set by applyBoardProfile().
+// Runtime equivalent of the old compile-time SBUS_SHARED_UART flag. BOTH current
+// boards set this true in applyBoardProfile() (SBUS IN+OUT share UART1, freeing
+// UART0 for the hardware S3 aux). The false branch is the kept-but-unused
+// dedicated-UART0-SBUS-OUT fallback, selectable by flipping a board's flag.
 bool sbusSharedUart = false;
+// boardType that applyBoardProfile() actually applied at boot. SET_CONFIG uses it
+// to detect a live boardType change — pins are assigned only at boot, so a changed
+// profile must defer pin-dependent re-apply to a reboot.
+static uint8_t appliedBoardType = 0xFF;
 
 static void applyBoardProfile() {
   if (rcConfig.boardType == BOARD_WCB_HW_32) {
@@ -1377,6 +1409,7 @@ static void applyBoardProfile() {
     S5_TX_PIN = 38;    S5_RX_PIN = 47;
     Serial.println("[BOARD] NaviCore v2 pin profile");
   }
+  appliedBoardType = rcConfig.boardType;   // remember what was applied so SET_CONFIG can detect a live change
 }
 
 // =============================================================================
@@ -1528,10 +1561,18 @@ void handleSerialInput() {
             bool ok = rcConfigFromJSON(bigDoc["data"].as<JsonObject>());
             if (ok) {
               bool saved = rcConfigSaveLFS();
-              // Apply baud changes live (Serial2/3/4) so HCR / MP3 / Maestro
-              // pick up a new rate immediately — no reboot required.
-              applySerialBauds(false);
-              applySbusOut(false);     // apply a flipped SBUS-OUT toggle live
+              // Apply baud / SBUS-OUT changes live so HCR / MP3 / Maestro pick up
+              // a new rate immediately — no reboot required. BUT the pin profile is
+              // assigned only at boot (applyBoardProfile runs once in setup()), so if
+              // this Save also changed boardType, re-opening ports now would use the
+              // OLD board's pins; defer all pin-dependent apply to the reboot the GUI
+              // already prompts for after a board change.
+              if (rcConfig.boardType == appliedBoardType) {
+                applySerialBauds(false);
+                applySbusOut(false);     // apply a flipped SBUS-OUT toggle live
+              } else {
+                Serial.println("{\"type\":\"INFO\",\"msg\":\"boardType changed — reboot to apply the new pin profile\"}");
+              }
               // rcConfigSaveLFS() (flash write) + applySerialBauds()
               // block loop() for 100+ ms, during which processSbus() can't
               // run.  If the operator was holding a matrix button across
@@ -1598,9 +1639,16 @@ void handleSerialInput() {
           if (!wcb || !wcbReady) {
             Serial.println("{\"type\":\"ACK\",\"ok\":false,\"msg\":\"WCB not ready (init failed)\"}");
           } else {
-            if (target == 0)                               wcb->broadcast(cmd);
-            else if (target >= 1 && target <= WCB_MAX_BOARDS) wcb->send((uint8_t)target, cmd);
-            Serial.println("{\"type\":\"ACK\",\"ok\":true}");
+            if (target == 0) {
+              wcb->broadcast(cmd);
+              Serial.println("{\"type\":\"ACK\",\"ok\":true}");
+            } else if (target >= 1 && target <= WCB_MAX_BOARDS) {
+              wcb->send((uint8_t)target, cmd);
+              Serial.println("{\"type\":\"ACK\",\"ok\":true}");
+            } else {
+              Serial.printf("{\"type\":\"ACK\",\"ok\":false,\"msg\":\"target %d out of range (0=broadcast, 1-%d=unicast)\"}\n",
+                            target, WCB_MAX_BOARDS);
+            }
           }
 
         } else if (strcmp(type,"SET_DEBUG_FLAGS")==0) {
@@ -1727,6 +1775,9 @@ void handleSerialInput() {
               Serial.println("[HCR TEST] sent — watch the HCR; check TX wiring to HCR RX, common ground");
               break;
             }
+            default:
+              Serial.printf("Unknown #L code %d. Valid: 1,2,9,10,11,12,13,20,21\n", fn);
+              break;
           }
         }
       }

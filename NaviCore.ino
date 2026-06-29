@@ -56,6 +56,7 @@
 #include "wcb_config.h"
 #include "fw_version.h"     // FW_VERSION_BASE / FW_VERSION_DTG / FW_VERSION
 #include "rc_telemetry.h"   // WCB-network remote-management bridge (Phase 1 — see file header)
+#include "navicore_ota.h"   // firmware OTA — ?OTALOCAL (direct USB) + ?OTA (ESP-NOW relay)
 
 // =============================================================================
 //  Pin assignments — RUNTIME, selected by the active board profile
@@ -1505,6 +1506,20 @@ void handleSerialInput() {
       serialInputBuf.trim();
       if (serialInputBuf.length() == 0) { serialInputBuf = ""; return; }
 
+      // ── Firmware OTA command driver ───────────────────────────────────────
+      // ?OTALOCAL,* = direct-USB update of THIS board; ?OTA,* = relay an update
+      // to a target over ESP-NOW. Checked before the JSON/CLI branches. One
+      // command per call (early return) so loop() keeps heartbeats alive between
+      // the host's ACK-paced chunks. NOTE: "?OTALOCAL," must be matched first.
+      if (serialInputBuf.startsWith("?OTALOCAL,")) {
+        naviota::processOtaLocalCommand(serialInputBuf.substring(10));
+        serialInputBuf = ""; return;
+      }
+      if (serialInputBuf.startsWith("?OTA,")) {
+        naviota::processOtaRelayCommand(serialInputBuf.substring(5));
+        serialInputBuf = ""; return;
+      }
+
       if (serialInputBuf[0] == '{') {
         // ── JSON WebSerial protocol ──────────────────────────────────────────
         // The header doc has to use a Filter — without one, deserializing
@@ -2065,6 +2080,7 @@ void setup() {
   } else {
     wcbReady = true;   // ESP-NOW is up — wcb-> calls are now safe
     wcb->onCommand(onWCBCommand);
+    wcb->onRawPacket(naviota::otaRawPacketHook);   // OTA control/data structs (55/243 B) over the mesh
     Serial.printf("[WCB] Joined network as device ID %d (quantity=%d)\n",
                   rcConfig.wcbNetwork.deviceId, rcConfig.wcbNetwork.quantity);
   }
@@ -2136,6 +2152,12 @@ static void updateStatusLed() {
 void loop() {
   // WCB — heartbeats, ACKs, WCBStream flushes
   if (wcb && wcbReady) wcb->update();
+
+  // Firmware OTA over the WCB mesh — drain packets the receive callback queued
+  // (esp_ota_* blocks, so it can't run in the WiFi task) and reap a stalled
+  // session. Both are cheap no-ops when no OTA is in flight.
+  naviota::drainOtaPackets();
+  naviota::checkOtaTimeout();
 
   // WCB-network telemetry bridge — periodic rc_hb (0.5 Hz) + rc_ch (5 Hz)
   // broadcasts so the config tool's "Via WCB" mode can discover and live-

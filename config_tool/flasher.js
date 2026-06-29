@@ -287,18 +287,25 @@ async function flashFirmware(port, { onProgress, onLog, onStatus, eraseNvs = fal
   // erased: if either still holds a stale OTA state pointing to ota_1, the
   // bootloader will try to boot ota_1, fail (nothing there after a fresh
   // flash to ota_0), and the OTA rollback watchdog fires — endless reboot loop.
-  if (eraseNvs) {
-    const nvsBlank     = new ArrayBuffer(0x5000);  // NVS: 20 KB @ 0x9000
-    const otadataBlank = new ArrayBuffer(0x2000);  // otadata: 8 KB @ 0xE000
-    new Uint8Array(nvsBlank).fill(0xFF);
+  // OTA-data (the boot selector) is ALWAYS reset to ota_0 on an esptool flash:
+  // we always write the app to ota_0, so if a prior OTA had flipped the boot
+  // selector to ota_1, leaving otadata alone would make the board boot the stale
+  // (now-overwritten) slot → rollback watchdog → reboot loop. NVS (saved config)
+  // is only wiped on a Full Wipe. Both are written as 0xFF so esptool erases then
+  // rewrites the sectors back to factory-fresh.
+  {
+    const otadataBlank = new ArrayBuffer(0x2000);  // otadata: 8 KB @ 0xE000 (two 4 KB sectors)
     new Uint8Array(otadataBlank).fill(0xFF);
-    // Insert in ascending address order, before the app images.
-    imagesToFlash = [
-      { buf: nvsBlank,     address: 0x9000 },
-      { buf: otadataBlank, address: 0xE000 },
-      ...imagesToFlash,
-    ];
-    onLog('NVS (0x9000, 20 KB) and OTA data (0xE000, 8 KB) will be erased.');
+    const prepend = [{ buf: otadataBlank, address: 0xE000 }];
+    if (eraseNvs) {
+      const nvsBlank = new ArrayBuffer(0x5000);    // NVS: 20 KB @ 0x9000
+      new Uint8Array(nvsBlank).fill(0xFF);
+      prepend.unshift({ buf: nvsBlank, address: 0x9000 });   // ascending address order
+      onLog('NVS (0x9000, 20 KB) and OTA data (0xE000, 8 KB) will be erased.');
+    } else {
+      onLog('OTA boot selector (0xE000, 8 KB) reset to ota_0 (config preserved).');
+    }
+    imagesToFlash = [...prepend, ...imagesToFlash];
   }
 
   const totalBytes = imagesToFlash.reduce((sum, img) => sum + img.buf.byteLength, 0);

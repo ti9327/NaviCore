@@ -2206,7 +2206,7 @@
         <img src="../Images/r2logo.png" alt="R2 logo"
              style="width:72px;height:72px;object-fit:contain;opacity:0.9">
         <div style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.3px">
-          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">261532QJUN26</span>
+          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">291817QJUN26</span>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap">
@@ -2679,6 +2679,10 @@
               <button class="btn btn-danger" id="btn-fw-wipe" type="button"
                       title="Full wipe: erases EVERYTHING — bootloader, partitions, app, AND saved configuration (NVS). Use for first-time programming or recovery.">
                 ⚠ Full Wipe &amp; Flash
+              </button>
+              <button class="btn btn-blue" id="btn-fw-ota" type="button"
+                      title="OTA update over the existing USB connection (no bootloader mode). Streams the new firmware to the inactive OTA slot, verifies it (SHA), then reboots. Brick-safe; keeps your config. Direct-USB only.">
+                ⚡ Update over USB (OTA)
               </button>
               <span id="fw-status" style="color:var(--muted);font-size:12px">Idle.</span>
             </div>
@@ -4086,6 +4090,10 @@ function _gcExpiredFragments() {
 }
 
 function handleBoardMessage(line) {
+  // OTA markers ([OTA:ACK,..]/[OTA:NAK,..]/[OTA:BEGIN,..]/[OTA:END,..]) are not
+  // JSON — feed them to the OTA-over-USB orchestrator's marker resolver (when an
+  // OTA is active) so it can advance its ACK-paced loop, then echo to the terminal.
+  if (line.startsWith('[OTA:')) { _otaHandleMarker(line); appendTerminalLine('< ' + line, 'rx'); return; }
   let msg;
   try { msg = JSON.parse(line); } catch(e) {
     appendTerminalLine('< ' + line, 'rx');
@@ -7096,6 +7104,113 @@ async function reopenAfterFlash(p) {
   return false;
 }
 
+// ── OTA over USB (?OTALOCAL) ────────────────────────────────────────────────
+// Update the RUNNING app via the live serial session — no BOOT/RST, no esptool.
+// Streams the app .bin in 1 KB chunks, ACK-paced on the board's [OTA:ACK,<cursor>]
+// markers (the board writes the INACTIVE OTA slot, SHA-verifies, then reboots).
+// Brick-safe: a failed/interrupted transfer leaves the current app running.
+let _otaInProgress    = false;
+let _otaMarkerResolver = null;   // set while awaiting the next [OTA:*] marker
+
+// Called from handleBoardMessage for any "[OTA:" line — resolves a pending wait.
+function _otaHandleMarker(line) {
+  if (_otaMarkerResolver) { const r = _otaMarkerResolver; _otaMarkerResolver = null; r(line); }
+}
+
+// Resolve on the next [OTA:*] marker, or reject on timeout. Construct this
+// BEFORE sending the command so a fast marker can't arrive before we're listening.
+function _otaAwaitMarker(timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const to = setTimeout(() => { _otaMarkerResolver = null; reject(new Error('timed out waiting for board response')); }, timeoutMs);
+    _otaMarkerResolver = (line) => { clearTimeout(to); resolve(line); };
+  });
+}
+
+async function otaUpdateOverUsb() {
+  if (_otaInProgress || _fwFlashing) return;
+  if (viaWcbActive) { alert('OTA over USB needs a direct USB connection.\n\nDisconnect, uncheck "Via WCB", reconnect over USB, then retry.'); return; }
+  if (!writer || !port) { alert('Connect to the board over USB first.'); return; }
+
+  const statusEl = document.getElementById('fw-status');
+  const logEl    = document.getElementById('fw-log');
+  const wrapEl   = document.getElementById('fw-progress-wrap');
+  const barEl    = document.getElementById('fw-progress-bar');
+  const pctEl    = document.getElementById('fw-progress-pct');
+  const setStatus = t => { if (statusEl) statusEl.textContent = t; };
+  const log = t => { if (logEl) { logEl.style.display = 'block'; logEl.textContent += t + '\n'; logEl.scrollTop = logEl.scrollHeight; } };
+  const setProgress = (done, total) => {
+    if (wrapEl) wrapEl.style.display = 'block';
+    const p = total ? Math.round(done * 100 / total) : 0;
+    if (barEl) barEl.style.width = p + '%';
+    if (pctEl) pctEl.textContent = `${p}%  (${Math.round(done/1024)}/${Math.round(total/1024)} KB)`;
+  };
+
+  _otaInProgress = true;
+  const btn = document.getElementById('btn-fw-ota');
+  if (btn) { btn.disabled = true; btn.textContent = '⚡ Updating over USB…'; }
+  if (logEl) logEl.textContent = '';
+  try {
+    setStatus('OTA: fetching firmware…');
+    log('Fetching the latest app image from GitHub…');
+    const images = await fetchFirmwareImages(log);
+    const appImg = images.find(i => i.address === 0x10000);
+    if (!appImg) throw new Error('no app image (0x10000) in the firmware set');
+    const bytes = new Uint8Array(appImg.buf);
+    const size  = bytes.length;
+    log(`App image: ${Math.round(size/1024)} KB — beginning OTA (family ESP32-S3).`);
+
+    const CHUNK = 1024;
+    const toB64 = u8 => btoa(String.fromCharCode.apply(null, u8));   // <=1 KB slices
+
+    // BEGIN — the board erases the inactive slot (~1.2 MB; can take a few seconds).
+    setStatus('OTA: begin (erasing slot)…');
+    let wait = _otaAwaitMarker(20000);
+    await sendLine(`?OTALOCAL,BEGIN,${size},1`, true);
+    let m = await wait;
+    if (!/^\[OTA:BEGIN,OK/.test(m)) throw new Error('board rejected BEGIN — ' + m);
+
+    // DATA — ACK-paced; advance the local offset to the board's contiguous cursor.
+    setStatus('OTA: streaming…');
+    let offset = 0;
+    while (offset < size) {
+      const slice = bytes.subarray(offset, Math.min(offset + CHUNK, size));
+      wait = _otaAwaitMarker(10000);
+      await sendLine(`?OTALOCAL,DATA,${offset},${toB64(slice)}`, true);
+      m = await wait;
+      const ack = /^\[OTA:ACK,(\d+)\]/.exec(m);
+      const nak = /^\[OTA:NAK,(\d+)\]/.exec(m);
+      if (ack)      offset = parseInt(ack[1], 10);
+      else if (nak) { offset = parseInt(nak[1], 10); log(`Resyncing to cursor ${offset}…`); }
+      else          throw new Error('unexpected response — ' + m);
+      setProgress(offset, size);
+    }
+
+    // END — verify (SHA) + switch boot slot + reboot into the new image.
+    setStatus('OTA: verifying…');
+    log('All chunks sent — verifying image + switching boot slot…');
+    wait = _otaAwaitMarker(15000);
+    await sendLine('?OTALOCAL,END', true);
+    m = await wait;
+    if (!/^\[OTA:END,OK/.test(m)) throw new Error('verify/finalize failed — ' + m);
+    log('Verified. Board is rebooting into the new firmware…');
+    setStatus('OTA: rebooting…');
+
+    // The board does delay(2000)+restart; reconnect across the USB re-enumeration.
+    const ok = await reopenAfterFlash(port);
+    setStatus(ok ? 'OTA complete — reconnected. ✓' : 'OTA complete — reconnect manually.');
+    log(ok ? 'Reconnected to the updated board.' : 'Board updated; please reconnect manually.');
+  } catch (e) {
+    const msg = e && e.message ? e.message : String(e);
+    log('OTA failed: ' + msg);
+    setStatus('OTA failed: ' + msg);
+    try { await sendLine('?OTALOCAL,ABORT', true); } catch (_) {}
+  } finally {
+    _otaInProgress = false;
+    _otaMarkerResolver = null;
+    if (btn) { btn.disabled = false; btn.textContent = '⚡ Update over USB (OTA)'; }
+  }
+}
+
 async function runFirmwareFlash({ eraseNvs, sourceBtn, label, defaultLabel }) {
   if (_fwFlashing) return;
   _fwFlashing = true;
@@ -7301,6 +7416,15 @@ document.getElementById('btn-fw-flash').addEventListener('click', e => {
     label:        'Updating…',
     defaultLabel: '⬆ Update Firmware',
   });
+});
+
+document.getElementById('btn-fw-ota').addEventListener('click', () => {
+  if (viaWcbActive) {
+    alert('OTA over USB needs a direct USB connection.\n\n' +
+          'Disconnect, uncheck "Via WCB", reconnect over direct USB, and try again.');
+    return;
+  }
+  otaUpdateOverUsb();
 });
 
 document.getElementById('btn-fw-wipe').addEventListener('click', e => {

@@ -52,11 +52,29 @@
 // the same byte string the upstream HCRVocalizer would have written and push
 // it directly to the bound aux-serial port.  See hcrFormatCommand() below.
 #include "sbus_reader.h"
+#include "rc_serial.h"     // USB-CDC tee — MUST precede project headers that print (remote-terminal capture)
 #include "rc_config.h"
 #include "wcb_config.h"
 #include "fw_version.h"     // FW_VERSION_BASE / FW_VERSION_DTG / FW_VERSION
 #include "rc_telemetry.h"   // WCB-network remote-management bridge (Phase 1 — see file header)
 #include "navicore_ota.h"   // firmware OTA — ?OTALOCAL (direct USB) + ?OTA (ESP-NOW relay)
+#include "navicore_rterm.h" // remote terminal — mirror CLI output back over the WCB bridge (RTERM)
+
+// USB-CDC tee instance backing the `#define Serial rcSerial` in rc_serial.h.
+// Defined once here; setup()'s Serial.begin()/setRxBufferSize() drive it.
+RcSerial rcSerial;
+
+// Remote-terminal state.  A raw ?.../#... CLI line arriving over the WCB mesh
+// (onWCBCommand, Core 0) is stashed here and run in loop() with its Serial
+// output tee'd to rtermSink, which ships each line back to the relay (bridge)
+// as an RTERM packet that surfaces on the config-tool terminal.
+navirterm::CaptureSink rtermSink;
+// Single cross-core hop for relayed CLI lines: onWCBCommand (Core 0, WiFi task)
+// enqueues; drainRemoteCli (loop, Core 1) dequeues and runs. A FreeRTOS queue
+// provides the memory barrier a bare volatile flag would not — same pattern as
+// the OTA packet queue.
+struct RemoteCliMsg { uint8_t relay; char cmd[200]; };
+QueueHandle_t remoteCliQueue = nullptr;
 
 // =============================================================================
 //  Pin assignments — RUNTIME, selected by the active board profile
@@ -1327,6 +1345,23 @@ void onWCBCommand(uint8_t senderID, const char* command) {
   // returns true.  Otherwise we just log the raw command for visibility
   // (legacy WCB ;-commands intended for other peers or droid hardware).
   if (rcTelemetry::handle(senderID, command)) return;
+
+  // ── Remote terminal ─────────────────────────────────────────────────────
+  // A raw ?.../#... CLI line relayed from the config tool over the bridge. It
+  // isn't JSON management traffic, so rcTelemetry::handle() declined it. Stash
+  // it and run it in loop() — this callback is on Core 0 and execCliLine does
+  // flash I/O / long prints that must not stall the WiFi task. Its Serial
+  // output is tee'd back to senderID (the bridge) as RTERM packets that surface
+  // on the config-tool terminal. Queue is non-blocking — drop under load rather
+  // than stall the WiFi task.
+  if (remoteCliQueue && command && (command[0] == '?' || command[0] == '#')) {
+    RemoteCliMsg m;
+    m.relay = senderID;
+    strlcpy(m.cmd, command, sizeof(m.cmd));
+    xQueueSend(remoteCliQueue, &m, 0);
+    return;
+  }
+
   // Unhandled (legacy/unknown) WCB command.  This runs in the ESP-NOW
   // receive callback on Core 0; a blocking Serial.printf here can stall the
   // WiFi task (if a USB host is attached but not draining) and interleave
@@ -1499,6 +1534,107 @@ static void applySbusOut(bool initial) {
 // =============================================================================
 String serialInputBuf;
 
+// Execute one CLI line (?OTALOCAL,* / ?OTA,* / #L*).  Shared by the USB serial
+// console (handleSerialInput) and the remote terminal over the WCB bridge
+// (drainRemoteCli) so a locally-typed command and one relayed from the config
+// tool run identically.  All output goes to Serial; the remote path tees Serial
+// to the RTERM capture sink so the lines surface on the config-tool terminal.
+// Returns true if the line was a recognised CLI command.
+bool execCliLine(const String& line) {
+  if (line.startsWith("?OTALOCAL,")) { naviota::processOtaLocalCommand(line.substring(10)); return true; }
+  if (line.startsWith("?OTA,"))      { naviota::processOtaRelayCommand(line.substring(5));  return true; }
+  if (line.length() >= 1 && line[0] == '#') {
+    // ── CLI commands ───────────────────────────────────────────────────────
+    if (line.length() >= 3 && (line[1] == 'L' || line[1] == 'l')) {
+      int fn = 0;
+      if (line.length() >= 4)
+        fn = (line[2]-'0')*10 + (line[3]-'0');
+      else
+        fn = line[2] - '0';
+      switch (fn) {
+        case 1:  Serial.println("NaviCore — WCB HW 3.2"); break;
+        case 2:  ESP.restart(); break;
+        case 9:  dumpSbusState(); break;
+        case 10: sbusLiveDump = !sbusLiveDump;
+                 Serial.printf("SBUS live dump %s\n", sbusLiveDump ? "ON (1Hz)" : "OFF"); break;
+        case 11: {
+          Serial.printf("WCB device ID: %d  quantity: %d\n",
+                        rcConfig.wcbNetwork.deviceId, rcConfig.wcbNetwork.quantity);
+          Serial.print("  Board status: ");
+          for (int i = 1; i <= rcConfig.wcbNetwork.quantity; i++)
+            Serial.printf("WCB%d=%s ", i, wcb->isOnline(i) ? "UP" : "dn");
+          Serial.println();
+          break;
+        }
+        case 12: Serial.printf("Mode=%d  matrixBtn=%d  matrixVal=%d\n",
+                               FunctionSwState, pwmToButton(oldValueMatrix), oldValueMatrix); break;
+        // #L13 — Raw SBUS frame hex dump.  Shows exactly what bytes the
+        // RX is delivering, with channel-decoding offsets annotated so
+        // we can see at a glance whether bytes 23-33 (CH17-24 in SBUS-24)
+        // carry data or are zero on the wire.
+        case 13: {
+          const uint8_t* raw = sbusRx.rawFrameBytes();
+          uint8_t        len = sbusRx.rawFrameLen();
+          if (len == 0) {
+            Serial.println("---- SBUS RAW ---- (no frame parsed yet)");
+            break;
+          }
+          Serial.printf("---- SBUS RAW ---- (%u bytes, %s)\n",
+                        len, len == 25 ? "SBUS-16" :
+                             len == 36 ? "SBUS-24" : "unknown length");
+          for (uint8_t i = 0; i < len; i++) {
+            if (i % 8 == 0) Serial.printf("  [%2u] ", i);
+            Serial.printf("%02X ", raw[i]);
+            if (i % 8 == 7) Serial.println();
+          }
+          if (len % 8) Serial.println();
+          Serial.println("  byte 0       = header (expect 0F)");
+          if (len == 25) {
+            Serial.println("  bytes 1-22   = CH1-16 data");
+            Serial.println("  byte 23      = flags");
+            Serial.println("  byte 24      = footer (expect 00)");
+          } else if (len == 36) {
+            Serial.println("  bytes 1-22   = CH1-16 data");
+            Serial.println("  bytes 23-33  = CH17-24 data  ← check these");
+            Serial.println("  byte 34      = flags");
+            Serial.println("  byte 35      = footer (expect 00)");
+          }
+          break;
+        }
+        // ── HCR local-serial TX diagnostics ──────────────────────────────
+        // These bypass rcConfig.hcrDest AND button mapping entirely. They
+        // drive Serial3/Serial4 directly so a "nothing on the HCR" report
+        // can be split into:  firmware-TX-path/wiring  vs  config/dispatch.
+        //   #L20 → HCR on S3 (GPIO15 TX): SetEmotion(HAPPY,80) + raw marker
+        //   #L21 → HCR on S4 (GPIO17 TX): same
+        // If the HCR reacts to #L20 but not to a mapped button, the bug is
+        // in config (hcrDest transport/target not saved) or button mapping,
+        // NOT the serial wiring. If #L20 also does nothing, it's wiring
+        // (TX/RX swap, ground, 3V3 vs 5V) or the EspSoftwareSerial port.
+        case 20:
+        case 21: {
+          Stream*     h  = (fn == 20) ? s3 : s4;
+          const char* pn = (fn == 20) ? "S3" : "S4";
+          Serial.printf("[HCR TEST] -> %s : SetEmotion(HAPPY,80) via hcrFormatCommand + raw frame\n", pn);
+          // Send the SetEmotion(HAPPY,80) payload we'd normally dispatch
+          // through hcrFormatCommand, plus a second raw line in case a
+          // formatter bug is the cause — both are the exact byte string a
+          // working HCR expects, no library logic in between.
+          h->print(hcrFormatCommand(2 /*SetEmotion*/, 0 /*HAPPY*/, 80));
+          h->print("<OH80,QEH>\n");
+          Serial.println("[HCR TEST] sent — watch the HCR; check TX wiring to HCR RX, common ground");
+          break;
+        }
+        default:
+          Serial.printf("Unknown #L code %d. Valid: 1,2,9,10,11,12,13,20,21\n", fn);
+          break;
+      }
+    }
+    return true;
+  }
+  return false;
+}
+
 void handleSerialInput() {
   while (Serial.available()) {
     char c = (char)Serial.read();
@@ -1508,15 +1644,12 @@ void handleSerialInput() {
 
       // ── Firmware OTA command driver ───────────────────────────────────────
       // ?OTALOCAL,* = direct-USB update of THIS board; ?OTA,* = relay an update
-      // to a target over ESP-NOW. Checked before the JSON/CLI branches. One
-      // command per call (early return) so loop() keeps heartbeats alive between
-      // the host's ACK-paced chunks. NOTE: "?OTALOCAL," must be matched first.
-      if (serialInputBuf.startsWith("?OTALOCAL,")) {
-        naviota::processOtaLocalCommand(serialInputBuf.substring(10));
-        serialInputBuf = ""; return;
-      }
-      if (serialInputBuf.startsWith("?OTA,")) {
-        naviota::processOtaRelayCommand(serialInputBuf.substring(5));
+      // to a target over ESP-NOW. Routed through execCliLine (shared with the
+      // remote terminal). One command per call (early return) so loop() keeps
+      // heartbeats alive between the host's ACK-paced chunks.
+      if (serialInputBuf.startsWith("?OTALOCAL,") ||
+          serialInputBuf.startsWith("?OTA,")) {
+        execCliLine(serialInputBuf);
         serialInputBuf = ""; return;
       }
 
@@ -1709,92 +1842,8 @@ void handleSerialInput() {
 
       } else if (serialInputBuf[0] == '#') {
         // ── CLI commands ─────────────────────────────────────────────────────
-        if (serialInputBuf.length() >= 3 &&
-            (serialInputBuf[1] == 'L' || serialInputBuf[1] == 'l')) {
-          int fn = 0;
-          if (serialInputBuf.length() >= 4)
-            fn = (serialInputBuf[2]-'0')*10 + (serialInputBuf[3]-'0');
-          else
-            fn = serialInputBuf[2] - '0';
-          switch (fn) {
-            case 1:  Serial.println("NaviCore — WCB HW 3.2"); break;
-            case 2:  ESP.restart(); break;
-            case 9:  dumpSbusState(); break;
-            case 10: sbusLiveDump = !sbusLiveDump;
-                     Serial.printf("SBUS live dump %s\n", sbusLiveDump ? "ON (1Hz)" : "OFF"); break;
-            case 11: {
-              Serial.printf("WCB device ID: %d  quantity: %d\n",
-                            rcConfig.wcbNetwork.deviceId, rcConfig.wcbNetwork.quantity);
-              Serial.print("  Board status: ");
-              for (int i = 1; i <= rcConfig.wcbNetwork.quantity; i++)
-                Serial.printf("WCB%d=%s ", i, wcb->isOnline(i) ? "UP" : "dn");
-              Serial.println();
-              break;
-            }
-            case 12: Serial.printf("Mode=%d  matrixBtn=%d  matrixVal=%d\n",
-                                   FunctionSwState, pwmToButton(oldValueMatrix), oldValueMatrix); break;
-            // #L13 — Raw SBUS frame hex dump.  Shows exactly what bytes the
-            // RX is delivering, with channel-decoding offsets annotated so
-            // we can see at a glance whether bytes 23-33 (CH17-24 in SBUS-24)
-            // carry data or are zero on the wire.
-            case 13: {
-              const uint8_t* raw = sbusRx.rawFrameBytes();
-              uint8_t        len = sbusRx.rawFrameLen();
-              if (len == 0) {
-                Serial.println("---- SBUS RAW ---- (no frame parsed yet)");
-                break;
-              }
-              Serial.printf("---- SBUS RAW ---- (%u bytes, %s)\n",
-                            len, len == 25 ? "SBUS-16" :
-                                 len == 36 ? "SBUS-24" : "unknown length");
-              for (uint8_t i = 0; i < len; i++) {
-                if (i % 8 == 0) Serial.printf("  [%2u] ", i);
-                Serial.printf("%02X ", raw[i]);
-                if (i % 8 == 7) Serial.println();
-              }
-              if (len % 8) Serial.println();
-              Serial.println("  byte 0       = header (expect 0F)");
-              if (len == 25) {
-                Serial.println("  bytes 1-22   = CH1-16 data");
-                Serial.println("  byte 23      = flags");
-                Serial.println("  byte 24      = footer (expect 00)");
-              } else if (len == 36) {
-                Serial.println("  bytes 1-22   = CH1-16 data");
-                Serial.println("  bytes 23-33  = CH17-24 data  ← check these");
-                Serial.println("  byte 34      = flags");
-                Serial.println("  byte 35      = footer (expect 00)");
-              }
-              break;
-            }
-            // ── HCR local-serial TX diagnostics ──────────────────────────────
-            // These bypass rcConfig.hcrDest AND button mapping entirely. They
-            // drive Serial3/Serial4 directly so a "nothing on the HCR" report
-            // can be split into:  firmware-TX-path/wiring  vs  config/dispatch.
-            //   #L20 → HCR on S3 (GPIO15 TX): SetEmotion(HAPPY,80) + raw marker
-            //   #L21 → HCR on S4 (GPIO17 TX): same
-            // If the HCR reacts to #L20 but not to a mapped button, the bug is
-            // in config (hcrDest transport/target not saved) or button mapping,
-            // NOT the serial wiring. If #L20 also does nothing, it's wiring
-            // (TX/RX swap, ground, 3V3 vs 5V) or the EspSoftwareSerial port.
-            case 20:
-            case 21: {
-              Stream*     h  = (fn == 20) ? s3 : s4;
-              const char* pn = (fn == 20) ? "S3" : "S4";
-              Serial.printf("[HCR TEST] -> %s : SetEmotion(HAPPY,80) via hcrFormatCommand + raw frame\n", pn);
-              // Send the SetEmotion(HAPPY,80) payload we'd normally dispatch
-              // through hcrFormatCommand, plus a second raw line in case a
-              // formatter bug is the cause — both are the exact byte string a
-              // working HCR expects, no library logic in between.
-              h->print(hcrFormatCommand(2 /*SetEmotion*/, 0 /*HAPPY*/, 80));
-              h->print("<OH80,QEH>\n");
-              Serial.println("[HCR TEST] sent — watch the HCR; check TX wiring to HCR RX, common ground");
-              break;
-            }
-            default:
-              Serial.printf("Unknown #L code %d. Valid: 1,2,9,10,11,12,13,20,21\n", fn);
-              break;
-          }
-        }
+        // Dispatched through execCliLine (shared with the remote terminal).
+        execCliLine(serialInputBuf);
       }
       serialInputBuf = "";
     } else {
@@ -2091,6 +2140,7 @@ void setup() {
     wcbReady = true;   // ESP-NOW is up — wcb-> calls are now safe
     wcb->onCommand(onWCBCommand);
     wcb->onRawPacket(naviota::otaRawPacketHook);   // OTA control/data structs (55/243 B) over the mesh
+    remoteCliQueue = xQueueCreate(3, sizeof(RemoteCliMsg));  // relayed CLI lines → drainRemoteCli()
     Serial.printf("[WCB] Joined network as device ID %d (quantity=%d)\n",
                   rcConfig.wcbNetwork.deviceId, rcConfig.wcbNetwork.quantity);
   }
@@ -2159,6 +2209,24 @@ static void updateStatusLed() {
   }
 }
 
+// Run a CLI line relayed from the config tool (queued by onWCBCommand on Core
+// 0), tee'ing its Serial output to the RTERM sink so each line ships back to
+// the bridge and surfaces on the config-tool terminal. Runs in loop() context
+// where flash I/O and long prints are safe.
+void drainRemoteCli() {
+  if (!remoteCliQueue) return;
+  RemoteCliMsg m;
+  if (xQueueReceive(remoteCliQueue, &m, 0) != pdTRUE) return;
+
+  rtermSink.begin(wcb, m.relay);
+  rcSerial.armCapture(&rtermSink);          // mirror this command's Serial output to the bridge
+  bool recognised = execCliLine(String(m.cmd));
+  if (!recognised)
+    Serial.printf("Unknown command: %s\n", m.cmd);
+  rtermSink.finish();                        // flush any trailing partial line
+  rcSerial.disarmCapture();
+}
+
 void loop() {
   // WCB — heartbeats, ACKs, WCBStream flushes
   if (wcb && wcbReady) wcb->update();
@@ -2168,6 +2236,11 @@ void loop() {
   // session. Both are cheap no-ops when no OTA is in flight.
   naviota::drainOtaPackets();
   naviota::checkOtaTimeout();
+
+  // Remote terminal — run any CLI line relayed from the config tool, with its
+  // Serial output tee'd back to the bridge as RTERM packets. Cheap no-op when
+  // nothing is pending.
+  drainRemoteCli();
 
   // WCB-network telemetry bridge — periodic rc_hb (0.5 Hz) + rc_ch (5 Hz)
   // broadcasts so the config tool's "Via WCB" mode can discover and live-

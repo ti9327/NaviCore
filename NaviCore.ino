@@ -59,6 +59,7 @@
 #include "rc_telemetry.h"   // WCB-network remote-management bridge (Phase 1 — see file header)
 #include "navicore_ota.h"   // firmware OTA — ?OTALOCAL (direct USB) + ?OTA (ESP-NOW relay)
 #include "navicore_rterm.h" // remote terminal — mirror CLI output back over the WCB bridge (RTERM)
+#include "navicore_record.h" // record/replay — capture dispatched droid actions to a clip + replay
 
 // USB-CDC tee instance backing the `#define Serial rcSerial` in rc_serial.h.
 // Defined once here; setup()'s Serial.begin()/setRxBufferSize() drive it.
@@ -469,6 +470,7 @@ static void maestroSetTarget(uint8_t id, uint8_t ch, uint16_t pos) {
   if (!maestroChanOk(id, ch)) return;
   uint8_t p[3] = { ch, (uint8_t)(pos & 0x7F), (uint8_t)((pos >> 7) & 0x7F) };
   maestroWrite(id, 0x84, p, 3);
+  navirec::shadowSetTarget(id, ch, pos);   // record/replay last-position shadow (all moves)
 }
 static void maestroSetSpeed(uint8_t id, uint8_t ch, uint16_t spd) {
   if (!maestroChanOk(id, ch)) return;
@@ -484,8 +486,8 @@ static void maestroSetAccel(uint8_t id, uint8_t ch, uint8_t accel) {
   uint8_t p[3] = { ch, (uint8_t)(accel & 0x7F), (uint8_t)((accel >> 7) & 0x7F) };
   maestroWrite(id, 0x89, p, 3);
 }
-static void maestroGoHome(uint8_t id)        { maestroWrite(id, 0xA2, nullptr, 0); }
-static void maestroStopScript(uint8_t id)    { maestroWrite(id, 0xA4, nullptr, 0); }
+static void maestroGoHome(uint8_t id)        { maestroWrite(id, 0xA2, nullptr, 0); navirec::shadowInvalidateSlot(id); }
+static void maestroStopScript(uint8_t id)    { maestroWrite(id, 0xA4, nullptr, 0); navirec::shadowInvalidateSlot(id); }
 static void maestroRestartScript(uint8_t id, uint8_t sub) {
   maestroWrite(id, 0xA7, &sub, 1);
 }
@@ -924,6 +926,9 @@ static void scheduleAction(const RcAction& action, unsigned long delayMs) {
 // called rcExecuteAction, which saw delayMs>0 and re-queued the action forever,
 // so a delayed action's real effect never ran.
 static void rcExecuteActionNow(const RcAction& a) {
+  // Record/replay capture tap. Gated internally (no-op unless recording), and a
+  // non-blocking queue hop — this runs on Core 0 too (remote ESP-NOW TRIGGER).
+  navirec::captureAction(a);
   switch (a.type) {
     case RA_WCB_UNICAST: {
       uint8_t boardId = (uint8_t)atoi(a.target);
@@ -985,8 +990,23 @@ void rcExecuteAction(const RcAction& a) {
   // set thresholds — drop every action (including delayed/scheduled ones, so
   // nothing queues up to fire the instant calibration ends).
   if (calibrationActive) return;
+  // Replay owns the outputs — suppress LIVE button/switch/remote dispatch while
+  // a clip plays (replay calls rcExecuteActionNow directly, bypassing this gate).
+  if (navirec::isReplaying()) return;
   if (a.delayMs > 0) { scheduleAction(a, a.delayMs); return; }
   rcExecuteActionNow(a);
+}
+
+// ── Record/replay dispatch callbacks (the player reaches NaviCore's static
+//    dispatch layer through these). ────────────────────────────────────────────
+static void recCbDispatch(const RcAction& a)               { rcExecuteActionNow(a); }
+static void recCbEmitMaestro(uint8_t slot, uint8_t ch, uint16_t pos) { maestroSetTarget(slot, ch, pos); }
+static void recCbResetChan(uint8_t slot, uint8_t ch)       { maestroSetSpeed(slot, ch, 0); maestroSetAccel(slot, ch, 0); }
+static void recCbEmitHcrVol(uint8_t chan, uint8_t vol) {
+  // RAW HCR SetVolume (fn 17) — bypasses dispatchHcrVolume()'s static cache so
+  // replayed volume keyframes aren't decimated by its 80 ms/value-dedupe gate.
+  RcAction a{}; a.type = RA_HCR; a.fn = 17; a.chan = (int8_t)chan; a.track = (int16_t)vol;
+  executeHcrAction(a);
 }
 
 void checkPendingActions() {
@@ -1148,6 +1168,7 @@ static void dispatchHcrVolume(uint8_t audioChan, uint8_t vol) {
   a.chan  = (int8_t)audioChan;
   a.track = (int16_t)vol;
   executeHcrAction(a);
+  navirec::captureHcrVolKf(audioChan, vol);   // record the EMITTED (post-gate) knob volume
 }
 
 // Per-knob last-processed raw SBUS value. Knobs only re-dispatch when their
@@ -1165,6 +1186,7 @@ static uint16_t lastKnobRaw[RC_NUM_KNOBS] = {
 };
 
 void processKnobs() {
+  if (navirec::isReplaying()) return;   // replay owns the servos/volume during playback
   for (int i = 0; i < RC_NUM_KNOBS; i++) {
     RcKnob& kn = rcConfig.knobs[i];
     if (kn.channel < 1 || kn.channel > 24) continue;
@@ -1194,6 +1216,7 @@ void processKnobs() {
       if (kn.function == KF_MAESTRO_PASSTHROUGH) {
         // out.target is the Maestro slot ID (1-8)
         maestroSetTarget(out.target, out.maestroCh, mapped);
+        navirec::captureMaestroKf(out.target, out.maestroCh, mapped);   // knob keyframe
       } else if (kn.function == KF_HCR_VOLUME) {
         // out.target is the HCR audio chan (0/1/2/3 = V/A/B/All); mapped is volume 0-99
         dispatchHcrVolume(out.target, (uint8_t)mapped);
@@ -1552,6 +1575,18 @@ String serialInputBuf;
 bool execCliLine(const String& line) {
   if (line.startsWith("?OTALOCAL,")) { naviota::processOtaLocalCommand(line.substring(10)); return true; }
   if (line.startsWith("?OTA,"))      { naviota::processOtaRelayCommand(line.substring(5));  return true; }
+  // ── Record/replay bench control (phase 1) ───────────────────────────────────
+  //   ?REC,START  ?REC,STOP  ?REC,PLAY  ?REC,CLEAR  ?REC[,INFO]
+  if (line.startsWith("?REC")) {
+    String arg = (line.length() > 5) ? line.substring(5) : "";   // after "?REC,"
+    arg.trim();
+    if      (arg.equalsIgnoreCase("START")) Serial.println(navirec::startRecord((uint8_t)FunctionSwState) ? "[REC] recording…" : "[REC] busy / no buffer");
+    else if (arg.equalsIgnoreCase("STOP"))  { navirec::stopRecord(); navirec::info(Serial); }
+    else if (arg.equalsIgnoreCase("PLAY"))  Serial.println(navirec::startReplay() ? "[REC] replaying…" : "[REC] busy / empty");
+    else if (arg.equalsIgnoreCase("CLEAR")) { navirec::clearClip(); Serial.println("[REC] cleared"); }
+    else                                    navirec::info(Serial);   // bare "?REC" or "?REC,INFO"
+    return true;
+  }
   if (line.length() >= 1 && line[0] == '#') {
     // ── CLI commands ───────────────────────────────────────────────────────
     if (line.length() >= 3 && (line[1] == 'L' || line[1] == 'l')) {
@@ -2128,6 +2163,11 @@ void setup() {
   // race details.
   rcTelemetry::init();
 
+  // Record/replay — alloc the PSRAM clip buffer + the cross-core capture queue
+  // BEFORE the WCB receive callback (onCommand) is registered, so a remote
+  // ESP-NOW TRIGGER on Core 0 can't hit a null queue. ~8192 events ≈ 1.2 MB PSRAM.
+  navirec::recBegin(8192, recCbDispatch, recCbEmitMaestro, recCbEmitHcrVol, recCbResetChan);
+
   // WCB Client — sets STA mode + custom MAC + inits ESP-NOW.
   // No WiFi AP or web server — ESP-NOW only.  Credentials come from NVS
   // (editable via the GUI's "WCB Network" sidebar); a reboot is required
@@ -2250,6 +2290,11 @@ void loop() {
   // Serial output tee'd back to the bridge as RTERM packets. Cheap no-op when
   // nothing is pending.
   drainRemoteCli();
+
+  // Record/replay — drain captured events into the PSRAM clip (Core-1 sole
+  // writer) and advance any active replay. Both cheap no-ops when idle.
+  navirec::drain();
+  navirec::replayTick();
 
   // WCB-network telemetry bridge — periodic rc_hb (0.5 Hz) + rc_ch (5 Hz)
   // broadcasts so the config tool's "Via WCB" mode can discover and live-

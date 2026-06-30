@@ -2206,7 +2206,7 @@
         <img src="../Images/r2logo.png" alt="R2 logo"
              style="width:72px;height:72px;object-fit:contain;opacity:0.9">
         <div style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.3px">
-          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">292235QJUN26</span>
+          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">292253QJUN26</span>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap">
@@ -3298,7 +3298,7 @@ const maestroCommands = {
 // `settleMs` is how long to wait after opening before pinging — long for a
 // cold initial connect, short for a post-flash reconnect that already waited
 // for the board to boot.
-async function openPortAndStart(p, settleMs = 4000) {
+async function openPortAndStart(p, settleMs = 4000, allowViaWcb = true) {
   window._loggedMissingSbus = false;
   // Every fresh connection starts in DIRECT-USB mode. viaWcbActive must track
   // the LIVE transport, never a stale localStorage preference — otherwise a USB
@@ -3339,7 +3339,7 @@ async function openPortAndStart(p, settleMs = 4000) {
     return _pongSeen;
   };
   let pongOk = await pingForPong();          // try Direct USB
-  if (!pongOk) {
+  if (!pongOk && allowViaWcb) {
     console.log('No direct PONG — retrying through a tethered WCB (Via WCB)…');
     onViaWcbToggle(true);                     // wrap PINGs so the WCB relays them
     pongOk = await pingForPong();             // try the bridge
@@ -7081,21 +7081,26 @@ async function reopenAfterFlash(p) {
   // PONG come back?) and, if not, tear the session down and retry the whole
   // cycle — the programmatic equivalent of that manual fix.
   for (let cycle = 0; cycle < 6; cycle++) {
+    // After a reboot the board re-enumerates as a NEW SerialPort object, and OTHER
+    // ESP devices (e.g. an SBUS controller) may also be granted — so DON'T blindly
+    // grab the last granted port. Try the original handle first, then every other
+    // granted port, and accept ONLY the one that answers a DIRECT PONG. Pass
+    // allowViaWcb=false: this is a direct-USB session, so a non-answering device
+    // (the wrong ESP) must NOT auto-flip the tool into Via-WCB mode — that's what
+    // left the "Via WCB" box checked and the session pointed at the SBUS controller.
+    const candidates = [p];
     try {
-      // openPortAndStart already waited 3 s above; use a short post-open
-      // settle here so a dead cycle is detected quickly and retried.
-      const live = await openPortAndStart(p, 600);
-      if (live) return true;                 // board answered — real, working session
-      await disconnect();                    // opened but dead — clean teardown, then retry
-    } catch (_) {
-      // open() itself failed — the port isn't back yet, or the SerialPort
-      // object was invalidated by the re-enumeration.  Refresh the handle
-      // from the granted list (the device may now be a different object).
-      try { await p.close(); } catch (_) {}
+      for (const g of await navigator.serial.getPorts())
+        if (!candidates.includes(g)) candidates.push(g);
+    } catch (_) {}
+    for (const cand of candidates) {
       try {
-        const granted = await navigator.serial.getPorts();
-        if (granted.length) p = granted[granted.length - 1];
-      } catch (_) {}
+        const live = await openPortAndStart(cand, 600, /*allowViaWcb=*/false);
+        if (live) return true;               // direct NaviCore answered — real session
+        await disconnect();                  // opened but not our board — try the next
+      } catch (_) {
+        try { await cand.close(); } catch (_) {}
+      }
     }
     await new Promise(r => setTimeout(r, 500));
   }

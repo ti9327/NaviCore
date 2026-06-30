@@ -1335,6 +1335,18 @@ void dumpSbusState() {
   }
 }
 
+// Enqueue a relayed CLI line for drainRemoteCli(). MUST stay noinline: the
+// 200-byte RemoteCliMsg lives in THIS frame, not onWCBCommand's, so it isn't
+// reserved on the Core-0 ESP-NOW callback stack while rcTelemetry::handle()
+// does its (stack-heavy) ArduinoJson parsing — that extra 200 bytes was enough
+// to overflow the WiFi-task stack and crash the board on every mesh command.
+static void __attribute__((noinline)) queueRemoteCli(uint8_t relay, const char* command) {
+  RemoteCliMsg m;
+  m.relay = relay;
+  strlcpy(m.cmd, command, sizeof(m.cmd));
+  xQueueSend(remoteCliQueue, &m, 0);   // non-blocking; drop under load
+}
+
 // =============================================================================
 //  WCB receive callback
 // =============================================================================
@@ -1355,10 +1367,7 @@ void onWCBCommand(uint8_t senderID, const char* command) {
   // on the config-tool terminal. Queue is non-blocking — drop under load rather
   // than stall the WiFi task.
   if (remoteCliQueue && command && (command[0] == '?' || command[0] == '#')) {
-    RemoteCliMsg m;
-    m.relay = senderID;
-    strlcpy(m.cmd, command, sizeof(m.cmd));
-    xQueueSend(remoteCliQueue, &m, 0);
+    queueRemoteCli(senderID, command);   // noinline — keeps the 200 B buffer off this frame
     return;
   }
 

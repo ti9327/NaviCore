@@ -2,6 +2,15 @@
 #include <Arduino.h>
 #include <HWCDC.h>
 
+// This tee wraps HWCDCSerial (native USB-CDC), which IS the core's `Serial`
+// only on a USB-CDC-on-boot build. NaviCore always is (FQBN
+// USBMode=hwcdc,CDCOnBoot=cdc — required for the OTG port), so fail loudly here
+// rather than silently retarget every Serial.* to the wrong port on a non-CDC
+// build.
+#if !ARDUINO_USB_CDC_ON_BOOT
+#error "rc_serial.h requires USB CDC on boot (build with USBMode=hwcdc, CDCOnBoot=cdc)."
+#endif
+
 // ─────────────────────────────────────────────────────────────────────────────
 //  RcSerial — USB-CDC tee for the remote-terminal feature
 // ─────────────────────────────────────────────────────────────────────────────
@@ -34,6 +43,10 @@ class RcSerial : public Stream {
   int  read()      override { return HWCDCSerial.read(); }
   int  peek()      override { return HWCDCSerial.peek(); }
   void flush()     override { HWCDCSerial.flush(); }
+  // CRITICAL: must forward to HWCDC. Print's default returns 0, which would
+  // make vlogf()'s `availableForWrite() >= n` guard ALWAYS false and silently
+  // drop every hot-path log line.
+  int availableForWrite() override { return HWCDCSerial.availableForWrite(); }
 
   // ── Print interface → USB pass-through ALWAYS, plus capture when armed ────
   // Capture is gated to the core that armed it so a Core-0 (WiFi/ESP-NOW)

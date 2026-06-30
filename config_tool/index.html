@@ -770,6 +770,20 @@
   .terminal-line.tx::before { content: '> '; color: var(--muted); }
   .terminal-line.rx { color: #b0bac9; }
   .terminal-line.info { color: var(--muted); font-style: italic; }
+  /* ── Split terminal (Direct USB = 1 column; Via WCB = 2 columns) ──────────
+     The panel is flex-column (handle / header / debug-bar / body). The body is
+     a flex-row of equal columns, each a self-contained flex-column with its own
+     label, scroll output, and input row. */
+  .terminal-body { flex: 1; display: flex; min-height: 0; }
+  .terminal-col  { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  .terminal-col + .terminal-col { border-left: 1px solid var(--border); }
+  .terminal-col-label {
+    flex-shrink: 0;
+    font-size: 10px; font-weight: 700; letter-spacing: .8px;
+    color: var(--accent); background: #0d0f15;
+    padding: 4px 14px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 6px;
+  }
   .terminal-input-row {
     display: flex; gap: 8px;
     padding: 8px 14px;
@@ -2206,7 +2220,7 @@
         <img src="../Images/r2logo.png" alt="R2 logo"
              style="width:72px;height:72px;object-fit:contain;opacity:0.9">
         <div style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.3px">
-          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">300039QJUN26</span>
+          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">300045QJUN26</span>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap">
@@ -2261,10 +2275,30 @@
     <button class="dbg-chip" type="button" data-cat="mp3"     aria-pressed="false">MP3</button>
     <button class="dbg-chip" type="button" data-cat="serial"  aria-pressed="false">Serial</button>
   </div>
-  <div class="terminal-output" id="terminal-output"></div>
-  <div class="terminal-input-row">
-    <input id="terminal-input" class="terminal-input" type="text" placeholder="Type CLI command and press Enter" autocomplete="off">
-    <button class="btn btn-blue terminal-send" id="terminal-send" type="button">Send</button>
+  <div class="terminal-body" id="terminal-body">
+    <!-- Primary column.  Direct USB: the connected board's CLI.  Via WCB: the
+         NaviCore (RC #20) CLI + tool session messages; input is relayed over
+         the bridge as ;w20,<cmd>.  Keeps id="terminal-output"/"terminal-input"
+         so existing terminal code targets it unchanged. -->
+    <div class="terminal-col" id="terminal-col-main">
+      <div class="terminal-col-label" id="terminal-label-main">⌨ Terminal</div>
+      <div class="terminal-output" id="terminal-output"></div>
+      <div class="terminal-input-row">
+        <input id="terminal-input" class="terminal-input" type="text" placeholder="Type CLI command and press Enter" autocomplete="off">
+        <button class="btn btn-blue terminal-send" id="terminal-send" type="button">Send</button>
+      </div>
+    </div>
+    <!-- Bridge-WCB column — shown ONLY in Via WCB mode.  Input goes raw to the
+         tethered WCB (its own CLI); output is the WCB's plain (non-JSON,
+         non-[TERM]) lines. -->
+    <div class="terminal-col" id="terminal-col-wcb" style="display:none">
+      <div class="terminal-col-label">📡 WCB (bridge)</div>
+      <div class="terminal-output" id="terminal-output-wcb"></div>
+      <div class="terminal-input-row">
+        <input id="terminal-input-wcb" class="terminal-input" type="text" placeholder="Type WCB command (e.g. ?STATUS) and press Enter" autocomplete="off">
+        <button class="btn btn-blue terminal-send" id="terminal-send-wcb" type="button">Send</button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -3624,6 +3658,12 @@ function onViaWcbToggle(checked) {
       ? `Connected via WCB → RC #${RC_WCB_DEVICE_ID}`
       : 'Connected ✓';
   }
+  // Split terminal — reveal the WCB (bridge) column only when bridging, and
+  // relabel the primary column to make the NaviCore target explicit.
+  { const colW = document.getElementById('terminal-col-wcb');
+    if (colW) colW.style.display = viaWcbActive ? '' : 'none';
+    const lblM = document.getElementById('terminal-label-main');
+    if (lblM) lblM.textContent = viaWcbActive ? `⌨ NaviCore · RC #${RC_WCB_DEVICE_ID}` : '⌨ Terminal'; }
   // ─── Disable firmware-flash buttons while Via WCB is active ─────────────
   // The flash path uses esptool over Web Serial to drive the ESP32-S3 into
   // its bootloader and write the .bin image — that needs a direct UART or
@@ -3835,8 +3875,8 @@ function setDebugFilter(key, on) {
   sendDebugFlagsToBoard();
 }
 
-function appendTerminalLine(text, type = 'info') {
-  const output = document.getElementById('terminal-output');
+function appendTerminalLine(text, type = 'info', pane = 'main') {
+  const output = document.getElementById(pane === 'wcb' ? 'terminal-output-wcb' : 'terminal-output');
   if (!output) return;
   // RX lines (from board) get classified and filtered. TX (user-typed),
   // info, and other types always show.
@@ -3857,6 +3897,10 @@ function appendTerminalLine(text, type = 'info') {
 function setTerminalEnabled(enabled) {
   document.getElementById('terminal-input').disabled = !enabled;
   document.getElementById('terminal-send').disabled = !enabled;
+  { const iw = document.getElementById('terminal-input-wcb');
+    const sw = document.getElementById('terminal-send-wcb');
+    if (iw) iw.disabled = !enabled;
+    if (sw) sw.disabled = !enabled; }
   document.getElementById('terminal-autoscroll').disabled = !enabled;
   document.getElementById('terminal-timestamps').disabled = !enabled;
 }
@@ -3877,13 +3921,42 @@ function initTerminal() {
   send.addEventListener('click', async () => {
     const value = input.value.trim();
     if (!value || !writer) return;
-    await sendLine(value);
+    if (viaWcbActive) {
+      // Relay the raw CLI line to the NaviCore over the bridge (;w20,<cmd>).
+      // Echo the clean command to the primary pane; send the wrapped form
+      // silently so the ;w20, plumbing doesn't clutter the view.  The board's
+      // reply comes back as [TERM:20] lines (routed to this same pane).
+      appendTerminalLine('> ' + value, 'tx', 'main');
+      await sendLine(';w' + RC_WCB_DEVICE_ID + ',' + value, /*silent=*/true);
+    } else {
+      await sendLine(value);   // direct USB — straight to the connected board
+    }
     input.value = '';
   });
 
+  // ── Bridge-WCB column (Via WCB only) — raw CLI to the tethered WCB ────────
+  const inputW = document.getElementById('terminal-input-wcb');
+  const sendW  = document.getElementById('terminal-send-wcb');
+  if (inputW && sendW) {
+    inputW.addEventListener('keydown', ev => {
+      if (ev.key !== 'Enter') return;
+      ev.preventDefault();
+      sendW.click();
+    });
+    sendW.addEventListener('click', async () => {
+      const value = inputW.value.trim();
+      if (!value || !writer) return;
+      appendTerminalLine('> ' + value, 'tx', 'wcb');
+      await sendLine(value, /*silent=*/true);   // raw to the bridge WCB
+      inputW.value = '';
+    });
+  }
+
   clear.addEventListener('click', () => {
-    const output = document.getElementById('terminal-output');
-    if (output) output.textContent = '';
+    const o1 = document.getElementById('terminal-output');
+    const o2 = document.getElementById('terminal-output-wcb');
+    if (o1) o1.textContent = '';
+    if (o2) o2.textContent = '';
   });
 
   autoScroll.addEventListener('click', () => {
@@ -4098,9 +4171,21 @@ function handleBoardMessage(line) {
   // JSON — feed them to the OTA-over-USB orchestrator's marker resolver (when an
   // OTA is active) so it can advance its ACK-paced loop, then echo to the terminal.
   if (line.startsWith('[OTA:')) { _otaHandleMarker(line); appendTerminalLine('< ' + line, 'rx'); return; }
+  // RTERM — a NaviCore CLI line the bridge WCB relayed to USB, formatted
+  // "[TERM:<sourceWCB>]<text>".  This is the remote board's CLI output, so it
+  // belongs in the primary (NaviCore) pane.  RC #20 lines show bare; any other
+  // source is tagged so a multi-board relay stays legible.
+  if (line.startsWith('[TERM:')) {
+    const m = line.match(/^\[TERM:(\d+)\]([\s\S]*)$/);
+    if (m) appendTerminalLine((m[1] === String(RC_WCB_DEVICE_ID) ? '' : `[#${m[1]}] `) + m[2], 'rx', 'main');
+    else   appendTerminalLine(line, 'rx', 'main');
+    return;
+  }
   let msg;
   try { msg = JSON.parse(line); } catch(e) {
-    appendTerminalLine('< ' + line, 'rx');
+    // Non-JSON plain text.  Via WCB it's the bridge WCB's own CLI output → WCB
+    // pane.  Direct USB it's the connected board's output → primary pane.
+    appendTerminalLine('< ' + line, 'rx', viaWcbActive ? 'wcb' : 'main');
     console.log('Board>', line);
     return;
   }

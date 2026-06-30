@@ -2206,7 +2206,7 @@
         <img src="../Images/r2logo.png" alt="R2 logo"
              style="width:72px;height:72px;object-fit:contain;opacity:0.9">
         <div style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.3px">
-          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">292253QJUN26</span>
+          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">292305QJUN26</span>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap">
@@ -7080,28 +7080,39 @@ async function reopenAfterFlash(p) {
   // why a manual Disconnect→Connect fixes it.  So we verify liveness (did a
   // PONG come back?) and, if not, tear the session down and retry the whole
   // cycle — the programmatic equivalent of that manual fix.
-  for (let cycle = 0; cycle < 6; cycle++) {
-    // After a reboot the board re-enumerates as a NEW SerialPort object, and OTHER
-    // ESP devices (e.g. an SBUS controller) may also be granted — so DON'T blindly
-    // grab the last granted port. Try the original handle first, then every other
-    // granted port, and accept ONLY the one that answers a DIRECT PONG. Pass
-    // allowViaWcb=false: this is a direct-USB session, so a non-answering device
-    // (the wrong ESP) must NOT auto-flip the tool into Via-WCB mode — that's what
-    // left the "Via WCB" box checked and the session pointed at the SBUS controller.
-    const candidates = [p];
+  // Reconnect to the SAME device we were on (the NaviCore) — never guess. The
+  // board re-enumerates after the reboot; its SerialPort handle usually PERSISTS
+  // (open() just fails transiently while it's down), so we retry the original
+  // handle. We do NOT adopt an arbitrary granted port when several are granted:
+  // another ESP on the bench (e.g. an SBUS controller on the same JSON protocol)
+  // answers the SAME PING/PONG, so "a port answered" is not proof it's the
+  // NaviCore — latching onto it is exactly the wrong-port bug. We only fall back
+  // to a different handle when there is exactly ONE device granted in total (then
+  // it's unambiguously the board, e.g. after a re-enumeration that minted a new
+  // object). Otherwise we give up cleanly and let the user reconnect by hand.
+  // allowViaWcb=false: direct-USB session, never auto-bridge to a WCB.
+  for (let cycle = 0; cycle < 12; cycle++) {
+    // (a) The original handle — the usual, unambiguous path.
     try {
-      for (const g of await navigator.serial.getPorts())
-        if (!candidates.includes(g)) candidates.push(g);
-    } catch (_) {}
-    for (const cand of candidates) {
-      try {
-        const live = await openPortAndStart(cand, 600, /*allowViaWcb=*/false);
-        if (live) return true;               // direct NaviCore answered — real session
-        await disconnect();                  // opened but not our board — try the next
-      } catch (_) {
-        try { await cand.close(); } catch (_) {}
-      }
+      const live = await openPortAndStart(p, 600, /*allowViaWcb=*/false);
+      if (live) return true;                 // the NaviCore answered — real session
+      await disconnect();                    // opened but no PONG yet (still booting) — retry
+    } catch (_) {
+      try { await p.close(); } catch (_) {}  // open() failed (device still down) — retry
     }
+    // (b) Only if the handle was truly invalidated AND there is exactly ONE device
+    //     granted — then that port is unambiguously the board. With 2+ granted we
+    //     can't tell which is the NaviCore by PONG, so we never guess.
+    try {
+      const granted = await navigator.serial.getPorts();
+      if (granted.length === 1 && granted[0] !== p) {
+        try {
+          const live = await openPortAndStart(granted[0], 600, /*allowViaWcb=*/false);
+          if (live) return true;
+          await disconnect();
+        } catch (_) { try { await granted[0].close(); } catch (_) {} }
+      }
+    } catch (_) {}
     await new Promise(r => setTimeout(r, 500));
   }
   // Gave up — leave no half-open state so the user's manual Connect is clean.
@@ -7200,8 +7211,12 @@ async function otaUpdateOverUsb() {
     log('Verified. Board is rebooting into the new firmware…');
     setStatus('OTA: rebooting…');
 
-    // The board does delay(2000)+restart; reconnect across the USB re-enumeration.
-    const ok = await reopenAfterFlash(port);
+    // Tear down THIS live OTA session first — it still holds the port open, which
+    // would block re-opening it. Capture the handle, disconnect, then reconnect to
+    // that SAME device across the reboot's USB re-enumeration.
+    const navicorePort = port;
+    try { await disconnect(); } catch (_) {}
+    const ok = await reopenAfterFlash(navicorePort);
     setStatus(ok ? 'OTA complete — reconnected. ✓' : 'OTA complete — reconnect manually.');
     log(ok ? 'Reconnected to the updated board.' : 'Board updated; please reconnect manually.');
   } catch (e) {

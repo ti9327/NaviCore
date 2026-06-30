@@ -2206,7 +2206,7 @@
         <img src="../Images/r2logo.png" alt="R2 logo"
              style="width:72px;height:72px;object-fit:contain;opacity:0.9">
         <div style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.3px">
-          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">292305QJUN26</span>
+          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">292326QJUN26</span>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap">
@@ -2683,6 +2683,10 @@
               <button class="btn btn-blue" id="btn-fw-ota" type="button"
                       title="OTA update over the existing USB connection (no bootloader mode). Streams the new firmware to the inactive OTA slot, verifies it (SHA), then reboots. Brick-safe; keeps your config. Direct-USB only.">
                 ⚡ Update over USB (OTA)
+              </button>
+              <button class="btn btn-blue" id="btn-fw-ota-wcb" type="button"
+                      title="OTA update a REMOTE NaviCore through a USB-tethered relay WCB (Via-WCB mode). The relay forwards the new firmware over ESP-NOW; the target verifies (SHA) and reboots. Brick-safe; keeps config. Enabled only while connected Via WCB.">
+                📡 Update over WCB (OTA)
               </button>
               <span id="fw-status" style="color:var(--muted);font-size:12px">Idle.</span>
             </div>
@@ -7231,6 +7235,105 @@ async function otaUpdateOverUsb() {
   }
 }
 
+// ── OTA over WCB mesh (?OTA relay) ──────────────────────────────────────────
+// Update a REMOTE NaviCore through a USB-tethered relay WCB (Via-WCB mode). The
+// browser sends the WCB's native ?OTA,* relay commands; the WCB forwards them
+// over ESP-NOW to the target (RC_WCB_DEVICE_ID), which writes its inactive slot,
+// SHA-verifies, ACKs back, and reboots. Unlike the serial path, the CONNECTED
+// device (the relay WCB) does NOT reboot — so there's no USB reconnect; the
+// target re-joins the mesh on its own. Chunks are 192 B (the ESP-NOW OTA payload),
+// ACK-paced on the relay's [OTA:ACK,<src>,<session>,<offset>,<status>] markers.
+async function otaUpdateOverWcb() {
+  if (_otaInProgress || _fwFlashing) return;
+  if (!viaWcbActive) {
+    alert('Update over WCB needs a "Via WCB" connection — a USB-tethered WCB bridging to the RC.\n\n' +
+          'Check "Via WCB", connect through your relay WCB, then try again.');
+    return;
+  }
+  if (!writer) { alert('Not connected.'); return; }
+  const target = RC_WCB_DEVICE_ID;
+
+  const statusEl = document.getElementById('fw-status');
+  const logEl    = document.getElementById('fw-log');
+  const wrapEl   = document.getElementById('fw-progress-wrap');
+  const barEl    = document.getElementById('fw-progress-bar');
+  const pctEl    = document.getElementById('fw-progress-pct');
+  const setStatus = t => { if (statusEl) statusEl.textContent = t; };
+  const log = t => { if (logEl) { logEl.style.display = 'block'; logEl.textContent += t + '\n'; logEl.scrollTop = logEl.scrollHeight; } };
+  const setProgress = (done, total) => {
+    if (wrapEl) wrapEl.style.display = 'block';
+    const p = total ? Math.round(done * 100 / total) : 0;
+    if (barEl) barEl.style.width = p + '%';
+    if (pctEl) pctEl.textContent = `${p}%  (${Math.round(done/1024)}/${Math.round(total/1024)} KB)`;
+  };
+
+  _otaInProgress = true;
+  const btn = document.getElementById('btn-fw-ota-wcb');
+  if (btn) { btn.disabled = true; btn.textContent = '📡 Updating over WCB…'; }
+  if (logEl) logEl.textContent = '';
+  let session = 0;
+  try {
+    setStatus('OTA-WCB: fetching firmware…');
+    log(`Fetching the latest app image — target = RC #${target} over the WCB mesh…`);
+    const images = await fetchFirmwareImages(log);
+    const appImg = images.find(i => i.address === 0x10000);
+    if (!appImg) throw new Error('no app image (0x10000) in the firmware set');
+    const bytes = new Uint8Array(appImg.buf);
+    const size  = bytes.length;
+    session = (Date.now() & 0x7FFF) || 1;   // ties BEGIN/DATA/END/ACK together on the target
+    log(`App image: ${Math.round(size/1024)} KB. Session ${session}. Relay OTA in 192-byte chunks (slower than USB).`);
+
+    const CHUNK = 192;
+    const toB64 = u8 => btoa(String.fromCharCode.apply(null, u8));
+    // Relay ACK = [OTA:ACK,<src>,<session>,<offset>,<status>]  (status 0 = OK)
+    const parseAck = m => { const x = /^\[OTA:ACK,(\d+),(\d+),(\d+),(\d+)\]/.exec(m); return x ? { src:+x[1], session:+x[2], offset:+x[3], status:+x[4] } : null; };
+
+    // BEGIN — the target erases its inactive slot (~1.2 MB; a few seconds) then ACKs.
+    setStatus('OTA-WCB: begin (target erasing slot)…');
+    let wait = _otaAwaitMarker(25000);
+    await sendLine(`?OTA,BEGIN,${target},${session},${size},1`, true);
+    let ack = parseAck(await wait);
+    if (!ack || ack.status !== 0) throw new Error('target rejected BEGIN (chip family / no OTA slot / offline?)');
+
+    // DATA — ACK-paced; follow the target's authoritative contiguous cursor.
+    setStatus('OTA-WCB: streaming…');
+    let offset = 0, stalls = 0;
+    while (offset < size) {
+      const slice = bytes.subarray(offset, Math.min(offset + CHUNK, size));
+      wait = _otaAwaitMarker(12000);
+      await sendLine(`?OTA,DATA,${target},${session},${offset},${toB64(slice)}`, true);
+      ack = parseAck(await wait);
+      if (!ack) throw new Error('unexpected response during stream');
+      const before = offset;
+      offset = ack.offset;                 // authoritative cursor (handles gaps/dups/rewind)
+      if (offset === before) { if (++stalls > 60) throw new Error(`stalled at ${offset} — target not advancing`); }
+      else stalls = 0;
+      setProgress(offset, size);
+    }
+
+    // END — verify (SHA) + switch boot slot; the target reboots remotely.
+    setStatus('OTA-WCB: verifying on target…');
+    log('All chunks sent — verifying + switching boot slot on the target…');
+    wait = _otaAwaitMarker(20000);
+    await sendLine(`?OTA,END,${target},${session}`, true);
+    ack = parseAck(await wait);
+    if (!ack || ack.status !== 0) throw new Error('target verify/finalize failed');
+    log(`Verified. RC #${target} is rebooting into the new firmware — it will re-join the mesh shortly.`);
+    setStatus('OTA over WCB complete ✓ — target rebooting.');
+    // No USB reconnect: the relay WCB stayed connected; the Via-WCB session
+    // resumes on its own once the target heartbeats again.
+  } catch (e) {
+    const msg = e && e.message ? e.message : String(e);
+    log('OTA over WCB failed: ' + msg);
+    setStatus('OTA over WCB failed: ' + msg);
+    try { await sendLine(`?OTA,ABORT,${target},${session}`, true); } catch (_) {}
+  } finally {
+    _otaInProgress = false;
+    _otaMarkerResolver = null;
+    if (btn) { btn.disabled = false; btn.textContent = '📡 Update over WCB (OTA)'; }
+  }
+}
+
 async function runFirmwareFlash({ eraseNvs, sourceBtn, label, defaultLabel }) {
   if (_fwFlashing) return;
   _fwFlashing = true;
@@ -7391,6 +7494,18 @@ function _updateFirmwareBtnState() {
   const btnWipe  = document.getElementById('btn-fw-wipe');
   const status   = document.getElementById('fw-status');
   if (!btnFlash || !btnWipe) return;
+
+  // The two OTA buttons mirror the transport: serial OTA (?OTALOCAL) needs a
+  // DIRECT USB link to the board; relay OTA (?OTA) needs a VIA-WCB link (the
+  // USB-tethered WCB forwards to the remote RC). Skip while a flash/OTA already
+  // owns its own button's disabled state.
+  if (!_fwFlashing && !_otaInProgress) {
+    const btnOta    = document.getElementById('btn-fw-ota');
+    const btnOtaWcb = document.getElementById('btn-fw-ota-wcb');
+    if (btnOta)    btnOta.disabled    = !!viaWcbActive;   // serial OTA = direct USB only
+    if (btnOtaWcb) btnOtaWcb.disabled = !viaWcbActive;    // relay OTA  = via WCB only
+  }
+
   // While a flash is running, the flash flow owns these buttons' disabled
   // state (it disables them up front, re-enables them in its finally).  Don't
   // let a Via-WCB toggle mid-flash re-enable them out from under it.
@@ -7445,6 +7560,15 @@ document.getElementById('btn-fw-ota').addEventListener('click', () => {
     return;
   }
   otaUpdateOverUsb();
+});
+
+document.getElementById('btn-fw-ota-wcb').addEventListener('click', () => {
+  if (!viaWcbActive) {
+    alert('Update over WCB needs a "Via WCB" connection — a USB-tethered WCB bridging to the RC.\n\n' +
+          'Check "Via WCB", connect through your relay WCB, then try again.');
+    return;
+  }
+  otaUpdateOverWcb();
 });
 
 document.getElementById('btn-fw-wipe').addEventListener('click', e => {

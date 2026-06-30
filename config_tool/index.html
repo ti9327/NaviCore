@@ -2233,7 +2233,7 @@
         <img src="../Images/r2logo.png" alt="R2 logo"
              style="width:72px;height:72px;object-fit:contain;opacity:0.9">
         <div style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.3px">
-          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">300133QJUN26</span>
+          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">300156QJUN26</span>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap">
@@ -4231,6 +4231,19 @@ function handleBoardMessage(line) {
   try { msg = JSON.parse(line); } catch(e) {
     // Non-JSON plain text.  Via WCB it's the bridge WCB's own CLI output → WCB
     // pane.  Direct USB it's the connected board's output → primary pane.
+    //
+    // BUT the bridge verbosely logs every command WE relay to the RC (slot 20)
+    // — our 3 s GET_WCB_STATUS poll, the 10 s PING keepalive, and anything typed
+    // in the NaviCore pane — as e.g.
+    //   "Processing input from Serial0: ;w20,{...}"
+    //   "Sending Unicast ESP-NOW message to WCB20: {...}"
+    // That's our OWN relay traffic, not the WCB's CLI, so keep it out of the WCB
+    // pane (it would otherwise flood it every few seconds). The RC's actual
+    // replies come back as JSON / [TERM:20] and are routed to the NaviCore pane.
+    const rc = RC_WCB_DEVICE_ID;
+    const isRelayEcho = line.includes(';w' + rc + ',') ||
+                        new RegExp('\\b(to|from) WCB ?' + rc + '\\b').test(line);
+    if (viaWcbActive && isRelayEcho) { console.log('Board> (relay echo, hidden)', line); return; }
     appendTerminalLine('< ' + line, 'rx', viaWcbActive ? 'wcb' : 'main');
     console.log('Board>', line);
     return;

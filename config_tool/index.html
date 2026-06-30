@@ -784,6 +784,19 @@
     padding: 4px 14px; border-bottom: 1px solid var(--border);
     display: flex; align-items: center; gap: 6px;
   }
+  /* ── Per-pane visibility chips in the terminal header (WCB-wizard style) ──── */
+  .term-vis-toggles { display: flex; align-items: center; gap: 6px; }
+  .term-vis-chip {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 11px; font-weight: 600; color: var(--muted);
+    background: transparent; border: 1px solid var(--border);
+    border-radius: 5px; padding: 3px 9px;
+    cursor: pointer; user-select: none; white-space: nowrap;
+    transition: border-color .15s, color .15s, opacity .15s;
+  }
+  .term-vis-chip input[type="checkbox"] { margin: 0; cursor: pointer; accent-color: var(--accent); }
+  .term-vis-chip:has(input:checked)      { border-color: var(--accent); color: var(--text); }
+  .term-vis-chip:has(input:not(:checked)) { opacity: .5; }
   .terminal-input-row {
     display: flex; gap: 8px;
     padding: 8px 14px;
@@ -2220,7 +2233,7 @@
         <img src="../Images/r2logo.png" alt="R2 logo"
              style="width:72px;height:72px;object-fit:contain;opacity:0.9">
         <div style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.3px">
-          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">300122QJUN26</span>
+          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">300133QJUN26</span>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap">
@@ -2258,6 +2271,19 @@
   <div class="terminal-handle" id="terminal-handle" title="Drag to resize terminal"></div>
   <div class="terminal-header">
     <h3 class="term-title">⌨ TERMINAL</h3>
+    <!-- Per-pane visibility chips (WCB-wizard pattern). The NaviCore chip is
+         always available when connected; the WCB chip only appears while
+         bridging Via WCB. updateTerminalSplit() reads these + the transport. -->
+    <div class="term-vis-toggles" id="terminal-visibility-toggles">
+      <label class="term-vis-chip" id="term-vis-chip-nc" title="Show/hide the NaviCore terminal">
+        <input type="checkbox" id="term-vis-cb-nc" checked onchange="updateTerminalSplit()">
+        <span>NaviCore</span>
+      </label>
+      <label class="term-vis-chip" id="term-vis-chip-wcb" title="Show/hide the WCB (bridge) terminal" style="display:none">
+        <input type="checkbox" id="term-vis-cb-wcb" checked onchange="updateTerminalSplit()">
+        <span>WCB</span>
+      </label>
+    </div>
     <div class="terminal-controls">
       <button class="btn btn-ghost btn-term terminal-toggle" id="terminal-autoscroll" type="button">Auto-scroll</button>
       <button class="btn btn-ghost btn-term terminal-toggle" id="terminal-timestamps" type="button">Timestamps</button>
@@ -3652,9 +3678,21 @@ let _rcSbusTimer   = null;
 // path that flips viaWcbActive (toggle, connect/disconnect resets) keeps the UI
 // in sync rather than leaving a stale second column from a prior session.
 function updateTerminalSplit() {
-  const colW = document.getElementById('terminal-col-wcb');
-  if (colW) colW.style.display = viaWcbActive ? '' : 'none';
-  const lblM = document.getElementById('terminal-label-main');
+  const cbNc  = document.getElementById('term-vis-cb-nc');
+  const cbW   = document.getElementById('term-vis-cb-wcb');
+  const colM  = document.getElementById('terminal-col-main');
+  const colW  = document.getElementById('terminal-col-wcb');
+  const chipW = document.getElementById('term-vis-chip-wcb');
+  const lblM  = document.getElementById('terminal-label-main');
+
+  // The WCB pane and its chip only make sense while bridging through a WCB.
+  if (chipW) chipW.style.display = viaWcbActive ? '' : 'none';
+
+  // Each column shows when its visibility chip is checked; the WCB column
+  // additionally requires Via-WCB (there's no bridge to show on a direct link).
+  if (colM) colM.style.display = (!cbNc || cbNc.checked) ? '' : 'none';
+  if (colW) colW.style.display = (viaWcbActive && (!cbW || cbW.checked)) ? '' : 'none';
+
   if (lblM) lblM.textContent = viaWcbActive ? `⌨ NaviCore · RC #${RC_WCB_DEVICE_ID}` : '⌨ Terminal';
 }
 

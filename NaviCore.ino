@@ -1576,8 +1576,8 @@ bool execCliLine(const String& line) {
   if (line.startsWith("?OTALOCAL,")) { naviota::processOtaLocalCommand(line.substring(10)); return true; }
   if (line.startsWith("?OTA,"))      { naviota::processOtaRelayCommand(line.substring(5));  return true; }
   // ── Record/replay bench control (phase 1) ───────────────────────────────────
-  //   ?REC,START  ?REC,STOP  ?REC,PLAY  ?REC,CLEAR  ?REC[,INFO]
-  if (line.startsWith("?REC")) {
+  //   ?REC,START  ?REC,STOP  ?REC,PLAY  ?REC,CLEAR  ?REC[,INFO]   (case-insensitive)
+  if (line.length() >= 4 && line.substring(0, 4).equalsIgnoreCase("?REC")) {
     String arg = (line.length() > 5) ? line.substring(5) : "";   // after "?REC,"
     arg.trim();
     if      (arg.equalsIgnoreCase("START")) Serial.println(navirec::startRecord((uint8_t)FunctionSwState) ? "[REC] recording…" : "[REC] busy / no buffer");
@@ -1686,14 +1686,15 @@ void handleSerialInput() {
       serialInputBuf.trim();
       if (serialInputBuf.length() == 0) { serialInputBuf = ""; return; }
 
-      // ── Firmware OTA command driver ───────────────────────────────────────
-      // ?OTALOCAL,* = direct-USB update of THIS board; ?OTA,* = relay an update
-      // to a target over ESP-NOW. Routed through execCliLine (shared with the
-      // remote terminal). One command per call (early return) so loop() keeps
-      // heartbeats alive between the host's ACK-paced chunks.
-      if (serialInputBuf.startsWith("?OTALOCAL,") ||
-          serialInputBuf.startsWith("?OTA,")) {
-        execCliLine(serialInputBuf);
+      // ── "?..." CLI commands ───────────────────────────────────────────────
+      // ?OTALOCAL,* / ?OTA,* (firmware OTA) and ?REC,* (record/replay) all route
+      // through execCliLine (shared with the remote terminal). One command per
+      // call (early return) so loop() keeps heartbeats alive between the host's
+      // ACK-paced OTA chunks. Unrecognised "?" commands report back rather than
+      // being silently dropped.
+      if (serialInputBuf[0] == '?') {
+        if (!execCliLine(serialInputBuf))
+          Serial.printf("Unknown command: %s\n", serialInputBuf.c_str());
         serialInputBuf = ""; return;
       }
 

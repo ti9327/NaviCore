@@ -1909,6 +1909,16 @@ static void printBootTelemetry() {
 }
 
 void setup() {
+  // OTA brick-loop guard — MUST be the very first thing. A freshly-OTA'd image
+  // boots in PENDING_VERIFY because app-rollback is enabled in the Arduino esp32
+  // sdkconfig. If anything later in boot (PSRAM/WiFi/WCB bring-up, a crash, or
+  // the custom bootloader's short watchdog) resets the board before the image is
+  // marked valid, the bootloader rolls it back / retry-loops it — the exact
+  // "reboots forever after an OTA" symptom. Mark the running app valid NOW so
+  // that can't happen. Harmless on a normal boot: returns an ignorable error
+  // (ESP_ERR_OTA_ROLLBACK_INVALID_STATE) when the image is already valid.
+  esp_ota_mark_app_valid_cancel_rollback();
+
   // Arm the boot guard FIRST so it covers all of setup() (PSRAM/WiFi/USB
   // bring-up). Disarmed at the very end once the board is confirmed healthy.
   bootGuardArm();

@@ -56,6 +56,7 @@ inline volatile uint16_t _lastPos[8][32];    // [slot-1][ch], LASTPOS_NONE = uns
 inline uint32_t      _replayStart = 0;
 inline uint32_t      _cursor   = 0;          // replay event cursor
 inline uint32_t      _drops    = 0;          // queue-full drops (diagnostic)
+inline volatile bool _doneFlag = false;      // set when a replay completes (loop drains it)
 
 inline DispatchActionFn _cbDispatch   = nullptr;
 inline EmitMaestroFn    _cbEmitMaestro = nullptr;
@@ -180,8 +181,15 @@ inline void replayTick() {
   }
   // Complete when all events have fired, or as a safety net 1 s past the clip's
   // length (so a bad timestamp can never wedge replay + lock out live control).
-  if (_cursor >= _count || elapsed > clipDurationMs() + 1000) _state = ST_IDLE;
+  if (_cursor >= _count || elapsed > clipDurationMs() + 1000) {
+    _state = ST_IDLE;
+    _doneFlag = true;     // loop() prints a "playback complete" line on the transition
+  }
 }
+
+// One-shot "replay just finished" edge — drained by loop() so the message prints
+// from Core-1 context (the player completes asynchronously, not inside a CLI call).
+inline bool takeReplayDone() { if (_doneFlag) { _doneFlag = false; return true; } return false; }
 
 inline bool isReplaying() { return _state == ST_REPLAYING; }   // gate live dispatch
 

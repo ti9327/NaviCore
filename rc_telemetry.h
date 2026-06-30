@@ -671,6 +671,16 @@ inline void emitMode(int mode) {
 static char _wcbAlias[21][25] = {{0}};
 inline const char* wcbAlias(int id) { return (id >= 1 && id <= 20) ? _wcbAlias[id] : ""; }
 
+// "?WHOAMI" is re-sent each status poll only until a board's alias is cached.
+// A board with NO alias configured never replies with a name, which used to
+// mean we polled it forever (~every 3 s). Cap the attempts per online session
+// so an alias is OPTIONAL: ask a few times when a board appears, then give up.
+// Re-armed on an offline→online transition, so an alias configured later (after
+// the board reconnects) is still picked up.
+static const uint8_t ALIAS_MAX_TRIES = 4;
+static uint8_t _aliasTries[21] = {0};
+static bool    _aliasWasUp[21] = {false};
+
 // Build the WCB_STATUS reply (board liveness + friendly aliases) into buf — the
 // same payload NaviCore.ino emits to USB, but reusable over the WCB bridge.
 // relayId = the WCB that relayed the query (0 = direct USB; non-zero lets the
@@ -689,8 +699,16 @@ inline size_t buildWcbStatus(char* buf, size_t n, uint8_t relayId, bool includeA
       q, selfId, (int)relayId);
   for (int i = 1; i <= q && len < n; i++) {
     const bool up = (i == selfId) ? true : (wcb && wcb->isOnline(i));
-    if (up && i != selfId && wcb && wcbReady && !wcbAlias(i)[0])
-      wcb->send((uint8_t)i, "?WHOAMI");
+    if (i != selfId) {
+      if (up && !_aliasWasUp[i]) _aliasTries[i] = 0;   // came online → re-arm the alias query
+      _aliasWasUp[i] = up;
+      // Ask for the friendly name only until it's cached AND only a few times —
+      // an un-aliased board is fine, we just stop pestering it every poll.
+      if (up && wcb && wcbReady && !wcbAlias(i)[0] && _aliasTries[i] < ALIAS_MAX_TRIES) {
+        wcb->send((uint8_t)i, "?WHOAMI");
+        _aliasTries[i]++;
+      }
+    }
     len += snprintf(buf + len, n - len, "%s%s", (i > 1) ? "," : "", up ? "1" : "0");
   }
   if (len < n) len += snprintf(buf + len, n - len, "]");

@@ -2304,6 +2304,7 @@ void loop() {
   // writer) and advance any active replay. Both cheap no-ops when idle.
   navirec::drain();
   navirec::replayTick();
+  if (navirec::takeReplayDone()) Serial.println("[REC] ▶ playback complete");
 
   // WCB-network telemetry bridge — periodic rc_hb (0.5 Hz) + rc_ch (5 Hz)
   // broadcasts so the config tool's "Via WCB" mode can discover and live-

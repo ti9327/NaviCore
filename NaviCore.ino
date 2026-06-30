@@ -1581,8 +1581,16 @@ bool execCliLine(const String& line) {
     String arg = (line.length() > 5) ? line.substring(5) : "";   // after "?REC,"
     arg.trim();
     if      (arg.equalsIgnoreCase("START")) Serial.println(navirec::startRecord((uint8_t)FunctionSwState) ? "[REC] recording…" : "[REC] busy / no buffer");
-    else if (arg.equalsIgnoreCase("STOP"))  { navirec::stopRecord(); navirec::info(Serial); }
-    else if (arg.equalsIgnoreCase("PLAY"))  Serial.println(navirec::startReplay() ? "[REC] replaying…" : "[REC] busy / empty");
+    else if (arg.equalsIgnoreCase("STOP")) {                 // aborts recording OR an in-progress replay
+      if (navirec::stop() == navirec::ST_REPLAYING) Serial.println("[REC] replay stopped");
+      else                                          navirec::info(Serial);
+    }
+    else if (arg.equalsIgnoreCase("PLAY")) {
+      if (navirec::startReplay())
+        Serial.printf("[REC] replaying %lu events over %lums — ?REC,STOP to abort\n",
+                      (unsigned long)navirec::eventCount(), (unsigned long)navirec::clipDurationMs());
+      else Serial.println("[REC] busy / empty");
+    }
     else if (arg.equalsIgnoreCase("CLEAR")) { navirec::clearClip(); Serial.println("[REC] cleared"); }
     else                                    navirec::info(Serial);   // bare "?REC" or "?REC,INFO"
     return true;

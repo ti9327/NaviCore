@@ -134,6 +134,18 @@ inline void stopRecord() {
   _state = ST_IDLE;
 }
 inline void clearClip() { if (_state == ST_IDLE) _count = 0; }
+inline uint32_t clipDurationMs() { return _count ? _buf[_count - 1].tMs : 0; }
+inline uint32_t eventCount()     { return _count; }
+
+// Abort whatever is active — stop a recording OR an in-progress replay. Returns
+// what it stopped so the CLI can report it. Replay-abort hands live control back
+// next loop (the isReplaying() gates clear).
+inline uint8_t stop() {
+  uint8_t was = _state;
+  if (_state == ST_RECORDING) { _capturing = false; drain(); }
+  _state = ST_IDLE;
+  return was;
+}
 
 // ── Replay ───────────────────────────────────────────────────────────────────
 inline bool startReplay() {
@@ -166,7 +178,9 @@ inline void replayTick() {
       case REC_KF_HCRVOL:  if (_cbEmitHcrVol)  _cbEmitHcrVol(ev.u.kv.chan, ev.u.kv.vol); break;
     }
   }
-  if (_cursor >= _count) _state = ST_IDLE;    // replay complete
+  // Complete when all events have fired, or as a safety net 1 s past the clip's
+  // length (so a bad timestamp can never wedge replay + lock out live control).
+  if (_cursor >= _count || elapsed > clipDurationMs() + 1000) _state = ST_IDLE;
 }
 
 inline bool isReplaying() { return _state == ST_REPLAYING; }   // gate live dispatch

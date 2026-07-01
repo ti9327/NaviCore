@@ -979,6 +979,15 @@ static void rcExecuteActionNow(const RcAction& a) {
     case RA_MP3:
       executeMp3Action(a);
       break;
+    case RA_RECORD:
+      // Toggle recording. Deferred to loop() (this can run on Core 0 for a
+      // remote TRIGGER). Mode captured now for the clip's context.
+      navirec::requestRecordToggle((uint8_t)FunctionSwState);
+      break;
+    case RA_PLAY:
+      // Play (toggles): press → play, press again → stop. fn = loop flag.
+      navirec::requestPlay(a.fn != 0);
+      break;
     default: break;
   }
 }
@@ -992,7 +1001,9 @@ void rcExecuteAction(const RcAction& a) {
   if (calibrationActive) return;
   // Replay owns the outputs — suppress LIVE button/switch/remote dispatch while
   // a clip plays (replay calls rcExecuteActionNow directly, bypassing this gate).
-  if (navirec::isReplaying()) return;
+  // EXCEPT the record/play controls themselves, so a mapped button can stop a
+  // running clip (Play toggles) or start a recording.
+  if (navirec::isReplaying() && a.type != RA_RECORD && a.type != RA_PLAY) return;
   if (a.delayMs > 0) { scheduleAction(a, a.delayMs); return; }
   rcExecuteActionNow(a);
 }
@@ -2320,6 +2331,7 @@ void loop() {
 
   // Record/replay — drain captured events into the PSRAM clip (Core-1 sole
   // writer) and advance any active replay. Both cheap no-ops when idle.
+  navirec::pollControl();   // run any Record/Play trigger deferred from dispatch (Core-1 safe)
   navirec::drain();
   navirec::replayTick();
   if (navirec::takeReplayDone()) Serial.println("[REC] ▶ playback complete");

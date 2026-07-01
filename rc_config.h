@@ -40,6 +40,12 @@ enum RcActionType : uint8_t {
                                //   ";A,..." WCB command (normal command path,
                                //   unicast) to RcConfig::mp3Dest — the WCB owns
                                //   the MP3 serial wiring (?MP3,S<port>).
+  RA_RECORD            = 8,   // Record/replay control — toggle recording. cmd =
+                               //   clip name (for the future clip library; the
+                               //   current build has one in-RAM clip). NOT captured.
+  RA_PLAY              = 9,   // Play a recorded clip. cmd = clip name; fn = loop
+                               //   (0=once, 1=repeat). NOT captured. Both defer to
+                               //   loop() so a remote (Core-0) trigger is safe.
 };
 
 // MP3 Trigger function codes, stored in RcAction::fn for RA_MP3 actions.
@@ -659,6 +665,17 @@ static void actionToJson(const RcAction& a, JsonObject obj) {
       obj["track"] = a.track;
       if (a.delayMs) obj["delay"] = a.delayMs;
       break;
+    case RA_RECORD:
+      obj["type"] = "record";
+      obj["cmd"]  = a.cmd;   // clip name (library-ready; ignored by the single-clip build)
+      if (a.delayMs) obj["delay"] = a.delayMs;
+      break;
+    case RA_PLAY:
+      obj["type"] = "play";
+      obj["cmd"]  = a.cmd;   // clip name to play
+      obj["fn"]   = a.fn;    // loop: 0=once, 1=repeat
+      if (a.delayMs) obj["delay"] = a.delayMs;
+      break;
     default: break;
   }
   if (a.note[0]) obj["note"] = a.note;
@@ -715,6 +732,17 @@ static bool actionFromJson(const JsonObject& obj, RcAction& a) {
     a.type    = RA_MP3;
     a.fn      = (uint8_t)(obj["fn"]    | 0);
     a.track   = (int16_t)(obj["track"] | 0);
+    a.delayMs = obj["delay"] | 0;
+    ok = true;
+  } else if (strcmp(type, "record") == 0) {
+    a.type    = RA_RECORD;
+    strlcpy(a.cmd, obj["cmd"] | "", sizeof(a.cmd));   // clip name
+    a.delayMs = obj["delay"] | 0;
+    ok = true;
+  } else if (strcmp(type, "play") == 0) {
+    a.type    = RA_PLAY;
+    strlcpy(a.cmd, obj["cmd"] | "", sizeof(a.cmd));   // clip name
+    a.fn      = (uint8_t)(obj["fn"] | 0);             // loop 0/1
     a.delayMs = obj["delay"] | 0;
     ok = true;
   }

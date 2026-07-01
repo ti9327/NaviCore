@@ -57,6 +57,15 @@ inline uint32_t      _replayStart = 0;
 inline uint32_t      _cursor   = 0;          // replay event cursor
 inline uint32_t      _drops    = 0;          // queue-full drops (diagnostic)
 inline volatile bool _doneFlag = false;      // set when a replay completes (loop drains it)
+inline volatile bool _loop     = false;      // replay repeats on completion (idle-animation mode)
+// Deferred control: a Record/Play trigger can dispatch on Core 0 (remote
+// ESP-NOW TRIGGER), but startReplay does Maestro serial writes (ease-in) that
+// must run on Core 1. So triggers just set a request here; pollControl() runs it
+// from loop(). A single volatile byte is a lock-free edge (last-writer-wins).
+enum Ctl : uint8_t { CTL_NONE = 0, CTL_REC_TOGGLE = 1, CTL_PLAY = 2, CTL_STOP = 3 };
+inline volatile uint8_t _pendingCtl  = CTL_NONE;
+inline volatile uint8_t _pendingMode = 1;    // mode captured at a record request
+inline volatile bool    _pendingLoop = false;
 
 inline DispatchActionFn _cbDispatch   = nullptr;
 inline EmitMaestroFn    _cbEmitMaestro = nullptr;
@@ -90,6 +99,7 @@ inline void shadowInvalidateSlot(uint8_t slot) {            // goHome/stopScript
 //    full — a dropped keyframe just thins one frame; a stall would brick. ───────
 inline void __attribute__((noinline)) captureAction(const RcAction& a) {
   if (!_capturing) return;
+  if (a.type == RA_RECORD || a.type == RA_PLAY) return;   // meta — never record the record/play triggers
   RecEvent ev; ev.tMs = millis() - _recStart; ev.kind = REC_ACTION; ev.u.act = a;
   if (xQueueSend(_queue, &ev, 0) != pdTRUE) _drops++;
 }
@@ -148,10 +158,16 @@ inline uint8_t stop() {
   return was;
 }
 
+// ── Deferred control (set by RA_RECORD/RA_PLAY dispatch, run in loop) ─────────
+inline void requestRecordToggle(uint8_t mode) { _pendingMode = mode; _pendingCtl = CTL_REC_TOGGLE; }
+inline void requestPlay(bool loop)            { _pendingLoop = loop; _pendingCtl = CTL_PLAY; }
+inline void requestStop()                     { _pendingCtl = CTL_STOP; }
+
 // ── Replay ───────────────────────────────────────────────────────────────────
-inline bool startReplay() {
+inline bool startReplay(bool loop = false) {
   if (_state != ST_IDLE || _count == 0) return false;
   _capturing = false;                         // never re-record replayed events
+  _loop = loop;
   // Reset speed/accel on every touched channel so our timing is authoritative
   // (latched Pololu limits would double-smooth), then ease to servoHome.
   for (int s = 0; s < 8; s++)
@@ -182,8 +198,12 @@ inline void replayTick() {
   // Complete when all events have fired, or as a safety net 1 s past the clip's
   // length (so a bad timestamp can never wedge replay + lock out live control).
   if (_cursor >= _count || elapsed > clipDurationMs() + 1000) {
-    _state = ST_IDLE;
-    _doneFlag = true;     // loop() prints a "playback complete" line on the transition
+    if (_loop && _count) {                 // idle-animation loop — restart the event stream
+      _cursor = 0; _replayStart = millis();
+    } else {
+      _state = ST_IDLE;
+      _doneFlag = true;   // loop() prints a "playback complete" line on the transition
+    }
   }
 }
 
@@ -192,6 +212,27 @@ inline void replayTick() {
 inline bool takeReplayDone() { if (_doneFlag) { _doneFlag = false; return true; } return false; }
 
 inline bool isReplaying() { return _state == ST_REPLAYING; }   // gate live dispatch
+
+// Run a deferred Record/Play trigger from loop() (Core 1). Play toggles: press
+// while playing → stop, so one button both starts and stops (incl. a loop).
+inline void pollControl() {
+  uint8_t c = _pendingCtl;
+  if (c == CTL_NONE) return;
+  _pendingCtl = CTL_NONE;
+  switch (c) {
+    case CTL_REC_TOGGLE:
+      if      (_state == ST_RECORDING) stopRecord();
+      else if (_state == ST_IDLE)      startRecord(_pendingMode);
+      break;
+    case CTL_PLAY:
+      if      (_state == ST_REPLAYING) stop();                       // toggle off
+      else if (_state == ST_IDLE)      startReplay(_pendingLoop);
+      break;
+    case CTL_STOP:
+      stop();
+      break;
+  }
+}
 
 inline void info(Print& out) {
   uint32_t durMs = _count ? _buf[_count - 1].tMs : 0;

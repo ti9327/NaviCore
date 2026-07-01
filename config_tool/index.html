@@ -2233,7 +2233,7 @@
         <img src="../Images/r2logo.png" alt="R2 logo"
              style="width:72px;height:72px;object-fit:contain;opacity:0.9">
         <div style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.3px">
-          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">302024QJUN26</span>
+          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">302315QJUN26</span>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap">
@@ -3261,6 +3261,8 @@ const actionTypeLabels = {
   'serial':        'Serial port',
   'hcr':           'HCR Vocalizer',
   'mp3':           'MP3 Trigger',
+  'record':        'Record (toggle)',
+  'play':          'Play clip',
 };
 
 // Serial port targets — RC firmware exposes S3 and S4 as aux SoftwareSerial.
@@ -3951,12 +3953,42 @@ function setTerminalEnabled(enabled) {
   document.getElementById('terminal-timestamps').disabled = !enabled;
 }
 
+// Up/down-arrow command history for a terminal input — each input keeps its own
+// list. The send handler calls inputEl._pushHistory(cmd) after sending.
+function attachTerminalHistory(inputEl) {
+  if (!inputEl) return;
+  const hist = [];
+  let cursor = -1;   // -1 = editing a fresh line; else an index into hist
+  let draft = '';
+  inputEl.addEventListener('keydown', ev => {
+    if (ev.key === 'ArrowUp') {
+      if (!hist.length) return;
+      ev.preventDefault();
+      if (cursor === -1) { draft = inputEl.value; cursor = hist.length - 1; }
+      else if (cursor > 0) cursor--;
+      inputEl.value = hist[cursor];
+      inputEl.setSelectionRange(inputEl.value.length, inputEl.value.length);
+    } else if (ev.key === 'ArrowDown') {
+      if (cursor === -1) return;
+      ev.preventDefault();
+      if (cursor < hist.length - 1) { cursor++; inputEl.value = hist[cursor]; }
+      else { cursor = -1; inputEl.value = draft; }   // back to the fresh draft
+      inputEl.setSelectionRange(inputEl.value.length, inputEl.value.length);
+    }
+  });
+  inputEl._pushHistory = (cmd) => {   // skip blanks + consecutive dupes; cap at 100
+    if (cmd && hist[hist.length - 1] !== cmd) { hist.push(cmd); if (hist.length > 100) hist.shift(); }
+    cursor = -1; draft = '';
+  };
+}
+
 function initTerminal() {
   const input = document.getElementById('terminal-input');
   const send = document.getElementById('terminal-send');
   const clear = document.getElementById('terminal-clear');
   const autoScroll = document.getElementById('terminal-autoscroll');
   const timestamps = document.getElementById('terminal-timestamps');
+  attachTerminalHistory(input);
 
   input.addEventListener('keydown', async ev => {
     if (ev.key !== 'Enter') return;
@@ -3977,6 +4009,7 @@ function initTerminal() {
     } else {
       await sendLine(value);   // direct USB — straight to the connected board
     }
+    input._pushHistory?.(value);
     input.value = '';
   });
 
@@ -3984,6 +4017,7 @@ function initTerminal() {
   const inputW = document.getElementById('terminal-input-wcb');
   const sendW  = document.getElementById('terminal-send-wcb');
   if (inputW && sendW) {
+    attachTerminalHistory(inputW);
     inputW.addEventListener('keydown', ev => {
       if (ev.key !== 'Enter') return;
       ev.preventDefault();
@@ -3994,6 +4028,7 @@ function initTerminal() {
       if (!value || !writer) return;
       appendTerminalLine('> ' + value, 'tx', 'wcb');
       await sendLine(value, /*silent=*/true);   // raw to the bridge WCB
+      inputW._pushHistory?.(value);
       inputW.value = '';
     });
   }
@@ -5669,6 +5704,8 @@ function actionSummary(a) {
     const fnLbl = mp3FnLabels[a.fn] || `fn${a.fn}`;
     core = MP3_FN_USES_ARG.has(+a.fn) ? `MP3 ${fnLbl} ${a.track ?? 0}` : `MP3 ${fnLbl}`;
   }
+  else if (a.type === 'record') core = a.cmd ? `Record "${escH(a.cmd)}"` : 'Record (toggle)';
+  else if (a.type === 'play')   core = `Play${(+a.fn) ? ' ⟳' : ''}${a.cmd ? ' "' + escH(a.cmd) + '"' : ''}`;
   else core = a.type;
   if (a.note && a.note.length)
     core += ` <span style="color:#888;font-style:italic">"${escH(a.note)}"</span>`;
@@ -6199,6 +6236,37 @@ function appendActionFields(container, action) {
     fnSel.onchange = () => renderMp3ArgField(container, +fnSel.value, undefined);
     container.appendChild(makeFieldGroup('Function', fnSel));
     renderMp3ArgField(container, +(action.fn || 1), action.track);
+  } else if (type === 'record') {
+    // Record/replay control — toggles capture. Clip name is for the future
+    // clip library (the current build records into one in-RAM clip).
+    const nameInput = document.createElement('input');
+    nameInput.type = 'text'; nameInput.id = fid + '-clip';
+    nameInput.placeholder = 'clip name (optional)';
+    nameInput.style.width = '150px'; nameInput.maxLength = 90;
+    nameInput.value = action.cmd || '';
+    nameInput.title = 'Which clip this records into (for the coming clip library).';
+    container.appendChild(makeFieldGroup('Clip name', nameInput));
+    const hint = document.createElement('div');
+    hint.style.cssText = 'font-size:11px;color:var(--muted);align-self:center';
+    hint.textContent = 'Toggles recording — fire to start, fire again to stop + save.';
+    container.appendChild(hint);
+  } else if (type === 'play') {
+    const nameInput = document.createElement('input');
+    nameInput.type = 'text'; nameInput.id = fid + '-clip';
+    nameInput.placeholder = 'clip name (optional)';
+    nameInput.style.width = '150px'; nameInput.maxLength = 90;
+    nameInput.value = action.cmd || '';
+    nameInput.title = 'Which clip to play (for the coming clip library).';
+    container.appendChild(makeFieldGroup('Clip name', nameInput));
+    const loopLabel = document.createElement('label');
+    loopLabel.style.cssText = 'display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;align-self:center';
+    loopLabel.title = 'Repeat the clip until the control is fired again (idle animation).';
+    const loopCb = document.createElement('input');
+    loopCb.type = 'checkbox'; loopCb.id = fid + '-loop';
+    loopCb.checked = !!action.fn;
+    loopLabel.appendChild(loopCb);
+    loopLabel.appendChild(document.createTextNode('Loop'));
+    container.appendChild(loopLabel);
   }
 }
 
@@ -6260,6 +6328,15 @@ function readActionFromUI(tier, ai) {
     const trackEl  = document.getElementById(fid + '-track');
     const track    = trackEl ? +(trackEl.value || 0) : 0;
     return { type, fn, track, ...extras };
+  }
+  if (type === 'record') {
+    const clip = (document.getElementById(fid + '-clip')?.value || '').trim();
+    return { type, cmd: clip, ...extras };
+  }
+  if (type === 'play') {
+    const clip = (document.getElementById(fid + '-clip')?.value || '').trim();
+    const loop = document.getElementById(fid + '-loop')?.checked ? 1 : 0;
+    return { type, cmd: clip, fn: loop, ...extras };
   }
   return null;
 }

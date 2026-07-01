@@ -2234,7 +2234,7 @@
         <img src="../Images/r2logo.png" alt="R2 logo"
              style="width:72px;height:72px;object-fit:contain;opacity:0.9">
         <div style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.3px">
-          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">010042QJUL26</span>
+          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">010050QJUL26</span>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap">
@@ -4304,22 +4304,40 @@ function clipsRefresh() {
   sendRcCli('?REC,LS');
 }
 
-// ── [CLIPLIST] fragment reassembly ──────────────────────────────────────────
-// The board emits the clip list as a single println: "[CLIPLIST]{...json...}".
-// Over Direct USB that whole line arrives intact.  Via WCB it is relayed through
-// the 160-byte RTERM sink (navicore_rterm.h), which HARD-WRAPS a longer line
-// mid-JSON with no continuation marker — so a marker past ~160 bytes (≈4+ clips)
-// comes back as two or more consecutive "[TERM:20]<fragment>" lines.  We rejoin
-// same-source fragments and parse only once the JSON is complete, so the Clips
-// panel loads regardless of clip count.  No bytes are lost on the wire; they are
-// just split, so this is a pure config-tool fix (no firmware/bridge change).
-let _clipAsm = null;   // { src, buf } while a marker is mid-reassembly
+// ── Clip-list wire ingestion (?REC,LS) ──────────────────────────────────────
+// We accept two on-wire formats so the panel works before AND after the board is
+// reflashed:
+//   • NEW, interleave-proof (current firmware): "[CLIPLIST:BEGIN]", then one
+//     small "[CLIPITEM]{...}" line per clip, then "[CLIPLIST:END]".  Each line is
+//     well under the 160-byte RTERM packet limit, so it never fragments over the
+//     WCB bridge, and each clip parses independently — relayed log noise landing
+//     between items can't corrupt a neighbour.
+//   • OLD, single marker (pre-reflash firmware): one "[CLIPLIST]{...whole json...}"
+//     line.  Via WCB the 160-byte RTERM sink hard-wraps that mid-JSON into two or
+//     more consecutive "[TERM:20]<fragment>" lines, so we rejoin same-source
+//     fragments and parse only once the JSON is complete.
+// Everything here is config-tool-only; no bytes are lost on the wire, just split.
+let _clipItems = null;   // { src, items } accumulating between BEGIN and END (new format)
+let _clipAsm   = null;   // { src, buf }   rejoining a split single marker (old format)
 
-// Feed one candidate line to the reassembler.  `src` is the relaying WCB id (a
+// Feed one candidate line to the ingester.  `src` is the relaying WCB id (a
 // string) for [TERM:<src>] lines, or null for a bare Direct-USB line.  Returns
-// true if the text was consumed as a [CLIPLIST] marker/continuation — the caller
-// must then NOT echo it to the terminal.
+// true if the text was consumed as a clip-list marker — the caller must then NOT
+// echo it to the terminal.
 function _clipListFeed(src, text) {
+  // ── New per-item format ──
+  if (text.startsWith('[CLIPLIST:BEGIN]')) { _clipItems = { src, items: [] }; return true; }
+  if (text.startsWith('[CLIPLIST:END]')) {
+    if (_clipItems && _clipItems.src === src) { renderClips(_clipItems.items); _clipItems = null; }
+    return true;
+  }
+  if (text.startsWith('[CLIPITEM]')) {
+    if (_clipItems && _clipItems.src === src) {
+      try { _clipItems.items.push(JSON.parse(text.slice(10))); } catch (_) {}   // a corrupt item is dropped, never merged
+    }
+    return true;
+  }
+  // ── Old single-marker format (with fragment reassembly) ──
   if (text.startsWith('[CLIPLIST]')) {
     _clipAsm = { src, buf: text };            // start (a fresh LS reply supersedes any stalled buffer)
   } else if (_clipAsm && _clipAsm.src === src) {
@@ -4470,9 +4488,10 @@ function handleBoardMessage(line) {
   // OTA is active) so it can advance its ACK-paced loop, then echo to the terminal.
   if (line.startsWith('[OTA:')) { _otaHandleMarker(line); appendTerminalLine('< ' + line, 'rx'); return; }
   // Clip library list (?REC,LS) — plain here (Direct USB) or wrapped in [TERM:20]
-  // (Via WCB, handled below).  Fed to the reassembler because Via WCB the marker
-  // can arrive split across RTERM fragments (see _clipListFeed).
-  if (line.startsWith('[CLIPLIST]')) { _clipListFeed(null, line); return; }
+  // (Via WCB, handled below).  Covers the new per-item markers ([CLIPLIST:BEGIN]/
+  // [CLIPITEM]/[CLIPLIST:END]) and the old single [CLIPLIST]{...} marker; see
+  // _clipListFeed.  "[CLIPLIST" (no ']') matches BEGIN/END and the old marker.
+  if (line.startsWith('[CLIPLIST') || line.startsWith('[CLIPITEM]')) { _clipListFeed(null, line); return; }
   // RTERM — a NaviCore CLI line the bridge WCB relayed to USB, formatted
   // "[TERM:<sourceWCB>]<text>".  This is the remote board's CLI output, so it
   // belongs in the primary (NaviCore) pane.  RC #20 lines show bare; any other

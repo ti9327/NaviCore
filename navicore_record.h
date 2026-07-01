@@ -294,11 +294,16 @@ inline bool renameClip(const char* from, const char* to) {
   return _clipFS->rename(pf, pt);
 }
 
-// Human-readable list PLUS a single machine-parseable "[CLIPLIST]{...}" line the
-// config-tool Clips panel intercepts (same idea as the [OTA:]/[TERM:] markers).
+// Emits the clip library as one small "[CLIPITEM]{...}" line per clip, bracketed
+// by "[CLIPLIST:BEGIN]" / "[CLIPLIST:END]", which the config-tool Clips panel
+// accumulates.  Each line stays well under the 160-byte RTERM packet limit, so it
+// survives the WCB bridge intact — a single long "[CLIPLIST]{...}" line would be
+// hard-wrapped mid-JSON at 160 bytes (navicore_rterm.h) into two [TERM:] lines
+// and fail to parse.  Per-clip lines also parse independently, so relayed log
+// noise landing between them can't corrupt a neighbouring clip's name.  Clip names
+// are already sanitised to [A-Za-z0-9_-] on save, so no JSON escaping is needed.
 inline void listClips(Print& out) {
-  String json = "[CLIPLIST]{\"clips\":[";
-  int n = 0;
+  out.println("[CLIPLIST:BEGIN]");
   if (_clipFS) {
     File dir = _clipFS->open("/");
     for (File e = dir ? dir.openNextFile() : File(); e; e = dir.openNextFile()) {
@@ -308,14 +313,11 @@ inline void listClips(Print& out) {
       if (nm.endsWith(".ncr")) nm = nm.substring(0, nm.length() - 4);
       uint32_t dur = 0; ClipFileHeader h;
       if (e.read((uint8_t*)&h, sizeof(h)) == (int)sizeof(h) && memcmp(h.magic, "NCR1", 4) == 0) dur = h.durationMs;
-      out.printf("  %s  (%u B, %lu ms)\n", nm.c_str(), (unsigned)e.size(), (unsigned long)dur);
-      if (n++) json += ",";
-      json += "{\"name\":\"" + nm + "\",\"bytes\":" + String((unsigned)e.size()) + ",\"dur\":" + String((unsigned long)dur) + "}";
+      out.printf("[CLIPITEM]{\"name\":\"%s\",\"bytes\":%u,\"dur\":%lu}\n",
+                 nm.c_str(), (unsigned)e.size(), (unsigned long)dur);
     }
   }
-  if (!n) out.println("  (no clips saved)");
-  json += "]}";
-  out.println(json);   // parsed by the config tool; harmless JSON to a human
+  out.println("[CLIPLIST:END]");
 }
 
 // Run a deferred Record/Play trigger from loop() (Core 1). Play toggles: press

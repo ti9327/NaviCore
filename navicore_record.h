@@ -54,6 +54,23 @@ inline uint32_t      _recStart = 0;
 inline uint8_t       _mode     = 1;          // mode at capture (context)
 inline QueueHandle_t _queue    = nullptr;
 inline volatile uint16_t _lastPos[8][32];    // [slot-1][ch], LASTPOS_NONE = unset
+
+// Per-channel replay interpolation curve (phase 1b — see _buildCurveIndex below
+// for the full explanation). Declared here (not next to _buildCurveIndex) so
+// recBegin() below can allocate _curveNext before first use.
+struct MaestroCurve {
+  uint16_t pPrev;        // qus of the last finalized keyframe (or servoHome) — ease-from anchor
+  uint32_t tPrev;        // its tMs
+  int16_t  firstIdx;     // this channel's first keyframe in the clip, -1 = none (set once, for loop rewind)
+  int16_t  nextIdx;      // next NOT-YET-finalized keyframe; walked forward as replay advances
+  uint16_t lastEmitted;  // de-dupes a redundant _cbEmitMaestro call when the curve hasn't moved
+  bool     active;       // channel has a servoHome or at least one keyframe to follow this replay
+  bool     reanchor;     // pose is unknown (no home, or a goHome fired mid-replay) — suppress
+                          // emission until the next keyframe finalizes and re-anchors the curve
+};
+inline MaestroCurve _curve[8][32];
+inline int16_t*     _curveNext = nullptr;   // parallel to _buf; sized to _cap in recBegin()
+
 inline uint32_t      _replayStart = 0;
 inline uint32_t      _cursor   = 0;          // replay event cursor
 inline uint32_t      _drops    = 0;          // queue-full drops (diagnostic)
@@ -81,6 +98,11 @@ inline void recBegin(uint32_t cap, DispatchActionFn d, EmitMaestroFn m,
   _buf = (RecEvent*) ps_malloc((size_t)cap * sizeof(RecEvent));
   if (!_buf) _cap = 0;                       // OOM → recorder disabled, never crashes
   _queue = xQueueCreate(32, sizeof(RecEvent));
+  // Curve-chain index for replay interpolation (indices must fit int16_t; cap is
+  // a fixed 8192 today). OOM here degrades gracefully — replayTick() null-checks
+  // _curveNext and each channel just holds at its first keyframe instead of
+  // chaining through the rest, rather than crashing.
+  _curveNext = (cap && cap <= 32767) ? (int16_t*) ps_malloc((size_t)cap * sizeof(int16_t)) : nullptr;
   _cbDispatch = d; _cbEmitMaestro = m; _cbEmitHcrVol = v; _cbResetChan = r;
   for (int s = 0; s < 8; s++) for (int c = 0; c < 32; c++) _lastPos[s][c] = LASTPOS_NONE;
 }
@@ -92,7 +114,17 @@ inline void shadowSetTarget(uint8_t slot, uint8_t ch, uint16_t pos) {
   if (slot >= 1 && slot <= 8 && ch < 32) _lastPos[slot - 1][ch] = pos;
 }
 inline void shadowInvalidateSlot(uint8_t slot) {            // goHome/stopScript: pose unknown
-  if (slot >= 1 && slot <= 8) for (int c = 0; c < 32; c++) _lastPos[slot - 1][c] = LASTPOS_NONE;
+  if (slot < 1 || slot > 8) return;
+  for (int c = 0; c < 32; c++) {
+    _lastPos[slot - 1][c] = LASTPOS_NONE;
+    // Mid-replay this is a curve discontinuity (design §3.3): the servo just
+    // snapped to a Maestro-side home position we can't read back, so the
+    // interpolation curve's anchor is stale. _updateCurves() (Core 1, same
+    // context replay dispatches goHome from) sees reanchor and holds silent
+    // until the next keyframe for this channel lands, then snaps straight to
+    // it instead of easing from a position that's no longer physically true.
+    if (_state == ST_REPLAYING) _curve[slot - 1][c].reanchor = true;
+  }
 }
 
 // ── Capture taps (noinline + small POD: keep the event off the Core-0 ESP-NOW
@@ -169,27 +201,132 @@ inline void requestPlay(const char* name, bool loop) {
 }
 inline void requestStop() { _pendingCtl = CTL_STOP; }
 
+// ── Maestro keyframe interpolation (phase 1b) ──────────────────────────────────
+// Capture is dense (every knob-deadband keyframe kept), but firing each one AT
+// its timestamp still steps servos at capture cadence — this smooths replay by
+// emitting a linearly-interpolated qus position for every active (slot,ch)
+// EVERY replayTick(), decoupling smoothness from both the original capture
+// cadence and loop() jitter (design: docs/RECORD_REPLAY_DESIGN.md §3).
+//
+// Because a keyframe is only "known" once its own timestamp arrives, true
+// look-ahead interpolation needs a channel-scoped chain PARALLEL to the flat,
+// time-ordered event buffer: `_curveNext[i]` = index of the next REC_KF_MAESTRO
+// event sharing (slot,ch) with event i (-1 = chain end). Built once per
+// startReplay() with a single O(n) forward pass (cheap — capped at `_cap`
+// events). Each channel eases from `pPrev`@`tPrev` (the last FINALIZED
+// keyframe) toward `_buf[nextIdx]` (the next, still-future one); once elapsed
+// reaches that keyframe's time it's finalized (becomes the new pPrev/tPrev)
+// and the chain advances — so the anchor is always in the past and the target
+// always in the future, the invariant real tweening needs. (MaestroCurve and
+// _curve/_curveNext are declared up in ── Module state ── so recBegin() can
+// allocate _curveNext before this point.)
+
+// Initial build, called once from startReplay(). Also resets speed/accel (0 =
+// unlimited) on every touched channel — the Maestro's OWN latched limits live
+// device-side and can't be read back, so we force-reset rather than snapshot,
+// else they'd double-smooth our interpolated stream — then eases known-home
+// channels toward their current position (a no-op if nothing drifted).
+inline void _buildCurveIndex() {
+  int16_t lastIdx[8][32];
+  for (int s = 0; s < 8; s++) {
+    for (int c = 0; c < 32; c++) {
+      lastIdx[s][c] = -1;
+      MaestroCurve& cv = _curve[s][c];
+      bool known = (_lastPos[s][c] != LASTPOS_NONE);
+      cv.pPrev = known ? _lastPos[s][c] : 0;
+      cv.tPrev = 0;
+      cv.firstIdx = cv.nextIdx = -1;
+      cv.lastEmitted = cv.pPrev;
+      cv.active = known;
+      cv.reanchor = !known;   // no known home → the first keyframe snaps instead of easing from 0
+    }
+  }
+  for (uint32_t i = 0; i < _count; i++) {
+    if (_buf[i].kind != REC_KF_MAESTRO) continue;
+    uint8_t s = _buf[i].u.km.slot - 1, c = _buf[i].u.km.ch;
+    if (s >= 8 || c >= 32) continue;
+    MaestroCurve& cv = _curve[s][c];
+    if (lastIdx[s][c] < 0) cv.firstIdx = cv.nextIdx = (int16_t)i;   // first keyframe for this channel
+    else if (_curveNext)   _curveNext[lastIdx[s][c]] = (int16_t)i;
+    lastIdx[s][c] = (int16_t)i;
+    cv.active = true;
+  }
+  for (int s = 0; s < 8; s++) {
+    for (int c = 0; c < 32; c++) {
+      if (lastIdx[s][c] >= 0 && _curveNext) _curveNext[lastIdx[s][c]] = -1;   // terminate the chain
+      MaestroCurve& cv = _curve[s][c];
+      if (!cv.active) continue;
+      if (_cbResetChan) _cbResetChan((uint8_t)(s + 1), (uint8_t)c);
+      if (!cv.reanchor && _cbEmitMaestro) _cbEmitMaestro((uint8_t)(s + 1), (uint8_t)c, cv.pPrev);
+    }
+  }
+}
+
+// Idle-animation loop restart: rewind each active channel's cursor to its first
+// keyframe (cheap — no event-buffer rescan) while KEEPING pPrev at wherever the
+// previous lap actually left the servo, so the loop seam eases rather than
+// snapping; tPrev resets to 0 to re-anchor against the new lap's elapsed clock.
+inline void _rewindCurves() {
+  for (int s = 0; s < 8; s++) {
+    for (int c = 0; c < 32; c++) {
+      MaestroCurve& cv = _curve[s][c];
+      if (!cv.active) continue;
+      cv.tPrev = 0;
+      cv.nextIdx = cv.firstIdx;
+      cv.reanchor = false;
+    }
+  }
+}
+
+// Advance + emit every active curve for the current elapsed time. Called once
+// per replayTick(), independent of the discrete-event cursor.
+inline void _updateCurves(uint32_t elapsed) {
+  for (int s = 0; s < 8; s++) {
+    for (int c = 0; c < 32; c++) {
+      MaestroCurve& cv = _curve[s][c];
+      if (!cv.active) continue;
+      while (cv.nextIdx >= 0 && _buf[cv.nextIdx].tMs <= elapsed) {
+        cv.pPrev = _buf[cv.nextIdx].u.km.pos;
+        cv.tPrev = _buf[cv.nextIdx].tMs;
+        cv.reanchor = false;               // finalized — pose is known again
+        cv.nextIdx = _curveNext ? _curveNext[cv.nextIdx] : (int16_t)-1;
+      }
+      if (cv.reanchor) continue;           // pose still unknown — hold silent until the next keyframe lands
+      uint16_t pos;
+      if (cv.nextIdx < 0) {
+        pos = cv.pPrev;                    // no more keyframes for this channel — hold position
+      } else {
+        uint32_t tNext = _buf[cv.nextIdx].tMs;
+        uint16_t pNext = _buf[cv.nextIdx].u.km.pos;
+        if (tNext <= cv.tPrev) {
+          pos = pNext;                     // degenerate/zero-length segment — snap
+        } else {
+          float frac = (float)(elapsed - cv.tPrev) / (float)(tNext - cv.tPrev);
+          pos = (uint16_t)((int32_t)cv.pPrev + (int32_t)(((int32_t)pNext - (int32_t)cv.pPrev) * frac));
+        }
+      }
+      if (pos != cv.lastEmitted) {
+        if (_cbEmitMaestro) _cbEmitMaestro((uint8_t)(s + 1), (uint8_t)c, pos);
+        cv.lastEmitted = pos;
+      }
+    }
+  }
+}
+
 // ── Replay ───────────────────────────────────────────────────────────────────
 inline bool startReplay(bool loop = false) {
   if (_state != ST_IDLE || _count == 0) return false;
   _capturing = false;                         // never re-record replayed events
   _loop = loop;
-  // Reset speed/accel on every touched channel so our timing is authoritative
-  // (latched Pololu limits would double-smooth), then ease to servoHome.
-  for (int s = 0; s < 8; s++)
-    for (int c = 0; c < 32; c++)
-      if (_lastPos[s][c] != LASTPOS_NONE) {
-        if (_cbResetChan)   _cbResetChan((uint8_t)(s + 1), (uint8_t)c);
-        if (_cbEmitMaestro) _cbEmitMaestro((uint8_t)(s + 1), (uint8_t)c, _lastPos[s][c]);
-      }
+  _buildCurveIndex();                         // resets speed/accel + eases every touched Maestro channel
   _cursor = 0;
   _replayStart = millis();
   _state = ST_REPLAYING;
   return true;
 }
 
-// ── Replay tick (loop, Core 1). Phase 1: fire each event at its timestamp.
-//    (Inter-keyframe interpolation = phase 1b.) ─────────────────────────────────
+// ── Replay tick (loop, Core 1). Discrete actions/HCR-volume fire at their exact
+//    timestamp; Maestro motion is driven continuously by _updateCurves(). ──────
 inline void replayTick() {
   if (_state != ST_REPLAYING) return;
   uint32_t elapsed = millis() - _replayStart;
@@ -197,15 +334,17 @@ inline void replayTick() {
     const RecEvent& ev = _buf[_cursor++];
     switch (ev.kind) {
       case REC_ACTION:     if (_cbDispatch)   _cbDispatch(ev.u.act); break;
-      case REC_KF_MAESTRO: if (_cbEmitMaestro) _cbEmitMaestro(ev.u.km.slot, ev.u.km.ch, ev.u.km.pos); break;
+      case REC_KF_MAESTRO: break;   // driven by the interpolated curve follower, not fired directly
       case REC_KF_HCRVOL:  if (_cbEmitHcrVol)  _cbEmitHcrVol(ev.u.kv.chan, ev.u.kv.vol); break;
     }
   }
+  _updateCurves(elapsed);
   // Complete when all events have fired, or as a safety net 1 s past the clip's
   // length (so a bad timestamp can never wedge replay + lock out live control).
   if (_cursor >= _count || elapsed > clipDurationMs() + 1000) {
     if (_loop && _count) {                 // idle-animation loop — restart the event stream
       _cursor = 0; _replayStart = millis();
+      _rewindCurves();
     } else {
       _state = ST_IDLE;
       _doneFlag = true;   // loop() prints a "playback complete" line on the transition

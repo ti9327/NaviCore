@@ -242,6 +242,19 @@ a **timeline editor**, writing the clip back.
 
 ## 12. Changelog
 
+- **v2.1 (2026-07-01):** Phase 1b (interpolated replay) implemented in `navicore_record.h`. Per-channel
+  `MaestroCurve` + a `_curveNext[]` chain (parallel array, one forward O(n) pass per `startReplay()`) give
+  `_updateCurves()` **look-ahead**: it eases from the last *finalized* keyframe (`pPrev`@`tPrev`) toward the
+  next *not-yet-finalized* one (read live via `_buf[nextIdx]`), re-anchoring once elapsed reaches that
+  keyframe's time — the anchor is always in the past and the target always in the future, which the naive
+  "fire event, then look at what already happened" cursor loop can't give you (a keyframe is only knowable
+  once its own timestamp arrives). `reanchor` implements the `goHome` discontinuity from §3.3: mid-replay it
+  suppresses emission (servo pose is unknown — snapped to a Maestro-side home we can't read back) until the
+  next keyframe for that channel lands, which then **snaps** rather than easing from a stale position. Loop
+  mode (`_loop`) rewinds via `_rewindCurves()` (cheap — reuses each channel's precomputed `firstIdx`, no
+  buffer rescan) rather than a full rebuild, keeping `pPrev` at wherever the previous lap actually left the
+  servo so the loop seam eases instead of snapping. Emission is de-duped per channel (`lastEmitted`) so a
+  flat curve doesn't spam Maestro serial writes every tick.
 - **v2 (2026-06-30):** validated against code by a 22-agent pass. Added: dual-core capture truth +
   single-queue concurrency design; concrete partition CSV + config-FS-wipe guard + CI-revert fix
   (tools-only); replay speed/accel reset; HCR-volume cache bypass; `goHome` shadow/curve invalidation;

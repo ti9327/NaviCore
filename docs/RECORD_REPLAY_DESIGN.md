@@ -311,6 +311,25 @@ as edited.
 
 ## 12. Changelog
 
+- **v3.1 (2026-07-01):** Timeline-editor UX pass (config-tool only) + a review-driven bug sweep.
+  - **Proportional ("soft") keyframe drag:** dragging a servo/HCR dot pulls its same-track neighbours by a
+    cosine falloff over an adjustable radius (`_tlSoftRadius`, "Smooth drag ___ ms" toolbar field; 0 = classic
+    single-point), so you get a smooth hump/warp instead of a spike. Purely editor-side — it just moves more
+    keyframes; the firmware still only linear-interpolates. Also FROZE the dragged track's value range for the
+    gesture (`_tlFrozenRange`) — fixes a latent jitter where the y-axis rescaled mid-drag so the dot drifted
+    off the cursor.
+  - **Draggable action markers:** the Actions-row diamonds now drag horizontally to reposition in time (>3px =
+    drag, else click-to-edit) — previously click-only.
+  - **Review sweep (4-lens adversarial review + verify workflow, 5 confirmed):** exception-safe + idempotent
+    drag teardown (`finish()` guard) so window pointer listeners can't leak and a mid-drag editor-close can't
+    crash on a null `_tlClip`; shift-select reads the shift state from the pointer**up** (not the stale
+    pointerdown); `_tlToggleShiftSelect` recomputes both indices fresh (a re-sort can't stale the adjacency
+    test into deleting keyframes between non-adjacent picks); `_tlFlattenEvents` dedupes same-`t` keyframes
+    per track (keep-last) so a drag rounding two neighbours onto one ms can't emit a nondeterministic
+    duplicate-`t` to firmware. **Plus a bug the review flushed out:** the easing PAIR selection was fully
+    broken — `_tlStartDragKeyframe` cleared `selectedPair` up-front, so the 2nd shift-click always wiped the
+    1st (easing math worked, but you could never select the pair through the UI). Now the pair clears only on
+    a real drag or a plain click. All re-verified in-browser via simulated pointer gestures.
 - **v3 (2026-07-01):** Phase 2 timeline editor built — see §13 for the full writeup. New firmware: `ST_EDITING`
   state + `editBegin/editAddEvent/editEnd/editCancel/editStream` in `navicore_record.h`; `?REC,EDITLOAD/
   EDITBEGIN/EDITEV/EDITEND/EDITCANCEL` CLI. New config tool: 📈 Clips-panel button, `tl-modal`/`tl-action-modal`,

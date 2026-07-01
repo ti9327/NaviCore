@@ -2234,7 +2234,7 @@
         <img src="../Images/r2logo.png" alt="R2 logo"
              style="width:72px;height:72px;object-fit:contain;opacity:0.9">
         <div style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.3px">
-          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">011609QJUL26</span>
+          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">011639QJUL26</span>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap">
@@ -4344,15 +4344,38 @@ let _clipRecording = false;
 // wrapped as ;w20,<cmd> Via WCB, raw over Direct USB.  Echoes the clean command
 // to the terminal (main pane) so there's a trace even when the Clips modal is
 // doing the talking.
-async function sendRcCli(cmd) {
-  if (!writer) { clipsStatus('Not connected to a board.'); return false; }
+async function sendRcCli(cmd, silent = false) {
+  if (!writer) { if (!silent) clipsStatus('Not connected to a board.'); return false; }
   if (viaWcbActive) {
-    appendTerminalLine('> ' + cmd, 'tx', 'main');
+    if (!silent) appendTerminalLine('> ' + cmd, 'tx', 'main');
     await sendLine(';w' + RC_WCB_DEVICE_ID + ',' + cmd, /*silent=*/true);
   } else {
-    await sendLine(cmd);   // direct USB — straight to the connected board
+    await sendLine(cmd, silent);   // direct USB — straight to the connected board
   }
   return true;
+}
+
+// ── Clip-name cache + shared <datalist> for the play/record action pickers ──
+// Every ?REC,LS reply (renderClips) refreshes this, so the button/switch action
+// editor can offer a dropdown of real clip names (still free-text so an offline
+// or not-yet-recorded name works).
+let _knownClipNames = [];
+let _lastClipNamesFetch = 0;
+function _updateClipNameOptions(names) {
+  _knownClipNames = Array.from(new Set((names || []).filter(Boolean)));
+  let dl = document.getElementById('clip-name-options');
+  if (!dl) { dl = document.createElement('datalist'); dl.id = 'clip-name-options'; document.body.appendChild(dl); }
+  dl.innerHTML = '';
+  _knownClipNames.forEach(n => { const o = document.createElement('option'); o.value = n; dl.appendChild(o); });
+}
+// Ensure the datalist exists and (throttled, if connected) refresh it from the board.
+function _ensureClipNamesFresh() {
+  _updateClipNameOptions(_knownClipNames);
+  if (!writer) return;
+  const now = Date.now();
+  if (now - _lastClipNamesFetch < 3000) return;
+  _lastClipNamesFetch = now;
+  sendRcCli('?REC,LS', /*silent=*/true);   // reply repopulates the datalist via renderClips
 }
 
 function openClipsModal() {
@@ -4441,6 +4464,7 @@ function _fmtDur(ms)  { ms = +ms || 0; return ms < 1000 ? ms + ' ms' : (ms / 100
 function _fmtBytes(b) { b = +b || 0;  return b < 1024 ? b + ' B'  : (b / 1024).toFixed(1) + ' KB'; }
 
 function renderClips(clips) {
+  _updateClipNameOptions((clips || []).map(c => String(c.name || '')));   // feed the action-picker dropdown
   const list = document.getElementById('clips-list');
   if (!list) return;
   if (!clips.length) { clipsStatus('No saved clips. Record one above, then Refresh.'); return; }
@@ -4486,18 +4510,75 @@ function renderClips(clips) {
   });
 }
 
+// ── Keep button/switch trigger actions in sync with the clip library ────────
+// A Play/Record action references a clip BY NAME (its `cmd`). When a clip is
+// renamed or deleted, the actions that point at it should follow — otherwise a
+// renamed clip silently breaks its buttons, and a deleted clip leaves dead
+// triggers. These scan the LOCAL config (mappings tiers t1/t2/t3 + switch
+// positions p0/p1/p2); the change persists only when the user hits Save.
+function _forEachClipActionArray(cb) {
+  if (typeof config === 'undefined' || !config) return;
+  if (config.mappings) for (const key in config.mappings) {
+    const m = config.mappings[key]; if (!m) continue;
+    ['t1', 't2', 't3'].forEach(t => { if (Array.isArray(m[t])) cb(m[t], na => { m[t] = na; }); });
+  }
+  if (config.switches) for (const nm in config.switches) {
+    const s = config.switches[nm]; if (!s) continue;
+    ['p0', 'p1', 'p2'].forEach(p => { if (Array.isArray(s[p])) cb(s[p], na => { s[p] = na; }); });
+  }
+}
+const _isClipRef = (a, name) => a && (a.type === 'play' || a.type === 'record') && a.cmd === name;
+function _clipRefsCount(name) {
+  let n = 0;
+  _forEachClipActionArray(arr => arr.forEach(a => { if (_isClipRef(a, name)) n++; }));
+  return n;
+}
+function _renameClipRefs(from, to) {
+  let n = 0;
+  _forEachClipActionArray(arr => arr.forEach(a => { if (_isClipRef(a, from)) { a.cmd = to; n++; } }));
+  return n;
+}
+function _removeClipRefs(name) {
+  let n = 0;
+  _forEachClipActionArray((arr, setArr) => {
+    const kept = arr.filter(a => !_isClipRef(a, name));
+    n += arr.length - kept.length;
+    if (kept.length !== arr.length) setArr(kept);
+  });
+  return n;
+}
+function _refreshActionUI() {
+  [ 'renderAssignmentList', 'updateButtonHighlights', 'renderSwitchHighlights', 'renderSwitchesTable' ]
+    .forEach(fn => { try { if (typeof window[fn] === 'function') window[fn](); } catch (_) {} });
+}
+
 async function clipRename(from) {
   const to = prompt('Rename clip "' + from + '" to:', from);
   if (to === null) return;                     // cancelled
   const clean = to.trim().replace(/[^A-Za-z0-9_-]/g, '').slice(0, 32);
   if (!clean || clean === from) return;
-  await sendRcCli('?REC,RENAME,' + from + ',' + clean);
+  // The device refuses to rename onto an existing clip; mirror that guard here so
+  // we don't re-point actions at a name that belongs to a DIFFERENT clip.
+  if (_knownClipNames.includes(clean)) { alert(`A clip named "${clean}" already exists — choose a different name.`); return; }
+  if (!(await sendRcCli('?REC,RENAME,' + from + ',' + clean))) return;   // not connected — nothing changed
+  // Point any Play/Record actions at the new name so the buttons keep working.
+  const n = _renameClipRefs(from, clean);
+  if (n > 0) {
+    _refreshActionUI();
+    alert(`Renamed. ${n} button/switch action(s) now reference "${clean}" — click Save to store the updated config.`);
+  }
   setTimeout(clipsRefresh, 400);
 }
 
 async function clipDelete(name) {
   if (!confirm('Delete clip "' + name + '"? This cannot be undone.')) return;
-  await sendRcCli('?REC,RM,' + name);
+  if (!(await sendRcCli('?REC,RM,' + name))) return;   // not connected — nothing deleted
+  const refs = _clipRefsCount(name);
+  if (refs > 0 && confirm(`This clip was used by ${refs} button/switch action(s). Remove those trigger actions too? (You'll then need to Save the config.)`)) {
+    const removed = _removeClipRefs(name);
+    _refreshActionUI();
+    if (removed) alert(`Removed ${removed} trigger action(s). Click Save to store the updated config.`);
+  }
   setTimeout(clipsRefresh, 400);
 }
 
@@ -7511,26 +7592,30 @@ function appendActionFields(container, action) {
     container.appendChild(makeFieldGroup('Function', fnSel));
     renderMp3ArgField(container, +(action.fn || 1), action.track);
   } else if (type === 'record') {
-    // Record/replay control — toggles capture. Clip name is for the future
-    // clip library (the current build records into one in-RAM clip).
+    // Record/replay control — toggles capture. Clip name = which saved clip this
+    // records into. Combo: pick a known clip from the dropdown or type a new name.
+    _ensureClipNamesFresh();
     const nameInput = document.createElement('input');
     nameInput.type = 'text'; nameInput.id = fid + '-clip';
+    nameInput.setAttribute('list', 'clip-name-options');
     nameInput.placeholder = 'clip name (optional)';
     nameInput.style.width = '150px'; nameInput.maxLength = 90;
     nameInput.value = action.cmd || '';
-    nameInput.title = 'Which clip this records into (for the coming clip library).';
+    nameInput.title = 'Which clip this records into — choose an existing one or type a new name.';
     container.appendChild(makeFieldGroup('Clip name', nameInput));
     const hint = document.createElement('div');
     hint.style.cssText = 'font-size:11px;color:var(--muted);align-self:center';
     hint.textContent = 'Toggles recording — fire to start, fire again to stop + save.';
     container.appendChild(hint);
   } else if (type === 'play') {
+    _ensureClipNamesFresh();
     const nameInput = document.createElement('input');
     nameInput.type = 'text'; nameInput.id = fid + '-clip';
-    nameInput.placeholder = 'clip name (optional)';
+    nameInput.setAttribute('list', 'clip-name-options');
+    nameInput.placeholder = 'clip name';
     nameInput.style.width = '150px'; nameInput.maxLength = 90;
     nameInput.value = action.cmd || '';
-    nameInput.title = 'Which clip to play (for the coming clip library).';
+    nameInput.title = 'Which clip to play — choose from the dropdown of saved clips, or type a name.';
     container.appendChild(makeFieldGroup('Clip name', nameInput));
     const loopLabel = document.createElement('label');
     loopLabel.style.cssText = 'display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;align-self:center';

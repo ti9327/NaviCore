@@ -311,6 +311,15 @@ as edited.
 
 ## 12. Changelog
 
+- **v3.6 (2026-07-01):** Clip-library ↔ trigger-action linkage (config-tool only). A Play/Record action references
+  a clip by name (`cmd`), so: (a) **renaming a clip** re-points every matching action (`_renameClipRefs` over
+  mappings `t1/t2/t3` + switch `p0/p1/p2`) so buttons keep working — with a client-side collide-guard mirroring the
+  device's, and an offline guard; (b) **deleting a clip** offers (2nd confirm) to remove the now-dead trigger
+  actions (`_removeClipRefs`); both prompt the user to Save (config changes are local until SET_CONFIG). (c) The
+  **Play/Record action fields are now a combo** — an `<input list="clip-name-options">` backed by a shared
+  `<datalist>` repopulated from every `?REC,LS` (`_updateClipNameOptions` in renderClips), refreshed (throttled,
+  silent) when a play/record field renders — so you pick a real clip name from a dropdown but can still type one.
+  Scan helpers guard bare mappings / 2-pos switches / null entries / missing config; knobs (no play/record) ignored.
 - **v3.5 (2026-07-01):** Timeline **delete-whole-track** (red ✕ per track in the label gutter → `_tlDeleteTrack`,
   confirmed; config-tool only) + **save-failure diagnostics** (firmware, needs reflash). `saveClip()` now prints a
   SPECIFIC reason to the terminal per failure path (no clips FS / busy / empty / bad name / open failed / write

@@ -2234,7 +2234,7 @@
         <img src="../Images/r2logo.png" alt="R2 logo"
              style="width:72px;height:72px;object-fit:contain;opacity:0.9">
         <div style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.3px">
-          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">011055QJUL26</span>
+          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">011126QJUL26</span>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap">
@@ -2393,6 +2393,13 @@
         <button class="btn btn-ghost" id="tl-add-maestro" type="button" style="padding:3px 10px">+ Maestro track</button>
         <button class="btn btn-ghost" id="tl-add-hcr"     type="button" style="padding:3px 10px">+ HCR track</button>
         <span style="width:1px;align-self:stretch;background:var(--border)"></span>
+        <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--muted)"
+               title="Dragging a servo keyframe also pulls its neighbours within this many ms, with a smooth falloff, so the motion stays smooth. Set 0 to move just the one point.">
+          Smooth drag
+          <input type="number" id="tl-soft-radius" min="0" max="5000" step="50" value="350" style="width:62px">
+          ms
+        </label>
+        <span style="width:1px;align-self:stretch;background:var(--border)"></span>
         <div id="tl-easing-toolbar" style="display:none;align-items:center;gap:6px;font-size:12px;color:var(--muted)"></div>
         <button class="btn btn-danger" id="tl-delete-btn" type="button" style="display:none;padding:3px 10px">🗑 Delete selected</button>
         <div style="flex:1"></div>
@@ -2403,9 +2410,10 @@
         <svg id="tl-svg" xmlns="http://www.w3.org/2000/svg"></svg>
       </div>
       <div style="font-size:11px;color:var(--muted)">
-        Click empty track space to add a keyframe/action · click a point to select it (drag to move) ·
-        Shift-click a second ADJACENT keyframe on the same track to pick a pair for easing · drag the
-        yellow handle to scrub · Delete/Backspace removes the selection.
+        Click empty track space to add a keyframe/action · drag a servo/HCR dot to move it — nearby dots
+        follow smoothly (see “Smooth drag”) · drag an action diamond to move it in time, or click it to edit ·
+        Shift-click two ADJACENT keyframes on a track to pick a pair for easing · drag the yellow handle to
+        scrub · Delete/Backspace removes the selection.
       </div>
     </div>
   </div>
@@ -4612,6 +4620,24 @@ function _tlFeedMarker(text) {
 // else — {type, target|port, cmd, fn, chan, track, delay, note}.
 let _tlClip = null;
 let _tlNextId = 1;
+// Proportional-edit (soft) drag: dragging one keyframe pulls its same-track
+// neighbours by a smooth falloff of their time-distance, so you get a smooth
+// hump/warp instead of a single sharp spike.  Radius in ms; 0 = classic
+// single-point drag.  User-adjustable via the "Smooth drag" toolbar field.
+let _tlSoftRadius = 350;
+// While a keyframe drag is in flight we FREEZE the dragged track's value range
+// so the y-axis (and thus the cursor→value mapping) can't rescale mid-drag as
+// values change — otherwise the grabbed dot drifts out from under the cursor.
+let _tlFrozenRange = null;   // { kind, key, lo, hi } | null
+
+// Cosine falloff: 1 at the grabbed keyframe, easing to 0 at the radius edge
+// (zero slope at both ends → no visible seam where the influence stops).
+function _tlSoftWeight(distMs) {
+  const R = _tlSoftRadius;
+  if (R <= 0) return distMs === 0 ? 1 : 0;
+  if (distMs >= R) return 0;
+  return 0.5 * (1 + Math.cos(Math.PI * distMs / R));
+}
 function _tlId() { return _tlNextId++; }
 
 function openTimelineEditor(name) {
@@ -4688,12 +4714,23 @@ function _tlBuildModelFromEvents(name, header, events) {
 // Flatten the model back to the wire event shape ({t,k,...}) for upload.
 function _tlFlattenEvents() {
   const out = [];
+  // Collapse keyframes that share an exact t on the SAME track — a proportional
+  // drag can round two neighbours onto the same millisecond, and a servo/channel
+  // can't hold two values at one instant. Duplicate-t keyframes would make the
+  // firmware's per-channel curve order nondeterministic (qsort isn't stable), so
+  // keep only the LAST at each t (matches replay's "later keyframe wins the
+  // zero-length segment" snap in _updateCurves). Keeps each track strictly
+  // increasing in t on the wire regardless of what the editing produced.
+  const dedupe = arr => {
+    const s = [...arr].sort((a, b) => a.t - b.t);
+    return s.filter((kf, i) => i === s.length - 1 || s[i + 1].t !== kf.t);
+  };
   Object.entries(_tlClip.maestro).forEach(([key, track]) => {
     const [slot, ch] = key.split('-').map(Number);
-    track.forEach(kf => out.push({ t: kf.t, k: 1, slot, ch, pos: kf.pos }));
+    dedupe(track).forEach(kf => out.push({ t: kf.t, k: 1, slot, ch, pos: kf.pos }));
   });
   Object.entries(_tlClip.hcr).forEach(([chan, track]) => {
-    track.forEach(kf => out.push({ t: kf.t, k: 2, chan: +chan, vol: kf.vol }));
+    dedupe(track).forEach(kf => out.push({ t: kf.t, k: 2, chan: +chan, vol: kf.vol }));
   });
   _tlClip.actions.forEach(a => out.push({ t: a.t, k: 0, ...a.action }));
   out.sort((a, b) => a.t - b.t);
@@ -4789,6 +4826,9 @@ function _tlTrackList() {
 // UI convention as the knob-passthrough Pos min/max fields, converted only at
 // this render/interaction boundary. HCR volume is a raw 0-99 either way.
 function _tlTrackRange(track) {
+  // A drag freezes the grabbed track's range so it can't rescale under the cursor.
+  if (_tlFrozenRange && _tlFrozenRange.kind === track.kind && _tlFrozenRange.key === track.key)
+    return [_tlFrozenRange.lo, _tlFrozenRange.hi];
   if (track.kind === 'hcr') return [0, 99];
   const kfs = _tlClip.maestro[track.key] || [];
   if (!kfs.length) return [1000, 2000];
@@ -4881,8 +4921,8 @@ function _tlRender() {
       d: `M ${x} ${y - 7} L ${x + 7} ${y} L ${x} ${y + 7} L ${x - 7} ${y} Z`,
       fill: isSel ? 'var(--red)' : 'var(--accent)', stroke: '#fff', 'stroke-width': 1,
     });
-    d.style.cursor = 'pointer';
-    d.addEventListener('click', ev => { ev.stopPropagation(); _tlClip.selected = { kind: 'action', id: a.id }; _tlOpenActionEditor(a, a.t); });
+    d.style.cursor = 'grab';
+    d.addEventListener('pointerdown', ev => _tlStartDragAction(ev, a));
     svg.appendChild(d);
   });
 
@@ -4918,31 +4958,61 @@ function _tlOnTrackClick(ev, track, rowTop, lo, hi) {
 function _tlStartDragKeyframe(ev, track, kf, lo, hi, rowTop) {
   ev.preventDefault(); ev.stopPropagation();
   _tlClip.selected = { kind: track.kind, key: track.key, id: kf.id };
-  _tlClip.selectedPair = null;
-  let moved = false;
-  const onMove = mv => {
-    moved = true;
-    const rect = document.getElementById('tl-svg').getBoundingClientRect();
-    const t = _tlXToTime(mv.clientX - rect.left);
-    const v = _tlYToValue(mv.clientY - rect.top, lo, hi, rowTop);
-    kf.t = Math.max(0, t);
-    if (track.kind === 'maestro') kf.pos = Math.max(0, Math.round(v * 4));
-    else kf.vol = Math.max(0, Math.min(99, Math.round(v)));
-    _tlClip.dirty = true;
-    _tlRender();
-  };
-  const onUp = () => {
+  // NOTE: do NOT clear selectedPair here — a shift-click to pick the 2nd keyframe
+  // of an easing pair also enters this handler, and wiping the pair up-front would
+  // make it impossible to ever hold two. The pair is cleared instead on a real
+  // drag (onMove) or a plain non-shift click (finish).
+  const isMaestro = track.kind === 'maestro';
+  const arr = isMaestro ? _tlClip.maestro[track.key] : _tlClip.hcr[track.key];
+  const valOf = k => isMaestro ? k.pos / 4 : k.vol;          // work in DISPLAY units (µs / 0-99)
+  const setVal = (k, v) => { if (isMaestro) k.pos = Math.max(0, Math.round(v * 4)); else k.vol = Math.max(0, Math.min(99, Math.round(v))); };
+  // Freeze this track's value range for the whole gesture, then snapshot every
+  // keyframe's ORIGINAL time+value so each move recomputes from a stable
+  // baseline (proportional deltas never accumulate drift, and re-sorting the
+  // array mid-drag can't confuse the math since we hold direct kf references).
+  _tlFrozenRange = { kind: track.kind, key: track.key, lo, hi };
+  const origins = arr.map(k => ({ k, t0: k.t, v0: valOf(k) }));
+  const self = origins.find(o => o.k.id === kf.id);
+  let moved = false, ended = false;
+  // Single idempotent teardown so the window listeners are ALWAYS removed —
+  // whether the drag ends normally, throws, or the editor is closed mid-gesture
+  // (which nulls _tlClip). `shift` is read from the pointerUP event, not the
+  // stale pointerdown, so releasing shift before the mouse button doesn't
+  // spuriously arm an easing pair.
+  const finish = (shift) => {
+    if (ended) return; ended = true;
     window.removeEventListener('pointermove', onMove);
     window.removeEventListener('pointerup', onUp);
-    if (moved) {
-      const arr = track.kind === 'maestro' ? _tlClip.maestro[track.key] : _tlClip.hcr[track.key];
-      arr.sort((a, b) => a.t - b.t);
-      _tlRender();
-    } else if (ev.shiftKey) {
-      _tlToggleShiftSelect(track, kf);
-      _tlRender();
-    }
+    _tlFrozenRange = null;
+    if (!_tlClip) return;                         // editor closed mid-drag — nothing to finalize
+    if (moved) arr.sort((a, b) => a.t - b.t);     // pair already cleared on the first move
+    else if (shift) _tlToggleShiftSelect(track, kf);
+    else _tlClip.selectedPair = null;             // plain click → drop any pending easing pair
+    _tlRender();                                 // clears the frozen range + reflects the selection
   };
+  const onMove = mv => {
+    if (!_tlClip) return finish(false);
+    try {
+      if (!moved) _tlClip.selectedPair = null;    // a real drag invalidates a pending easing pair
+      moved = true;
+      const rect = document.getElementById('tl-svg').getBoundingClientRect();
+      const dt = _tlXToTime(mv.clientX - rect.left) - self.t0;
+      const dv = _tlYToValue(mv.clientY - rect.top, lo, hi, rowTop) - self.v0;
+      // Proportional edit: every keyframe on THIS track shares the drag, weighted
+      // by a smooth falloff of its time-distance from the grabbed one — so pulling
+      // one dot bends its neighbours into a smooth hump/warp instead of a spike.
+      origins.forEach(o => {
+        const w = _tlSoftWeight(Math.abs(o.t0 - self.t0));
+        if (w === 0 && o.k.id !== kf.id) return;             // outside the radius — untouched
+        o.k.t = Math.max(0, Math.round(o.t0 + w * dt));
+        setVal(o.k, o.v0 + w * dv);
+      });
+      arr.sort((a, b) => a.t - b.t);
+      _tlClip.dirty = true;
+      _tlRender();
+    } catch (e) { console.error('timeline keyframe drag error', e); finish(false); }
+  };
+  const onUp = upEv => finish(!!(upEv && upEv.shiftKey));
   window.addEventListener('pointermove', onMove);
   window.addEventListener('pointerup', onUp);
 }
@@ -4952,26 +5022,76 @@ function _tlToggleShiftSelect(track, kf) {
   const idx = arr.findIndex(k => k.id === kf.id);
   const first = _tlClip.selectedPair && _tlClip.selectedPair[0];
   if (!first || first.kind !== track.kind || first.key !== track.key) {
-    _tlClip.selectedPair = [{ kind: track.kind, key: track.key, id: kf.id, idx }];
+    _tlClip.selectedPair = [{ kind: track.kind, key: track.key, id: kf.id }];   // NO cached idx — it can go stale on a re-sort
     return;
   }
   if (first.id === kf.id) { _tlClip.selectedPair = null; return; }   // shift-clicked the same dot again — clear
-  if (Math.abs(idx - first.idx) !== 1) {
+  // Recompute BOTH indices against the CURRENT array. A proportional drag between
+  // the two shift-clicks re-sorts the track, so a cached first.idx could be stale
+  // — and a wrongly-passing adjacency test would let easing delete the keyframes
+  // between two non-adjacent picks.
+  const firstIdx = arr.findIndex(k => k.id === first.id);
+  if (firstIdx < 0) { _tlClip.selectedPair = [{ kind: track.kind, key: track.key, id: kf.id }]; return; }  // first pick gone — restart here
+  if (Math.abs(idx - firstIdx) !== 1) {
     alert('Pick two ADJACENT keyframes on the same track for easing.');
     _tlClip.selectedPair = null;
     return;
   }
-  _tlClip.selectedPair = [first, { kind: track.kind, key: track.key, id: kf.id, idx }].sort((a, b) => a.idx - b.idx);
+  _tlClip.selectedPair = [
+    { kind: track.kind, key: track.key, id: first.id, idx: firstIdx },
+    { kind: track.kind, key: track.key, id: kf.id, idx },
+  ].sort((a, b) => a.idx - b.idx);
+}
+
+// Action diamonds: drag horizontally to reposition in time, or click (no drag)
+// to open the editor.  A small pixel threshold keeps a slightly-shaky click from
+// registering as a drag, so "click to edit" stays reliable.
+function _tlStartDragAction(ev, a) {
+  ev.preventDefault(); ev.stopPropagation();
+  _tlClip.selected = { kind: 'action', id: a.id };
+  const t0 = a.t, startX = ev.clientX;
+  let moved = false, ended = false;
+  const finish = () => {
+    if (ended) return; ended = true;
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', onUp);
+    if (!_tlClip) return;                         // editor closed mid-drag
+    if (moved) { _tlClip.actions.sort((x, y) => x.t - y.t); _tlRender(); }
+    else _tlOpenActionEditor(a, t0);              // no drag → treat as a click, open the editor
+  };
+  const onMove = mv => {
+    if (!_tlClip) return finish();
+    if (!moved && Math.abs(mv.clientX - startX) < 3) return;   // small jitter is still a click
+    try {
+      moved = true;
+      const rect = document.getElementById('tl-svg').getBoundingClientRect();
+      a.t = Math.max(0, _tlXToTime(mv.clientX - rect.left));
+      _tlClip.dirty = true;
+      _tlRender();
+    } catch (e) { console.error('timeline action drag error', e); finish(); }
+  };
+  const onUp = () => finish();
+  window.addEventListener('pointermove', onMove);
+  window.addEventListener('pointerup', onUp);
 }
 
 function _tlStartDragCursor(ev) {
   ev.preventDefault();
-  const onMove = mv => {
-    const rect = document.getElementById('tl-svg').getBoundingClientRect();
-    _tlClip.cursorMs = Math.max(0, Math.min(_tlClip.durationMs, _tlXToTime(mv.clientX - rect.left)));
-    _tlRender();
+  let ended = false;
+  const finish = () => {
+    if (ended) return; ended = true;
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', onUp);
   };
-  const onUp = () => { window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp); };
+  const onMove = mv => {
+    if (!_tlClip) return finish();
+    try {
+      const rect = document.getElementById('tl-svg').getBoundingClientRect();
+      _tlClip.cursorMs = Math.max(0, Math.min(_tlClip.durationMs, _tlXToTime(mv.clientX - rect.left)));
+      _tlRender();
+    } catch (e) { console.error('timeline cursor drag error', e); finish(); }
+  };
+  const onUp = () => finish();
   window.addEventListener('pointermove', onMove);
   window.addEventListener('pointerup', onUp);
 }
@@ -5175,6 +5295,9 @@ document.getElementById('tl-save-btn').addEventListener('click', _tlSave);
 document.getElementById('tl-delete-btn').addEventListener('click', _tlDeleteSelected);
 document.getElementById('tl-add-maestro').addEventListener('click', _tlAddMaestroTrack);
 document.getElementById('tl-add-hcr').addEventListener('click', _tlAddHcrTrack);
+document.getElementById('tl-soft-radius').addEventListener('input', e => {
+  _tlSoftRadius = Math.max(0, Math.min(5000, +e.target.value || 0));
+});
 document.getElementById('tl-zoom-in').addEventListener('click', () => {
   if (!_tlClip) return;
   _tlClip.pxPerMs = Math.min(2, _tlClip.pxPerMs * 1.4);

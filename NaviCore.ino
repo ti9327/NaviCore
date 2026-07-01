@@ -1664,7 +1664,9 @@ bool execCliLine(const String& line) {
       else                                     Serial.println("[CLIPUL:NAK,bad event or not editing]");
     }
     else if (sub.equalsIgnoreCase("EDITEND")) {
-      Serial.println(navirec::editEnd(name.c_str()) ? "[CLIPUL:END,OK]" : "[CLIPUL:END,ERR,empty or save failed]");
+      const char* err = navirec::editEnd(name.c_str());
+      if (err) Serial.printf("[CLIPUL:END,ERR,%s]\n", err);
+      else     Serial.println("[CLIPUL:END,OK]");
     }
     else if (sub.equalsIgnoreCase("EDITCANCEL")) { navirec::editCancel(); Serial.println("[CLIPUL:CANCEL,OK]"); }
     else if (sub.equalsIgnoreCase("CLEAR")) { navirec::clearClip(); Serial.println("[REC] cleared"); }

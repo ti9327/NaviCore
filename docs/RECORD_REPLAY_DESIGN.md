@@ -311,6 +311,12 @@ as edited.
 
 ## 12. Changelog
 
+- **v3.5 (2026-07-01):** Timeline **delete-whole-track** (red ✕ per track in the label gutter → `_tlDeleteTrack`,
+  confirmed; config-tool only) + **save-failure diagnostics** (firmware, needs reflash). `saveClip()` now prints a
+  SPECIFIC reason to the terminal per failure path (no clips FS / busy / empty / bad name / open failed / write
+  failed); `editEnd()` returns a reason string forwarded as `[CLIPUL:END,ERR,<reason>]`, which the config tool
+  surfaces in the Save-failed status. NOTE the original editEnd→saveClip ST_EDITING fix (v3 era) is a FIRMWARE
+  change — a save still failing means the board is running pre-fix firmware; **reflash required.**
 - **v3.4 (2026-07-01):** Timeline **double-click-drag = SOLO (single-point) keyframe drag** (config-tool only) —
   Greg wanted a way to nudge one dot without the smooth-drag pulling its neighbours. A second pointerdown on the
   SAME keyframe id within 350ms (`_tlKfDownStamp`) makes that gesture ignore the falloff (weight 1 for the grabbed

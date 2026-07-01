@@ -2234,7 +2234,7 @@
         <img src="../Images/r2logo.png" alt="R2 logo"
              style="width:72px;height:72px;object-fit:contain;opacity:0.9">
         <div style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.3px">
-          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">011549QJUL26</span>
+          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">011609QJUL26</span>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap">
@@ -2417,7 +2417,8 @@
         dot to move just that one</b> (no smooth influence) · <b>right-click a dot to delete it</b> (or select it
         and press Delete/Backspace, or use 🗑 Delete selected) · drag an action diamond to move it in time, click
         to edit, right-click to delete · Shift-click two ADJACENT keyframes to pick an easing pair · drag the
-        yellow handle to scrub · Ctrl+scroll to zoom at the pointer, or ⤢ Fit.
+        yellow handle to scrub · the red ✕ by a track name deletes that whole track · Ctrl+scroll to zoom at
+        the pointer, or ⤢ Fit.
       </div>
     </div>
   </div>
@@ -4778,7 +4779,10 @@ async function _tlSave() {
     const endP = _tlWaitForMarker(t => t.startsWith('[CLIPUL:END'));
     await sendRcCli('?REC,EDITEND,' + _tlClip.name);
     const end = await endP;
-    if (!end.includes('OK')) throw new Error('board rejected EDITEND (save failed)');
+    if (!end.includes('OK')) {
+      const m = end.match(/\[CLIPUL:END,ERR,([^\]]*)\]/);   // surface the board's specific reason
+      throw new Error('board rejected save' + (m ? ' — ' + m[1] : '') + ' (check the terminal for details)');
+    }
 
     _tlClip.dirty = false;
     _tlSetStatus(`Saved ✓ (${events.length} events)`);
@@ -4883,6 +4887,15 @@ function _tlRender() {
     const lbl = _tlSvgEl('text', { x: 8, y: rowTop + TL_ROW_H / 2 + 4, 'font-size': 11, fill: 'var(--text)' });
     lbl.textContent = track.label;
     svg.appendChild(lbl);
+    // Per-track delete (✕) in the label gutter — removes the whole track.
+    const trackDel = _tlSvgEl('text', { x: TL_LEFT - 14, y: rowTop + TL_ROW_H / 2 + 4, 'font-size': 13, fill: 'var(--red)', 'text-anchor': 'middle' });
+    trackDel.textContent = '✕';
+    trackDel.style.cursor = 'pointer';
+    trackDel.style.userSelect = 'none';
+    const trackDelTitle = _tlSvgEl('title'); trackDelTitle.textContent = `Delete the ${track.label} track`;
+    trackDel.appendChild(trackDelTitle);
+    trackDel.addEventListener('click', ev => { ev.stopPropagation(); _tlDeleteTrack(track); });
+    svg.appendChild(trackDel);
     const bg = _tlSvgEl('rect', { x: TL_LEFT, y: rowTop, width: width - TL_LEFT, height: TL_ROW_H, fill: i % 2 ? 'var(--hover-2)' : 'transparent' });
     bg.style.cursor = 'copy';
     bg.addEventListener('click', ev => _tlOnTrackClick(ev, track, rowTop, lo, hi));
@@ -4995,6 +5008,19 @@ function _tlDeleteKeyframe(track, kf) {
 function _tlDeleteAction(a) {
   _tlClip.actions = _tlClip.actions.filter(x => x.id !== a.id);
   if (_tlClip.selected && _tlClip.selected.id === a.id) _tlClip.selected = null;
+  _tlClip.dirty = true;
+  _tlRender();
+}
+
+// Delete a WHOLE track (all its keyframes). Confirmed because it's a bulk delete;
+// still non-destructive until Save (undone by closing without saving), and the
+// track can be re-added with "+ Maestro/HCR track".
+function _tlDeleteTrack(track) {
+  if (!confirm(`Delete the entire "${track.label}" track and all its keyframes?`)) return;
+  const map = track.kind === 'maestro' ? _tlClip.maestro : _tlClip.hcr;
+  delete map[track.key];
+  if (_tlClip.selected && _tlClip.selected.kind === track.kind && _tlClip.selected.key === track.key) _tlClip.selected = null;
+  _tlClip.selectedPair = null;
   _tlClip.dirty = true;
   _tlRender();
 }

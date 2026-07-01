@@ -392,16 +392,22 @@ inline bool _clipPath(char* out, size_t n, const char* name) {
 }
 
 inline bool saveClip(const char* name) {
-  if (!_clipFS || _state != ST_IDLE || _count == 0) return false;
-  char path[48]; if (!_clipPath(path, sizeof(path), name)) return false;
+  // Each failure prints a specific reason to the CLI/terminal so a rejected save
+  // (record-stop, ?REC,SAVE, or a timeline EDITEND) says WHY, not just "failed".
+  if (!_clipFS)          { Serial.println("[REC] save aborted: clips FS not mounted (needs the custom-partition full flash)"); return false; }
+  if (_state != ST_IDLE) { Serial.printf ("[REC] save aborted: recorder busy (state=%u)\n", (unsigned)_state); return false; }
+  if (_count == 0)       { Serial.println("[REC] save aborted: clip is empty"); return false; }
+  char path[48];
+  if (!_clipPath(path, sizeof(path), name)) { Serial.printf("[REC] save aborted: bad clip name '%s'\n", name ? name : "(null)"); return false; }
   File f = _clipFS->open(path, "w", true);
-  if (!f) return false;
+  if (!f) { Serial.printf("[REC] save aborted: could not open %s for writing\n", path); return false; }
   ClipFileHeader h; memcpy(h.magic, "NCR1", 4); h.version = 1;
   h.mode = _mode; h.count = _count; h.durationMs = clipDurationMs();
   size_t bodyN = (size_t)_count * sizeof(RecEvent);
   bool ok = (f.write((const uint8_t*)&h, sizeof(h)) == sizeof(h)) &&
             (f.write((const uint8_t*)_buf, bodyN) == bodyN);
   f.close();
+  if (!ok) Serial.printf("[REC] save aborted: write to %s failed (flash full?)\n", path);
   return ok;
 }
 
@@ -541,18 +547,20 @@ inline bool editAddEvent(const char* json) {
 // (clipDurationMs() reads the LAST buffer slot; replayTick()'s discrete-event
 // cursor and the phase-1b curve-chain builder both walk _buf assuming
 // non-decreasing tMs) — so re-sort before it's ever saved or played.
-inline bool editEnd(const char* name) {
-  if (_state != ST_EDITING) return false;
+// Returns nullptr on success, else a short machine-readable failure reason the
+// CLI forwards as "[CLIPUL:END,ERR,<reason>]" and the config tool shows.
+inline const char* editEnd(const char* name) {
+  if (_state != ST_EDITING) return "not-editing";
   // Drop to ST_IDLE *before* saving: saveClip() guards on `_state == ST_IDLE`
   // (it's meant to refuse a save mid-record/replay). The upload is complete and
   // _buf/_count are stable now, and this whole function runs synchronously in the
   // CLI handler on Core 1 — nothing can race between here and the save — so the
   // transition is safe. (Leaving it ST_EDITING is what made every timeline save
-  // fail with "[CLIPUL:END,ERR]".)
+  // fail — the original bug.)
   _state = ST_IDLE;
-  if (_count == 0) return false;
+  if (_count == 0) return "empty-clip";
   qsort(_buf, _count, sizeof(RecEvent), _cmpEventByTime);
-  return saveClip(name);
+  return saveClip(name) ? nullptr : "save-failed";   // saveClip prints the specific reason to the terminal
 }
 
 // Abort an in-progress upload (browser closed the editor, or a step NAK'd) —

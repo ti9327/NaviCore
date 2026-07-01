@@ -2234,7 +2234,7 @@
         <img src="../Images/r2logo.png" alt="R2 logo"
              style="width:72px;height:72px;object-fit:contain;opacity:0.9">
         <div style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.3px">
-          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">011639QJUL26</span>
+          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">011832QJUL26</span>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap">
@@ -7601,11 +7601,11 @@ function appendActionFields(container, action) {
     nameInput.placeholder = 'clip name (optional)';
     nameInput.style.width = '150px'; nameInput.maxLength = 90;
     nameInput.value = action.cmd || '';
-    nameInput.title = 'Which clip this records into — choose an existing one or type a new name.';
+    nameInput.title = 'Which clip this records into — pick a name to overwrite that clip each time, or leave blank to auto-save each take as rec_1, rec_2, …';
     container.appendChild(makeFieldGroup('Clip name', nameInput));
     const hint = document.createElement('div');
     hint.style.cssText = 'font-size:11px;color:var(--muted);align-self:center';
-    hint.textContent = 'Toggles recording — fire to start, fire again to stop + save.';
+    hint.textContent = 'Toggles recording — fire to start, fire again to stop + save. Named = overwrite that clip; blank = auto-save as rec_N (never lost).';
     container.appendChild(hint);
   } else if (type === 'play') {
     _ensureClipNamesFresh();

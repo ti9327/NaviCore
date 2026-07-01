@@ -593,6 +593,18 @@ inline void listClips(Print& out) {
   out.println("[CLIPLIST:END]");
 }
 
+// Lowest-numbered "rec_N" clip name not already on the FS — used when a Record
+// trigger fires with no configured name, so a take is always saved (never lost).
+inline void _autoClipName(char* out, size_t n) {
+  if (!_clipFS) { strlcpy(out, "rec_1", n); return; }
+  for (int i = 1; i < 10000; i++) {
+    snprintf(out, n, "rec_%d", i);
+    char path[48];
+    if (_clipPath(path, sizeof(path), out) && !_clipFS->exists(path)) return;
+  }
+  strlcpy(out, "rec_x", n);   // pathological (10000 takes) — reuse a slot rather than fail
+}
+
 // Run a deferred Record/Play trigger from loop() (Core 1). Play toggles: press
 // while playing → stop, so one button both starts and stops (incl. a loop).
 inline void pollControl() {
@@ -600,14 +612,23 @@ inline void pollControl() {
   if (c == CTL_NONE) return;
   _pendingCtl = CTL_NONE;
   switch (c) {
-    case CTL_REC_TOGGLE:
+    case CTL_REC_TOGGLE: {
       if (_state == ST_RECORDING) {
         stopRecord();
-        if (_pendingName[0]) saveClip((const char*)_pendingName);   // save to the trigger's clip name
+        // ALWAYS save on stop so a take is never lost: use the trigger's
+        // configured clip name (overwrites that slot), or auto-name "rec_N" when
+        // it was left blank. stopRecord() already dropped us to ST_IDLE, so
+        // saveClip()'s idle-guard passes.
+        char autoName[16];
+        const char* nm;
+        if (_pendingName[0]) nm = (const char*)_pendingName;
+        else { _autoClipName(autoName, sizeof(autoName)); nm = autoName; }
+        if (saveClip(nm)) Serial.printf("[REC] saved clip '%s'\n", nm);
       } else if (_state == ST_IDLE) {
         startRecord(_pendingMode);
       }
       break;
+    }
     case CTL_PLAY:
       if (_state == ST_REPLAYING) {
         stop();                                                      // toggle off

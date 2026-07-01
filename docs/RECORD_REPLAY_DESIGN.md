@@ -311,6 +311,12 @@ as edited.
 
 ## 12. Changelog
 
+- **v3.7 (2026-07-01):** **Record trigger always saves on stop** (firmware, needs reflash). `pollControl()`
+  CTL_REC_TOGGLE stop branch now ALWAYS `saveClip()`s: to the action's configured name (overwrites that slot) or,
+  when blank, an auto-generated `rec_N` (`_autoClipName` = lowest unused) — previously a blank name stopped WITHOUT
+  saving (RAM-only, silently lost). Prints `[REC] saved clip '<name>'` on success (saveClip prints the reason on
+  failure). So: named Record button = re-record-in-place (pairs with Play-by-name); blank = keep-every-take. Config
+  tool Record-action hint updated to explain it. (`case CTL_REC_TOGGLE` wrapped in a block — it now declares locals.)
 - **v3.6 (2026-07-01):** Clip-library ↔ trigger-action linkage (config-tool only). A Play/Record action references
   a clip by name (`cmd`), so: (a) **renaming a clip** re-points every matching action (`_renameClipRefs` over
   mappings `t1/t2/t3` + switch `p0/p1/p2`) so buttons keep working — with a client-side collide-guard mirroring the

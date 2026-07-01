@@ -65,6 +65,13 @@
 // Defined once here; setup()'s Serial.begin()/setRxBufferSize() drive it.
 RcSerial rcSerial;
 
+// Record/replay clip library filesystem — a SECOND LittleFS mounted on the
+// dedicated 12 MB `clips` partition (partitions.csv), separate from the config
+// LittleFS (`spiffs` label). Its own instance + label so a first-boot format is
+// scoped to clips and can never touch /config.json.
+fs::LittleFSFS clipsFS;
+bool           g_clipsReady = false;
+
 // Remote-terminal state.  A raw ?.../#... CLI line arriving over the WCB mesh
 // (onWCBCommand, Core 0) is stashed here and run in loop() with its Serial
 // output tee'd to rtermSink, which ships each line back to the relay (bridge)
@@ -980,13 +987,13 @@ static void rcExecuteActionNow(const RcAction& a) {
       executeMp3Action(a);
       break;
     case RA_RECORD:
-      // Toggle recording. Deferred to loop() (this can run on Core 0 for a
-      // remote TRIGGER). Mode captured now for the clip's context.
-      navirec::requestRecordToggle((uint8_t)FunctionSwState);
+      // Toggle recording; save to a.cmd (clip name) on stop. Deferred to loop()
+      // (this can run on Core 0 for a remote TRIGGER). Mode = clip context.
+      navirec::requestRecordToggle((uint8_t)FunctionSwState, a.cmd);
       break;
     case RA_PLAY:
-      // Play (toggles): press → play, press again → stop. fn = loop flag.
-      navirec::requestPlay(a.fn != 0);
+      // Play (toggles): press → load a.cmd + play, press again → stop. fn = loop.
+      navirec::requestPlay(a.cmd, a.fn != 0);
       break;
     case RA_STOP:
       navirec::requestStop();   // explicit halt (recording → save, or playback)
@@ -1612,18 +1619,27 @@ bool execCliLine(const String& line) {
   if (line.length() >= 4 && line.substring(0, 4).equalsIgnoreCase("?REC")) {
     String arg = (line.length() > 5) ? line.substring(5) : "";   // after "?REC,"
     arg.trim();
-    if      (arg.equalsIgnoreCase("START")) Serial.println(navirec::startRecord((uint8_t)FunctionSwState) ? "[REC] recording…" : "[REC] busy / no buffer");
-    else if (arg.equalsIgnoreCase("STOP")) {                 // aborts recording OR an in-progress replay
+    // Split "SUB[,name]" (comma or space) so SAVE/LOAD/RM/PLAY can take a clip name.
+    String sub = arg, name = "";
+    int sep = arg.indexOf(','); if (sep < 0) sep = arg.indexOf(' ');
+    if (sep >= 0) { sub = arg.substring(0, sep); name = arg.substring(sep + 1); sub.trim(); name.trim(); }
+    if      (sub.equalsIgnoreCase("START")) Serial.println(navirec::startRecord((uint8_t)FunctionSwState) ? "[REC] recording…" : "[REC] busy / no buffer");
+    else if (sub.equalsIgnoreCase("STOP")) {                 // aborts recording OR an in-progress replay
       if (navirec::stop() == navirec::ST_REPLAYING) Serial.println("[REC] replay stopped");
       else                                          navirec::info(Serial);
     }
-    else if (arg.equalsIgnoreCase("PLAY")) {
+    else if (sub.equalsIgnoreCase("PLAY")) {
+      if (name.length() && !navirec::loadClip(name.c_str())) { Serial.printf("[REC] clip '%s' not found\n", name.c_str()); return true; }
       if (navirec::startReplay())
         Serial.printf("[REC] replaying %lu events over %lums — ?REC,STOP to abort\n",
                       (unsigned long)navirec::eventCount(), (unsigned long)navirec::clipDurationMs());
       else Serial.println("[REC] busy / empty");
     }
-    else if (arg.equalsIgnoreCase("CLEAR")) { navirec::clearClip(); Serial.println("[REC] cleared"); }
+    else if (sub.equalsIgnoreCase("SAVE"))  Serial.println(navirec::saveClip(name.c_str()) ? "[REC] saved" : "[REC] save failed (empty clip / bad name / no FS)");
+    else if (sub.equalsIgnoreCase("LOAD"))  Serial.println(navirec::loadClip(name.c_str()) ? "[REC] loaded" : "[REC] load failed (not found / no FS)");
+    else if (sub.equalsIgnoreCase("LS"))    { Serial.println("[REC] clips:"); navirec::listClips(Serial); }
+    else if (sub.equalsIgnoreCase("RM"))    Serial.println(navirec::deleteClip(name.c_str()) ? "[REC] deleted" : "[REC] delete failed");
+    else if (sub.equalsIgnoreCase("CLEAR")) { navirec::clearClip(); Serial.println("[REC] cleared"); }
     else                                    navirec::info(Serial);   // bare "?REC" or "?REC,INFO"
     return true;
   }
@@ -2145,6 +2161,20 @@ void setup() {
       if (g_lfsReady && rcConfigSaveLFS())
         Serial.println("[CONFIG] migrated existing config: NVS -> LittleFS");
     }
+  }
+
+  // Clip library filesystem — mount the dedicated 12 MB `clips` partition as a
+  // SECOND LittleFS (own label + base path, so its format never touches config).
+  // Absent on a board still running the old 4 MB partition table (pre-migration
+  // full flash) — record/replay just runs in-RAM-only until then.
+  g_clipsReady = clipsFS.begin(true, "/clips", 5, "clips");
+  if (g_clipsReady) {
+    navirec::setClipFS(&clipsFS);   // record/replay can now save/load named clips
+    Serial.printf("[CLIPS] mounted: %u KB free of %u KB\n",
+                  (unsigned)(clipsFS.totalBytes() - clipsFS.usedBytes()) / 1024,
+                  (unsigned)clipsFS.totalBytes() / 1024);
+  } else {
+    Serial.println("[CLIPS] no `clips` partition — clips are in-RAM only (flash the 16 MB partition build)");
   }
 
   // Pin map is known now — load the selected board's profile into the pin

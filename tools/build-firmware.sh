@@ -81,7 +81,11 @@ echo ""
 # and the config tool unable to connect.  Symptoms when this is wrong:
 # IDE-built firmware works, web-flashed (CI-built) firmware appears
 # "dead" on the OTG port.
-FQBN="esp32:esp32:esp32s3:USBMode=hwcdc,CDCOnBoot=cdc,PartitionScheme=min_spiffs,PSRAM=opi"
+# PartitionScheme=custom uses NaviCore/partitions.csv (6 stock min_spiffs rows +
+# a 12 MB `clips` LittleFS). FlashSize=16M is REQUIRED so the clips partition at
+# 0x400000..0x1000000 is addressable. (CI must match the .ps1 or a push would
+# republish a stock 4 MB table and revert the change.)
+FQBN="esp32:esp32:esp32s3:USBMode=hwcdc,CDCOnBoot=cdc,PartitionScheme=custom,FlashSize=16M,PSRAM=opi"
 BUILD_DIR="${TMPDIR:-/tmp}/rc-fw-build"
 
 rm -rf "$BUILD_DIR"

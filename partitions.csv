@@ -1,0 +1,21 @@
+# NaviCore custom partition table (16 MB flash).
+#
+# Rows 0-5 are BYTE-IDENTICAL to the stock esp32 "min_spiffs" table (which topped
+# out at 0x400000 / 4 MB). Keeping the `spiffs` row (the config LittleFS at
+# 0x3D0000) unmoved means /config.json is NOT reformatted on the next boot.
+# Row 6 `clips` fills the previously-unused 0x400000..0x1000000 span (12 MB) of
+# the N16R8 module as a SECOND LittleFS (record/replay clip library), mounted by
+# its own label. OTA (ota_0/ota_1) and config are untouched.
+#
+# REQUIRES the build to pass PartitionScheme=custom + FlashSize=16M (see
+# tools/build-firmware.ps1 / .sh) and the 16 MB custom bootloader (the flasher
+# writes WCB_S3_custom_bootloader_16MB_wdt3s.bin with flashSize:keep).
+#
+# Name,     Type, SubType,  Offset,    Size,      Flags
+nvs,        data, nvs,      0x9000,    0x5000,
+otadata,    data, ota,      0xe000,    0x2000,
+app0,       app,  ota_0,    0x10000,   0x1e0000,
+app1,       app,  ota_1,    0x1f0000,  0x1e0000,
+spiffs,     data, spiffs,   0x3d0000,  0x20000,
+coredump,   data, coredump, 0x3f0000,  0x10000,
+clips,      data, spiffs,   0x400000,  0xc00000,

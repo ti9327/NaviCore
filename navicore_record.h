@@ -1,5 +1,6 @@
 #pragma once
 #include <Arduino.h>
+#include <FS.h>
 #include "rc_config.h"
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -159,9 +160,14 @@ inline uint8_t stop() {
 }
 
 // ── Deferred control (set by RA_RECORD/RA_PLAY dispatch, run in loop) ─────────
-inline void requestRecordToggle(uint8_t mode) { _pendingMode = mode; _pendingCtl = CTL_REC_TOGGLE; }
-inline void requestPlay(bool loop)            { _pendingLoop = loop; _pendingCtl = CTL_PLAY; }
-inline void requestStop()                     { _pendingCtl = CTL_STOP; }
+inline char _pendingName[41] = {0};   // clip name carried by a Record/Play trigger
+inline void requestRecordToggle(uint8_t mode, const char* name) {
+  _pendingMode = mode; strlcpy((char*)_pendingName, name ? name : "", sizeof(_pendingName)); _pendingCtl = CTL_REC_TOGGLE;
+}
+inline void requestPlay(const char* name, bool loop) {
+  _pendingLoop = loop; strlcpy((char*)_pendingName, name ? name : "", sizeof(_pendingName)); _pendingCtl = CTL_PLAY;
+}
+inline void requestStop() { _pendingCtl = CTL_STOP; }
 
 // ── Replay ───────────────────────────────────────────────────────────────────
 inline bool startReplay(bool loop = false) {
@@ -213,6 +219,86 @@ inline bool takeReplayDone() { if (_doneFlag) { _doneFlag = false; return true; 
 
 inline bool isReplaying() { return _state == ST_REPLAYING; }   // gate live dispatch
 
+// ── Persistence: clip library on the dedicated `clips` LittleFS ───────────────
+// The host FS is injected from NaviCore.ino (dispatch-agnostic). File format:
+// ClipFileHeader + raw RecEvent[count]. All flash I/O runs in loop() context
+// (save on record-stop, load on play, both via pollControl / CLI) — never Core 0.
+inline fs::FS* _clipFS = nullptr;
+inline void setClipFS(fs::FS* fs) { _clipFS = fs; }
+inline bool clipFsReady() { return _clipFS != nullptr; }
+
+#pragma pack(push, 1)
+struct ClipFileHeader {
+  char     magic[4];   // "NCR1"
+  uint16_t version;    // 1
+  uint16_t mode;       // FunctionSwState at record time (clip context)
+  uint32_t count;      // RecEvent entries following the header
+  uint32_t durationMs;
+};
+#pragma pack(pop)
+
+// Sanitize a user clip name into a path "/<name>.ncr" (alnum + _-, <=32 chars).
+inline bool _clipPath(char* out, size_t n, const char* name) {
+  if (!name || !name[0]) return false;
+  char clean[33]; size_t j = 0;
+  for (size_t i = 0; name[i] && j < sizeof(clean) - 1; i++) {
+    char ch = name[i];
+    if (isalnum((int)ch) || ch == '_' || ch == '-') clean[j++] = ch;
+  }
+  clean[j] = 0;
+  if (!j) return false;
+  snprintf(out, n, "/%s.ncr", clean);
+  return true;
+}
+
+inline bool saveClip(const char* name) {
+  if (!_clipFS || _state != ST_IDLE || _count == 0) return false;
+  char path[48]; if (!_clipPath(path, sizeof(path), name)) return false;
+  File f = _clipFS->open(path, "w", true);
+  if (!f) return false;
+  ClipFileHeader h; memcpy(h.magic, "NCR1", 4); h.version = 1;
+  h.mode = _mode; h.count = _count; h.durationMs = clipDurationMs();
+  size_t bodyN = (size_t)_count * sizeof(RecEvent);
+  bool ok = (f.write((const uint8_t*)&h, sizeof(h)) == sizeof(h)) &&
+            (f.write((const uint8_t*)_buf, bodyN) == bodyN);
+  f.close();
+  return ok;
+}
+
+inline bool loadClip(const char* name) {
+  if (!_clipFS || _state != ST_IDLE || !_buf) return false;
+  char path[48]; if (!_clipPath(path, sizeof(path), name)) return false;
+  File f = _clipFS->open(path, "r");
+  if (!f) return false;
+  ClipFileHeader h;
+  if (f.read((uint8_t*)&h, sizeof(h)) != (int)sizeof(h) || memcmp(h.magic, "NCR1", 4) != 0) { f.close(); return false; }
+  uint32_t n = (h.count > _cap) ? _cap : h.count;
+  size_t got = f.read((uint8_t*)_buf, (size_t)n * sizeof(RecEvent));
+  f.close();
+  _count = got / sizeof(RecEvent);
+  _mode  = h.mode;
+  return _count > 0;
+}
+
+inline bool deleteClip(const char* name) {
+  if (!_clipFS) return false;
+  char path[48]; if (!_clipPath(path, sizeof(path), name)) return false;
+  return _clipFS->remove(path);
+}
+
+inline void listClips(Print& out) {
+  if (!_clipFS) { out.println("[REC] no clip filesystem (needs the 16 MB partition build)"); return; }
+  File dir = _clipFS->open("/");
+  if (!dir) { out.println("[REC] (clip dir open failed)"); return; }
+  int n = 0;
+  for (File e = dir.openNextFile(); e; e = dir.openNextFile()) {
+    if (e.isDirectory()) continue;
+    out.printf("  %s  (%u B)\n", e.name(), (unsigned)e.size());
+    n++;
+  }
+  if (!n) out.println("  (no clips saved)");
+}
+
 // Run a deferred Record/Play trigger from loop() (Core 1). Play toggles: press
 // while playing → stop, so one button both starts and stops (incl. a loop).
 inline void pollControl() {
@@ -221,12 +307,21 @@ inline void pollControl() {
   _pendingCtl = CTL_NONE;
   switch (c) {
     case CTL_REC_TOGGLE:
-      if      (_state == ST_RECORDING) stopRecord();
-      else if (_state == ST_IDLE)      startRecord(_pendingMode);
+      if (_state == ST_RECORDING) {
+        stopRecord();
+        if (_pendingName[0]) saveClip((const char*)_pendingName);   // save to the trigger's clip name
+      } else if (_state == ST_IDLE) {
+        startRecord(_pendingMode);
+      }
       break;
     case CTL_PLAY:
-      if      (_state == ST_REPLAYING) stop();                       // toggle off
-      else if (_state == ST_IDLE)      startReplay(_pendingLoop);
+      if (_state == ST_REPLAYING) {
+        stop();                                                      // toggle off
+      } else if (_state == ST_IDLE) {
+        // Named clip: load it first; if it's missing, don't play the stale RAM clip.
+        if (_pendingName[0] && !loadClip((const char*)_pendingName)) break;
+        startReplay(_pendingLoop);
+      }
       break;
     case CTL_STOP:
       stop();

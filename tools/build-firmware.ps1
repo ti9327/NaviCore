@@ -116,7 +116,10 @@ if (-not $Tag) {
 # and the config tool unable to connect.  Symptoms when this is wrong:
 # IDE-built firmware works, web-flashed (CI-built) firmware appears
 # "dead" on the OTG port.
-$Fqbn = 'esp32:esp32:esp32s3:USBMode=hwcdc,CDCOnBoot=cdc,PartitionScheme=min_spiffs,PSRAM=opi'
+# PartitionScheme=custom uses NaviCore/partitions.csv (6 stock min_spiffs rows +
+# a 12 MB `clips` LittleFS for the record/replay library). FlashSize=16M is
+# REQUIRED so the clips partition at 0x400000..0x1000000 is addressable.
+$Fqbn = 'esp32:esp32:esp32s3:USBMode=hwcdc,CDCOnBoot=cdc,PartitionScheme=custom,FlashSize=16M,PSRAM=opi'
 $BuildDir = Join-Path ([System.IO.Path]::GetTempPath()) "rc-fw-build"
 
 if (Test-Path $BuildDir) { Remove-Item -Recurse -Force $BuildDir }

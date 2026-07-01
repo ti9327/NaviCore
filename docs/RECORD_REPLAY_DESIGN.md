@@ -311,6 +311,15 @@ as edited.
 
 ## 12. Changelog
 
+- **v3.2 (2026-07-01):** Timeline-editor zoom + trim (config-tool only). **Zoom** now preserves a focal point
+  — `_tlZoomAt(factor, clientX)` converts the focal client-x to a clip time, rescales `pxPerMs`, then restores
+  that time to the same viewport offset via `scrollLeft` (previously every zoom jumped back to t=0). Wired to
+  the +/− buttons (view-centre focal), **Ctrl+scroll** over the timeline (focal = pointer, finer step,
+  `preventDefault` suppresses browser page-zoom), and a new **⤢ Fit** button (`_tlFit`, sizes `pxPerMs` to the
+  viewport width; guards `usable<=0` so an unlaid-out container can't apply a degenerate zoom). Max zoom raised
+  2→4×. **✂ Trim start** (`_tlTrimStart`): shifts every event left by the earliest `t` so the clip starts at 0,
+  removing leading empty space — non-destructive (no events deleted, just re-timed; undone by closing without
+  saving), reduces `durationMs`/`cursorMs` accordingly, no-op with a status note when there's no leading gap.
 - **v3.1 (2026-07-01):** Timeline-editor UX pass (config-tool only) + a review-driven bug sweep.
   - **Proportional ("soft") keyframe drag:** dragging a servo/HCR dot pulls its same-track neighbours by a
     cosine falloff over an adjustable radius (`_tlSoftRadius`, "Smooth drag ___ ms" toolbar field; 0 = classic

@@ -2234,7 +2234,7 @@
         <img src="../Images/r2logo.png" alt="R2 logo"
              style="width:72px;height:72px;object-fit:contain;opacity:0.9">
         <div style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.3px">
-          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">011129QJUL26</span>
+          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">011250QJUL26</span>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap">
@@ -2387,11 +2387,13 @@
     </div>
     <div style="padding:12px 16px;display:flex;flex-direction:column;gap:10px">
       <div class="wcb-send-row" style="flex-wrap:wrap;gap:8px">
-        <button class="btn btn-ghost" id="tl-zoom-out" type="button" title="Zoom out" style="padding:3px 10px">−</button>
-        <button class="btn btn-ghost" id="tl-zoom-in"  type="button" title="Zoom in"  style="padding:3px 10px">+</button>
+        <button class="btn btn-ghost" id="tl-zoom-out" type="button" title="Zoom out (keeps the view centred)" style="padding:3px 10px">−</button>
+        <button class="btn btn-ghost" id="tl-zoom-in"  type="button" title="Zoom in (keeps the view centred). Ctrl+scroll over the timeline to zoom at the pointer." style="padding:3px 10px">+</button>
+        <button class="btn btn-ghost" id="tl-zoom-fit" type="button" title="Fit the whole clip in the view" style="padding:3px 10px">⤢ Fit</button>
         <span style="width:1px;align-self:stretch;background:var(--border)"></span>
         <button class="btn btn-ghost" id="tl-add-maestro" type="button" style="padding:3px 10px">+ Maestro track</button>
         <button class="btn btn-ghost" id="tl-add-hcr"     type="button" style="padding:3px 10px">+ HCR track</button>
+        <button class="btn btn-ghost" id="tl-trim-start"  type="button" title="Shift everything left so the first event starts at 0 — removes empty space at the start of the clip" style="padding:3px 10px">✂ Trim start</button>
         <span style="width:1px;align-self:stretch;background:var(--border)"></span>
         <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--muted)"
                title="Dragging a servo keyframe also pulls its neighbours within this many ms, with a smooth falloff, so the motion stays smooth. Set 0 to move just the one point.">
@@ -2413,7 +2415,7 @@
         Click empty track space to add a keyframe/action · drag a servo/HCR dot to move it — nearby dots
         follow smoothly (see “Smooth drag”) · drag an action diamond to move it in time, or click it to edit ·
         Shift-click two ADJACENT keyframes on a track to pick a pair for easing · drag the yellow handle to
-        scrub · Delete/Backspace removes the selection.
+        scrub · Delete/Backspace removes the selection · Ctrl+scroll to zoom at the pointer, or ⤢ Fit.
       </div>
     </div>
   </div>
@@ -5111,6 +5113,59 @@ function _tlDeleteSelected() {
   _tlRender();
 }
 
+// ── Zoom ─────────────────────────────────────────────────────────────────────
+// Zoom while keeping the time under `clientX` (or the view centre when null)
+// pinned in place — otherwise zooming always jumps you back to t=0. Works by
+// converting the focal client-x to a clip time before the scale change, then
+// restoring that time to the same viewport offset after the re-render adjusts
+// the SVG width.
+function _tlZoomAt(factor, clientX) {
+  if (!_tlClip) return;
+  const scroller = document.getElementById('tl-scroll');
+  const rect = scroller.getBoundingClientRect();
+  const viewX = clientX == null ? rect.width / 2 : (clientX - rect.left);   // focal x within the viewport
+  const focalT = _tlXToTime(scroller.scrollLeft + viewX);                   // clip time under the focal point
+  _tlClip.pxPerMs = Math.max(0.004, Math.min(4, _tlClip.pxPerMs * factor));
+  _tlRender();
+  scroller.scrollLeft = _tlTimeToX(focalT) - viewX;                         // pin focalT back under viewX
+}
+
+// Fit the whole clip in the visible width.
+function _tlFit() {
+  if (!_tlClip) return;
+  const scroller = document.getElementById('tl-scroll');
+  const usable = scroller.clientWidth - TL_LEFT - TL_RIGHT_PAD;
+  if (usable <= 0) return;   // container not laid out yet — don't apply a degenerate zoom
+  _tlClip.pxPerMs = Math.max(0.004, Math.min(4, usable / Math.max(1, _tlClip.durationMs)));
+  _tlRender();
+  scroller.scrollLeft = 0;
+}
+
+// Shift every event left so the earliest lands at t=0 — removes empty space at
+// the START of the clip. Non-destructive (no events deleted, just re-timed), so
+// it's undone by closing without saving.
+function _tlTrimStart() {
+  if (!_tlClip) return;
+  const allT = [
+    ...Object.values(_tlClip.maestro).flat().map(k => k.t),
+    ...Object.values(_tlClip.hcr).flat().map(k => k.t),
+    ..._tlClip.actions.map(a => a.t),
+  ];
+  if (!allT.length) { _tlSetStatus('Nothing to trim — the clip is empty.'); return; }
+  const minT = Math.min(...allT);
+  if (minT <= 0) { _tlSetStatus('No empty space at the start to trim.'); return; }
+  Object.values(_tlClip.maestro).forEach(track => track.forEach(k => { k.t -= minT; }));
+  Object.values(_tlClip.hcr).forEach(track => track.forEach(k => { k.t -= minT; }));
+  _tlClip.actions.forEach(a => { a.t -= minT; });
+  _tlClip.durationMs = Math.max(0, _tlClip.durationMs - minT);
+  _tlClip.cursorMs = Math.max(0, _tlClip.cursorMs - minT);
+  _tlClip.dirty = true;
+  _tlSetStatus(`Trimmed ${_fmtDur(minT)} of leading empty space.`);
+  const scroller = document.getElementById('tl-scroll');
+  _tlRender();
+  if (scroller) scroller.scrollLeft = 0;
+}
+
 function _tlAddMaestroTrack() {
   if (!_tlClip) return;
   const slot = prompt('Maestro slot (1-8):', '1'); if (slot === null) return;
@@ -5298,16 +5353,17 @@ document.getElementById('tl-add-hcr').addEventListener('click', _tlAddHcrTrack);
 document.getElementById('tl-soft-radius').addEventListener('input', e => {
   _tlSoftRadius = Math.max(0, Math.min(5000, +e.target.value || 0));
 });
-document.getElementById('tl-zoom-in').addEventListener('click', () => {
-  if (!_tlClip) return;
-  _tlClip.pxPerMs = Math.min(2, _tlClip.pxPerMs * 1.4);
-  _tlRender();
-});
-document.getElementById('tl-zoom-out').addEventListener('click', () => {
-  if (!_tlClip) return;
-  _tlClip.pxPerMs = Math.max(0.01, _tlClip.pxPerMs / 1.4);
-  _tlRender();
-});
+document.getElementById('tl-zoom-in').addEventListener('click', () => _tlZoomAt(1.4, null));
+document.getElementById('tl-zoom-out').addEventListener('click', () => _tlZoomAt(1 / 1.4, null));
+document.getElementById('tl-zoom-fit').addEventListener('click', _tlFit);
+document.getElementById('tl-trim-start').addEventListener('click', _tlTrimStart);
+// Ctrl+scroll over the timeline → zoom at the pointer (finer step than the
+// buttons). preventDefault stops the browser's own ctrl-wheel page zoom.
+document.getElementById('tl-scroll').addEventListener('wheel', e => {
+  if (!e.ctrlKey || !_tlClip) return;
+  e.preventDefault();
+  _tlZoomAt(e.deltaY < 0 ? 1.12 : 1 / 1.12, e.clientX);
+}, { passive: false });
 document.getElementById('tl-action-close').addEventListener('click', _tlCloseActionEditor);
 document.getElementById('tl-action-apply').addEventListener('click', _tlApplyActionEditor);
 document.getElementById('tl-action-delete').addEventListener('click', _tlDeleteActionEditor);

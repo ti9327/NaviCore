@@ -1614,8 +1614,10 @@ String serialInputBuf;
 bool execCliLine(const String& line) {
   if (line.startsWith("?OTALOCAL,")) { naviota::processOtaLocalCommand(line.substring(10)); return true; }
   if (line.startsWith("?OTA,"))      { naviota::processOtaRelayCommand(line.substring(5));  return true; }
-  // ── Record/replay bench control (phase 1) ───────────────────────────────────
-  //   ?REC,START  ?REC,STOP  ?REC,PLAY  ?REC,CLEAR  ?REC[,INFO]   (case-insensitive)
+  // ── Record/replay bench control (phase 1) + timeline editor transport (phase 2)
+  //   ?REC,START/STOP/PLAY/SAVE/LOAD/LS/RM/RENAME/CLEAR/INFO   (case-insensitive)
+  //   ?REC,EDITLOAD,<name>            — dump a clip as [CLIPDL:*] JSON lines
+  //   ?REC,EDITBEGIN / EDITEV,<json> / EDITEND,<name> / EDITCANCEL — upload an edited clip
   if (line.length() >= 4 && line.substring(0, 4).equalsIgnoreCase("?REC")) {
     String arg = (line.length() > 5) ? line.substring(5) : "";   // after "?REC,"
     arg.trim();
@@ -1645,6 +1647,26 @@ bool execCliLine(const String& line) {
                                  ? "[REC] renamed" : "[REC] rename failed (exists / not found)");
       else Serial.println("[REC] usage: ?REC,RENAME,<from>,<to>");
     }
+    // ── Timeline editor transport (config-tool Phase 2) — see navicore_record.h
+    //    "Phase 2: timeline editor transport" for the full protocol writeup.
+    else if (sub.equalsIgnoreCase("EDITLOAD")) {
+      if (!navirec::loadClip(name.c_str())) { Serial.printf("[REC] clip '%s' not found\n", name.c_str()); return true; }
+      navirec::editStream(Serial);
+    }
+    else if (sub.equalsIgnoreCase("EDITBEGIN")) {
+      Serial.println(navirec::editBegin() ? "[CLIPUL:BEGIN,OK]" : "[CLIPUL:BEGIN,ERR,busy]");
+    }
+    else if (sub.equalsIgnoreCase("EDITEV")) {
+      // `name` here is the raw event JSON, not a clip name — the SUB/name comma
+      // split above only splits on the FIRST comma, so the JSON's own internal
+      // commas pass through untouched.
+      if (navirec::editAddEvent(name.c_str())) Serial.printf("[CLIPUL:ACK,%lu]\n", (unsigned long)navirec::eventCount());
+      else                                     Serial.println("[CLIPUL:NAK,bad event or not editing]");
+    }
+    else if (sub.equalsIgnoreCase("EDITEND")) {
+      Serial.println(navirec::editEnd(name.c_str()) ? "[CLIPUL:END,OK]" : "[CLIPUL:END,ERR,empty or save failed]");
+    }
+    else if (sub.equalsIgnoreCase("EDITCANCEL")) { navirec::editCancel(); Serial.println("[CLIPUL:CANCEL,OK]"); }
     else if (sub.equalsIgnoreCase("CLEAR")) { navirec::clearClip(); Serial.println("[REC] cleared"); }
     else                                    navirec::info(Serial);   // bare "?REC" or "?REC,INFO"
     return true;

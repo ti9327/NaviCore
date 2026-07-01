@@ -2234,7 +2234,7 @@
         <img src="../Images/r2logo.png" alt="R2 logo"
              style="width:72px;height:72px;object-fit:contain;opacity:0.9">
         <div style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.3px">
-          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">010239QJUL26</span>
+          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">011055QJUL26</span>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap">
@@ -2369,6 +2369,73 @@
         </div>
       </div>
 
+    </div>
+  </div>
+</div>
+
+<!-- ── Timeline Editor Modal — record/replay Phase 2 ──────────────────────────
+     Opened via the 📈 button on a Clips-panel row (openTimelineEditor). Drives
+     the ?REC,EDITLOAD / EDITBEGIN / EDITEV / EDITEND transport — see the
+     "Timeline editor" JS section for the wire protocol + editing model. -->
+<div class="modal-overlay" id="tl-modal">
+  <div class="modal" style="max-width:1150px;width:96%">
+    <div class="modal-header">
+      <span class="modal-title" id="tl-title">📈 Timeline</span>
+      <div style="flex:1"></div>
+      <span id="tl-status" style="font-size:12px;color:var(--muted);margin-right:10px"></span>
+      <button class="btn btn-ghost" id="tl-close-btn" type="button" style="padding:4px 10px">✕</button>
+    </div>
+    <div style="padding:12px 16px;display:flex;flex-direction:column;gap:10px">
+      <div class="wcb-send-row" style="flex-wrap:wrap;gap:8px">
+        <button class="btn btn-ghost" id="tl-zoom-out" type="button" title="Zoom out" style="padding:3px 10px">−</button>
+        <button class="btn btn-ghost" id="tl-zoom-in"  type="button" title="Zoom in"  style="padding:3px 10px">+</button>
+        <span style="width:1px;align-self:stretch;background:var(--border)"></span>
+        <button class="btn btn-ghost" id="tl-add-maestro" type="button" style="padding:3px 10px">+ Maestro track</button>
+        <button class="btn btn-ghost" id="tl-add-hcr"     type="button" style="padding:3px 10px">+ HCR track</button>
+        <span style="width:1px;align-self:stretch;background:var(--border)"></span>
+        <div id="tl-easing-toolbar" style="display:none;align-items:center;gap:6px;font-size:12px;color:var(--muted)"></div>
+        <button class="btn btn-danger" id="tl-delete-btn" type="button" style="display:none;padding:3px 10px">🗑 Delete selected</button>
+        <div style="flex:1"></div>
+        <button class="btn btn-blue" id="tl-save-btn" type="button">💾 Save</button>
+      </div>
+      <div id="tl-readout" style="font-family:var(--mono);font-size:11px;color:var(--muted)"></div>
+      <div id="tl-scroll" style="overflow-x:auto;overflow-y:hidden;border:1px solid var(--border);border-radius:8px;background:var(--field)">
+        <svg id="tl-svg" xmlns="http://www.w3.org/2000/svg"></svg>
+      </div>
+      <div style="font-size:11px;color:var(--muted)">
+        Click empty track space to add a keyframe/action · click a point to select it (drag to move) ·
+        Shift-click a second ADJACENT keyframe on the same track to pick a pair for easing · drag the
+        yellow handle to scrub · Delete/Backspace removes the selection.
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Timeline action editor — a small popover reusing the SAME action
+     fields/reader (appendActionFields/readActionFromFid) as the button/
+     switch/knob editors, so a timeline "command" is edited identically. -->
+<div class="modal-overlay" id="tl-action-modal" style="z-index:210">
+  <div class="modal" style="max-width:520px;width:92%">
+    <div class="modal-header">
+      <span class="modal-title" id="tl-action-title">Action</span>
+      <button class="btn btn-ghost" id="tl-action-close" type="button" style="padding:4px 10px">✕</button>
+    </div>
+    <div style="padding:14px 16px;display:flex;flex-direction:column;gap:10px">
+      <div class="wcb-send-row">
+        <label>Type:</label>
+        <select id="tl-action-type" style="min-width:160px"></select>
+        <label style="margin-left:10px">At (ms):</label>
+        <input type="number" id="tl-action-time" min="0" style="width:80px">
+      </div>
+      <div class="action-row" id="tl-action-fields"></div>
+      <div class="wcb-send-row">
+        <label>Delay (ms):</label><input type="number" id="tl-action-delay" min="0" style="width:70px">
+        <label style="margin-left:10px">Note:</label><input type="text" id="tl-action-note" maxlength="19" style="width:130px">
+      </div>
+      <div class="wcb-send-row" style="justify-content:flex-end">
+        <button class="btn btn-danger" id="tl-action-delete" type="button" style="display:none">🗑 Delete</button>
+        <button class="btn btn-blue" id="tl-action-apply" type="button">✓ Apply</button>
+      </div>
     </div>
   </div>
 </div>
@@ -4386,6 +4453,11 @@ function renderClips(clips) {
     play.style.padding = '4px 10px';
     play.onclick = () => sendRcCli('?REC,PLAY,' + name);
 
+    const edit = document.createElement('button');
+    edit.className = 'btn btn-ghost'; edit.type = 'button'; edit.textContent = '📈'; edit.title = 'Edit in timeline';
+    edit.style.padding = '4px 9px';
+    edit.onclick = () => openTimelineEditor(name);
+
     const ren = document.createElement('button');
     ren.className = 'btn btn-ghost'; ren.type = 'button'; ren.textContent = '✎'; ren.title = 'Rename';
     ren.style.padding = '4px 9px';
@@ -4396,7 +4468,7 @@ function renderClips(clips) {
     del.style.padding = '4px 9px';
     del.onclick = () => clipDelete(name);
 
-    row.append(meta, play, ren, del);
+    row.append(meta, play, edit, ren, del);
     list.appendChild(row);
   });
 }
@@ -4435,6 +4507,698 @@ async function clipRecordToggle() {
     if (name) setTimeout(clipsRefresh, 500);
   }
 }
+
+// ══════════════════════════════════════════════════════════════════════════
+// Timeline editor (record/replay Phase 2) — an SVG timeline for a clip's
+// Maestro servo curves, HCR-volume curves, and discrete actions (WCB/HCR/MP3/
+// serial/etc — the SAME action types the button/switch/knob editors use).
+//
+// Ground truth stays the on-device .ncr file. This editor:
+//   1. DOWNLOADS a clip as flat, timestamped events (?REC,EDITLOAD) — see
+//      _clipDlFeed below for the wire format and its fragment-reassembly.
+//   2. Reshapes them client-side into per-channel tracks + an action list —
+//      _tlBuildModelFromEvents.
+//   3. Renders/edits them as an SVG timeline (drag keyframes, add/edit/delete
+//      actions via the SAME appendActionFields/readActionFromFid the button
+//      editor uses, apply an easing curve between two keyframes by inserting
+//      synthesized intermediate keyframes — the firmware only ever does LINEAR
+//      interpolation between whatever keyframes exist, so "easing" is 100% an
+//      editor-side concept: denser keyframes approximating a curve).
+//   4. UPLOADS the edited flat event list back (?REC,EDITBEGIN/EDITEV/EDITEND)
+//      with a per-event ACK/NAK + retry, since a lost event during a WRITE
+//      would silently corrupt the saved clip (unlike a lost DOWNLOAD line,
+//      which just fails an integrity count-check and is freely re-requested).
+// ══════════════════════════════════════════════════════════════════════════
+
+// ── Download ingestion (?REC,EDITLOAD reply: [CLIPDL:BEGIN]/[CLIPDL:EV]/[CLIPDL:END]) ──
+// Each [CLIPDL:EV] line is one small, self-contained JSON event. A maximal
+// action (a 95-char WCB command) can exceed the 160-byte RTERM packet limit,
+// so — same fix as the old single-marker [CLIPLIST] format — same-source
+// fragments are rejoined until the buffered text parses as valid JSON.
+let _tlDownload = null;   // { name, src, header, events, evBuf } while EDITLOAD is streaming in
+
+function _clipDlFeed(src, text) {
+  if (!_tlDownload) return false;
+  if (_tlDownload.src !== null && _tlDownload.src !== src && !text.startsWith('[CLIPDL:BEGIN]')) return false;
+
+  if (text.startsWith('[CLIPDL:BEGIN]')) {
+    let header = {};
+    try { header = JSON.parse(text.slice(14)); } catch (_) {}
+    _tlDownload.src = src; _tlDownload.header = header; _tlDownload.events = []; _tlDownload.evBuf = null;
+    return true;
+  }
+  if (text.startsWith('[CLIPDL:END]')) { _tlDownloadComplete(); return true; }
+
+  if (text.startsWith('[CLIPDL:EV]')) {
+    _tlDownload.evBuf = text.slice(11);
+  } else if (_tlDownload.evBuf !== null) {
+    _tlDownload.evBuf += text;                 // continuation fragment of a split EV line
+  } else {
+    return false;                              // unrelated line
+  }
+  try {
+    _tlDownload.events.push(JSON.parse(_tlDownload.evBuf));
+    _tlDownload.evBuf = null;
+  } catch (_) {
+    if (_tlDownload.evBuf.length > 4096) _tlDownload.evBuf = null;   // corrupt chain — drop, next EV/END recovers
+  }
+  return true;
+}
+
+function _tlDownloadComplete() {
+  const dl = _tlDownload;
+  if (!dl) return;
+  const expected = +(dl.header && dl.header.count) ?? -1;
+  if (!(expected >= 0) || dl.events.length !== expected) {
+    _tlDownload = null;
+    _tlShowLoadError(`Download incomplete — got ${dl ? dl.events.length : 0} of ${dl && dl.header ? dl.header.count : '?'} events.` +
+                      (viaWcbActive ? ' This can happen over the WCB mesh with a large clip — Retry, or switch to Direct USB.' : ' Retry?'));
+    return;
+  }
+  _tlBuildModelFromEvents(dl.name, dl.header, dl.events);
+  _tlDownload = null;
+}
+
+// ── Upload marker waiter (?REC,EDITBEGIN / EDITEV / EDITEND replies) ──────────
+// [CLIPUL:*] replies are always one short line (an ACK/NAK/status) — never
+// fragmented — so no reassembly needed, just a promise that resolves on the
+// first line a caller's matcher accepts.
+let _tlWaiters = [];
+function _tlWaitForMarker(matcher, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const entry = { matcher, resolve };
+    entry.timer = setTimeout(() => {
+      _tlWaiters = _tlWaiters.filter(w => w !== entry);
+      reject(new Error('timeout waiting for board response'));
+    }, timeoutMs || 4000);
+    _tlWaiters.push(entry);
+  });
+}
+function _tlFeedMarker(text) {
+  const hit = _tlWaiters.find(w => w.matcher(text));
+  if (!hit) return;
+  clearTimeout(hit.timer);
+  _tlWaiters = _tlWaiters.filter(w => w !== hit);
+  hit.resolve(text);
+}
+
+// ── Editor model ─────────────────────────────────────────────────────────────
+// _tlClip is the single open editing session (null when the modal is closed).
+//   maestro: { "<slot>-<ch>": [{id,t,pos}, ...] (sorted by t) }
+//   hcr:     { "<chan>":      [{id,t,vol}, ...] (sorted by t) }
+//   actions: [ {id,t,action:{...}} ]  (display order; sorted only on save)
+// `action` objects are the SAME shape actionToJson/actionFromJson (firmware)
+// and appendActionFields/readActionFromFid (this file) already use everywhere
+// else — {type, target|port, cmd, fn, chan, track, delay, note}.
+let _tlClip = null;
+let _tlNextId = 1;
+function _tlId() { return _tlNextId++; }
+
+function openTimelineEditor(name) {
+  document.getElementById('tl-modal').classList.add('open');
+  document.getElementById('tl-title').textContent = '📈 Timeline — ' + name;
+  _tlSetStatus('Loading…');
+  _tlClip = null;
+  const svg = document.getElementById('tl-svg');
+  if (svg) svg.innerHTML = '';
+  _tlDownload = { name, src: null, header: null, events: [], evBuf: null };
+  sendRcCli('?REC,EDITLOAD,' + name);
+}
+
+function _tlShowLoadError(msg) {
+  _tlSetStatus(msg);
+  const svg = document.getElementById('tl-svg');
+  if (svg) svg.innerHTML = '';
+}
+
+function _tlSetStatus(msg) {
+  const el = document.getElementById('tl-status');
+  if (el) el.textContent = msg || '';
+}
+
+function closeTimelineEditor() {
+  if (_tlClip && _tlClip.dirty && !confirm('Discard unsaved timeline edits?')) return;
+  if (_tlClip && _tlClip.uploading) sendRcCli('?REC,EDITCANCEL');   // best-effort abort of a stuck upload
+  _tlClip = null;
+  _tlDownload = null;
+  document.getElementById('tl-modal').classList.remove('open');
+}
+document.getElementById('tl-modal').addEventListener('click', e => {
+  if (e.target === document.getElementById('tl-modal')) closeTimelineEditor();
+});
+
+// Flat downloaded events → per-channel tracks + action list.
+function _tlBuildModelFromEvents(name, header, events) {
+  const clip = {
+    name, durationMs: +(header.durationMs || 0), mode: +(header.mode || 1),
+    maestro: {}, hcr: {}, actions: [],
+    selected: null, selectedPair: null, cursorMs: 0,
+    pxPerMs: 0, dirty: false, uploading: false,
+  };
+  events.forEach(ev => {
+    const t = +ev.t || 0;
+    if (ev.k === 1) {
+      const key = `${ev.slot}-${ev.ch}`;
+      (clip.maestro[key] = clip.maestro[key] || []).push({ id: _tlId(), t, pos: +ev.pos || 0 });
+    } else if (ev.k === 2) {
+      const key = String(ev.chan);
+      (clip.hcr[key] = clip.hcr[key] || []).push({ id: _tlId(), t, vol: +ev.vol || 0 });
+    } else {
+      const { t: _t, k: _k, ...action } = ev;
+      clip.actions.push({ id: _tlId(), t, action });
+    }
+  });
+  Object.values(clip.maestro).forEach(track => track.sort((a, b) => a.t - b.t));
+  Object.values(clip.hcr).forEach(track => track.sort((a, b) => a.t - b.t));
+  clip.actions.sort((a, b) => a.t - b.t);
+  if (!clip.durationMs) {
+    const allT = [
+      ...Object.values(clip.maestro).flat().map(k => k.t),
+      ...Object.values(clip.hcr).flat().map(k => k.t),
+      ...clip.actions.map(a => a.t),
+    ];
+    clip.durationMs = allT.length ? Math.max(...allT) : 1000;
+  }
+  clip.pxPerMs = Math.max(0.04, Math.min(0.6, 700 / Math.max(1, clip.durationMs)));
+  _tlClip = clip;
+  _tlSetStatus(`${events.length} events · ${_fmtDur(clip.durationMs)}`);
+  _tlRender();
+}
+
+// Flatten the model back to the wire event shape ({t,k,...}) for upload.
+function _tlFlattenEvents() {
+  const out = [];
+  Object.entries(_tlClip.maestro).forEach(([key, track]) => {
+    const [slot, ch] = key.split('-').map(Number);
+    track.forEach(kf => out.push({ t: kf.t, k: 1, slot, ch, pos: kf.pos }));
+  });
+  Object.entries(_tlClip.hcr).forEach(([chan, track]) => {
+    track.forEach(kf => out.push({ t: kf.t, k: 2, chan: +chan, vol: kf.vol }));
+  });
+  _tlClip.actions.forEach(a => out.push({ t: a.t, k: 0, ...a.action }));
+  out.sort((a, b) => a.t - b.t);
+  return out;
+}
+
+async function _tlSave() {
+  if (!_tlClip || _tlClip.uploading) return;
+  const events = _tlFlattenEvents();
+  if (!events.length) { alert('Nothing to save — the timeline is empty.'); return; }
+  _tlClip.uploading = true;
+  const saveBtn = document.getElementById('tl-save-btn');
+  if (saveBtn) saveBtn.disabled = true;
+  try {
+    _tlSetStatus('Saving 0/' + events.length + '…');
+    const beginP = _tlWaitForMarker(t => t.startsWith('[CLIPUL:BEGIN'));
+    await sendRcCli('?REC,EDITBEGIN');
+    const begin = await beginP;
+    if (!begin.includes('OK')) throw new Error('board rejected EDITBEGIN (busy recording/replaying?)');
+
+    for (let i = 0; i < events.length; i++) {
+      const json = JSON.stringify(events[i]);
+      let ok = false;
+      for (let attempt = 0; attempt < 3 && !ok; attempt++) {
+        try {
+          const p = _tlWaitForMarker(t => t.startsWith('[CLIPUL:ACK') || t.startsWith('[CLIPUL:NAK'));
+          await sendRcCli('?REC,EDITEV,' + json);
+          const resp = await p;
+          ok = resp.startsWith('[CLIPUL:ACK');
+        } catch (_) { /* timeout — retry */ }
+      }
+      if (!ok) throw new Error(`event ${i + 1}/${events.length} rejected after 3 attempts`);
+      _tlSetStatus(`Saving ${i + 1}/${events.length}…`);
+    }
+
+    const endP = _tlWaitForMarker(t => t.startsWith('[CLIPUL:END'));
+    await sendRcCli('?REC,EDITEND,' + _tlClip.name);
+    const end = await endP;
+    if (!end.includes('OK')) throw new Error('board rejected EDITEND (save failed)');
+
+    _tlClip.dirty = false;
+    _tlSetStatus(`Saved ✓ (${events.length} events)`);
+    clipsRefresh();
+  } catch (e) {
+    _tlSetStatus('Save FAILED: ' + e.message);
+    sendRcCli('?REC,EDITCANCEL');
+  } finally {
+    _tlClip.uploading = false;
+    if (saveBtn) saveBtn.disabled = false;
+  }
+}
+
+// ── Timeline rendering ──────────────────────────────────────────────────────
+// A plain-DOM SVG rebuild on every change (drag, add, delete, zoom). Simpler
+// and less error-prone than incremental patching, and clip sizes here are
+// hand-edited routines (tens to a few hundred keyframes), not the raw dense
+// captures — cheap enough to redraw wholesale on every interaction.
+const TL_LEFT = 110, TL_RULER_H = 26, TL_ROW_H = 40, TL_ACTION_ROW_H = 50, TL_RIGHT_PAD = 30;
+const SVGNS = 'http://www.w3.org/2000/svg';
+
+function _tlSvgEl(tag, attrs) {
+  const el = document.createElementNS(SVGNS, tag);
+  if (attrs) for (const k in attrs) el.setAttribute(k, attrs[k]);
+  return el;
+}
+
+function _tlTimeToX(t) { return TL_LEFT + t * _tlClip.pxPerMs; }
+function _tlXToTime(x) { return Math.max(0, Math.round((x - TL_LEFT) / _tlClip.pxPerMs)); }
+function _tlValueToY(v, lo, hi, rowTop) {
+  const frac = hi > lo ? (v - lo) / (hi - lo) : 0.5;
+  return rowTop + TL_ROW_H - 6 - frac * (TL_ROW_H - 12);
+}
+function _tlYToValue(y, lo, hi, rowTop) {
+  const frac = (rowTop + TL_ROW_H - 6 - y) / (TL_ROW_H - 12);
+  return lo + frac * (hi - lo);
+}
+
+function _tlTrackList() {
+  const tracks = [];
+  Object.keys(_tlClip.maestro).sort().forEach(key => {
+    const [slot, ch] = key.split('-');
+    tracks.push({ kind: 'maestro', key, label: `M${slot} Ch${ch}` });
+  });
+  Object.keys(_tlClip.hcr).sort().forEach(chan => {
+    const label = ['V', 'A', 'B'][+chan] || ('Ch' + chan);
+    tracks.push({ kind: 'hcr', key: chan, label: `HCR ${label}` });
+  });
+  return tracks;
+}
+
+// Maestro positions are STORED in ¼µs (matches the on-wire `pos` field and the
+// firmware directly — no conversion on save) but DISPLAYED/EDITED in µs, same
+// UI convention as the knob-passthrough Pos min/max fields, converted only at
+// this render/interaction boundary. HCR volume is a raw 0-99 either way.
+function _tlTrackRange(track) {
+  if (track.kind === 'hcr') return [0, 99];
+  const kfs = _tlClip.maestro[track.key] || [];
+  if (!kfs.length) return [1000, 2000];
+  const vals = kfs.map(k => k.pos / 4);
+  let lo = Math.min(...vals), hi = Math.max(...vals);
+  if (lo === hi) { lo -= 100; hi += 100; }
+  const pad = (hi - lo) * 0.15;
+  return [Math.max(0, lo - pad), hi + pad];
+}
+
+function _tlNiceTick(raw) {
+  const steps = [100, 200, 250, 500, 1000, 2000, 2500, 5000, 10000, 15000];
+  for (const s of steps) if (s >= raw) return s;
+  return 15000;
+}
+
+function _tlRender() {
+  const clip = _tlClip;
+  const svg = document.getElementById('tl-svg');
+  if (!clip || !svg) return;
+  const tracks = _tlTrackList();
+  const width  = TL_LEFT + Math.max(1, clip.durationMs) * clip.pxPerMs + TL_RIGHT_PAD;
+  const height = TL_RULER_H + tracks.length * TL_ROW_H + TL_ACTION_ROW_H;
+  svg.setAttribute('width', width);
+  svg.setAttribute('height', height);
+  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+  svg.innerHTML = '';
+
+  svg.appendChild(_tlSvgEl('line', { x1: TL_LEFT, y1: 0, x2: TL_LEFT, y2: height, stroke: 'var(--border)', 'stroke-width': 1 }));
+
+  const tickMs = _tlNiceTick(80 / clip.pxPerMs);
+  for (let t = 0; t <= clip.durationMs + tickMs; t += tickMs) {
+    const x = _tlTimeToX(t);
+    svg.appendChild(_tlSvgEl('line', { x1: x, y1: TL_RULER_H - 6, x2: x, y2: height, stroke: 'var(--border)', 'stroke-width': 0.5, opacity: 0.4 }));
+    const label = _tlSvgEl('text', { x: x + 3, y: TL_RULER_H - 10, 'font-size': 10, fill: 'var(--muted)', 'font-family': 'var(--mono)' });
+    label.textContent = (t / 1000) + 's';
+    svg.appendChild(label);
+  }
+
+  tracks.forEach((track, i) => {
+    const rowTop = TL_RULER_H + i * TL_ROW_H;
+    const [lo, hi] = _tlTrackRange(track);
+    const lbl = _tlSvgEl('text', { x: 8, y: rowTop + TL_ROW_H / 2 + 4, 'font-size': 11, fill: 'var(--text)' });
+    lbl.textContent = track.label;
+    svg.appendChild(lbl);
+    const bg = _tlSvgEl('rect', { x: TL_LEFT, y: rowTop, width: width - TL_LEFT, height: TL_ROW_H, fill: i % 2 ? 'var(--hover-2)' : 'transparent' });
+    bg.style.cursor = 'copy';
+    bg.addEventListener('click', ev => _tlOnTrackClick(ev, track, rowTop, lo, hi));
+    svg.appendChild(bg);
+    const rangeLbl = _tlSvgEl('text', { x: width - 6, y: rowTop + 12, 'font-size': 9, fill: 'var(--muted)', 'text-anchor': 'end' });
+    rangeLbl.textContent = track.kind === 'hcr' ? '0–99' : `${Math.round(lo)}–${Math.round(hi)}µs`;
+    svg.appendChild(rangeLbl);
+
+    const kfs = track.kind === 'maestro' ? (clip.maestro[track.key] || []) : (clip.hcr[track.key] || []);
+    const valueOf = kf => track.kind === 'maestro' ? kf.pos / 4 : kf.vol;
+    if (kfs.length > 1) {
+      const pts = kfs.map(kf => `${_tlTimeToX(kf.t)},${_tlValueToY(valueOf(kf), lo, hi, rowTop)}`).join(' ');
+      svg.appendChild(_tlSvgEl('polyline', { points: pts, fill: 'none', stroke: 'var(--accent2)', 'stroke-width': 1.5 }));
+    }
+    kfs.forEach(kf => {
+      const x = _tlTimeToX(kf.t), y = _tlValueToY(valueOf(kf), lo, hi, rowTop);
+      const isSel = clip.selected && clip.selected.kind === track.kind && clip.selected.key === track.key && clip.selected.id === kf.id;
+      const isPair = clip.selectedPair && clip.selectedPair.some(p => p.kind === track.kind && p.key === track.key && p.id === kf.id);
+      const dot = _tlSvgEl('circle', {
+        cx: x, cy: y, r: (isSel || isPair) ? 6 : 4.5,
+        fill: isSel ? 'var(--red)' : isPair ? 'var(--yellow)' : 'var(--accent2)',
+        stroke: '#fff', 'stroke-width': 1,
+      });
+      dot.style.cursor = 'grab';
+      dot.addEventListener('pointerdown', ev => _tlStartDragKeyframe(ev, track, kf, lo, hi, rowTop));
+      svg.appendChild(dot);
+    });
+  });
+
+  const actionsTop = TL_RULER_H + tracks.length * TL_ROW_H;
+  const aLbl = _tlSvgEl('text', { x: 8, y: actionsTop + TL_ACTION_ROW_H / 2 + 4, 'font-size': 11, fill: 'var(--text)' });
+  aLbl.textContent = 'Actions';
+  svg.appendChild(aLbl);
+  const aBg = _tlSvgEl('rect', { x: TL_LEFT, y: actionsTop, width: width - TL_LEFT, height: TL_ACTION_ROW_H, fill: 'var(--hover-2)' });
+  aBg.style.cursor = 'copy';
+  aBg.addEventListener('click', ev => {
+    const rect = svg.getBoundingClientRect();
+    _tlOpenActionEditor(null, _tlXToTime(ev.clientX - rect.left));
+  });
+  svg.appendChild(aBg);
+  clip.actions.forEach(a => {
+    const x = _tlTimeToX(a.t), y = actionsTop + TL_ACTION_ROW_H / 2;
+    const isSel = clip.selected && clip.selected.kind === 'action' && clip.selected.id === a.id;
+    const d = _tlSvgEl('path', {
+      d: `M ${x} ${y - 7} L ${x + 7} ${y} L ${x} ${y + 7} L ${x - 7} ${y} Z`,
+      fill: isSel ? 'var(--red)' : 'var(--accent)', stroke: '#fff', 'stroke-width': 1,
+    });
+    d.style.cursor = 'pointer';
+    d.addEventListener('click', ev => { ev.stopPropagation(); _tlClip.selected = { kind: 'action', id: a.id }; _tlOpenActionEditor(a, a.t); });
+    svg.appendChild(d);
+  });
+
+  const cx = _tlTimeToX(clip.cursorMs);
+  svg.appendChild(_tlSvgEl('line', { x1: cx, y1: 0, x2: cx, y2: height, stroke: 'var(--yellow)', 'stroke-width': 1.5 }));
+  const handle = _tlSvgEl('rect', { x: cx - 5, y: 0, width: 10, height: TL_RULER_H, fill: 'var(--yellow)', opacity: 0.4 });
+  handle.style.cursor = 'ew-resize';
+  handle.addEventListener('pointerdown', _tlStartDragCursor);
+  svg.appendChild(handle);
+
+  _tlUpdateReadout();
+  _tlUpdateToolbar();
+}
+
+// ── Interactions ─────────────────────────────────────────────────────────────
+function _tlOnTrackClick(ev, track, rowTop, lo, hi) {
+  const rect = document.getElementById('tl-svg').getBoundingClientRect();
+  const t = _tlXToTime(ev.clientX - rect.left);
+  const v = _tlYToValue(ev.clientY - rect.top, lo, hi, rowTop);
+  const map = track.kind === 'maestro' ? _tlClip.maestro : _tlClip.hcr;
+  const arr = map[track.key] || (map[track.key] = []);
+  const kf = { id: _tlId(), t: Math.max(0, t) };
+  if (track.kind === 'maestro') kf.pos = Math.max(0, Math.round(v * 4));
+  else kf.vol = Math.max(0, Math.min(99, Math.round(v)));
+  arr.push(kf);
+  arr.sort((a, b) => a.t - b.t);
+  _tlClip.selected = { kind: track.kind, key: track.key, id: kf.id };
+  _tlClip.selectedPair = null;
+  _tlClip.dirty = true;
+  _tlRender();
+}
+
+function _tlStartDragKeyframe(ev, track, kf, lo, hi, rowTop) {
+  ev.preventDefault(); ev.stopPropagation();
+  _tlClip.selected = { kind: track.kind, key: track.key, id: kf.id };
+  _tlClip.selectedPair = null;
+  let moved = false;
+  const onMove = mv => {
+    moved = true;
+    const rect = document.getElementById('tl-svg').getBoundingClientRect();
+    const t = _tlXToTime(mv.clientX - rect.left);
+    const v = _tlYToValue(mv.clientY - rect.top, lo, hi, rowTop);
+    kf.t = Math.max(0, t);
+    if (track.kind === 'maestro') kf.pos = Math.max(0, Math.round(v * 4));
+    else kf.vol = Math.max(0, Math.min(99, Math.round(v)));
+    _tlClip.dirty = true;
+    _tlRender();
+  };
+  const onUp = () => {
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', onUp);
+    if (moved) {
+      const arr = track.kind === 'maestro' ? _tlClip.maestro[track.key] : _tlClip.hcr[track.key];
+      arr.sort((a, b) => a.t - b.t);
+      _tlRender();
+    } else if (ev.shiftKey) {
+      _tlToggleShiftSelect(track, kf);
+      _tlRender();
+    }
+  };
+  window.addEventListener('pointermove', onMove);
+  window.addEventListener('pointerup', onUp);
+}
+
+function _tlToggleShiftSelect(track, kf) {
+  const arr = track.kind === 'maestro' ? _tlClip.maestro[track.key] : _tlClip.hcr[track.key];
+  const idx = arr.findIndex(k => k.id === kf.id);
+  const first = _tlClip.selectedPair && _tlClip.selectedPair[0];
+  if (!first || first.kind !== track.kind || first.key !== track.key) {
+    _tlClip.selectedPair = [{ kind: track.kind, key: track.key, id: kf.id, idx }];
+    return;
+  }
+  if (first.id === kf.id) { _tlClip.selectedPair = null; return; }   // shift-clicked the same dot again — clear
+  if (Math.abs(idx - first.idx) !== 1) {
+    alert('Pick two ADJACENT keyframes on the same track for easing.');
+    _tlClip.selectedPair = null;
+    return;
+  }
+  _tlClip.selectedPair = [first, { kind: track.kind, key: track.key, id: kf.id, idx }].sort((a, b) => a.idx - b.idx);
+}
+
+function _tlStartDragCursor(ev) {
+  ev.preventDefault();
+  const onMove = mv => {
+    const rect = document.getElementById('tl-svg').getBoundingClientRect();
+    _tlClip.cursorMs = Math.max(0, Math.min(_tlClip.durationMs, _tlXToTime(mv.clientX - rect.left)));
+    _tlRender();
+  };
+  const onUp = () => { window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp); };
+  window.addEventListener('pointermove', onMove);
+  window.addEventListener('pointerup', onUp);
+}
+
+function _tlDeleteSelected() {
+  const sel = _tlClip.selected;
+  if (!sel) return;
+  if (sel.kind === 'action') {
+    _tlClip.actions = _tlClip.actions.filter(a => a.id !== sel.id);
+  } else {
+    const map = sel.kind === 'maestro' ? _tlClip.maestro : _tlClip.hcr;
+    map[sel.key] = (map[sel.key] || []).filter(k => k.id !== sel.id);
+    if (!map[sel.key].length) delete map[sel.key];
+  }
+  _tlClip.selected = null;
+  _tlClip.dirty = true;
+  _tlRender();
+}
+
+function _tlAddMaestroTrack() {
+  if (!_tlClip) return;
+  const slot = prompt('Maestro slot (1-8):', '1'); if (slot === null) return;
+  const ch   = prompt('Maestro channel (0-31):', '0'); if (ch === null) return;
+  const key = `${Math.max(1, Math.min(8, +slot || 1))}-${Math.max(0, Math.min(31, +ch || 0))}`;
+  _tlClip.maestro[key] = _tlClip.maestro[key] || [];
+  _tlRender();
+}
+function _tlAddHcrTrack() {
+  if (!_tlClip) return;
+  const chan = prompt('HCR channel (0=V, 1=A, 2=B):', '0'); if (chan === null) return;
+  const key = String(Math.max(0, Math.min(2, +chan || 0)));
+  _tlClip.hcr[key] = _tlClip.hcr[key] || [];
+  _tlRender();
+}
+
+// ── Easing — inserts synthesized keyframes between two adjacent, user-picked
+// keyframes to approximate a curve.  The firmware only ever interpolates
+// LINEARLY between whatever keyframes exist (see navicore_record.h
+// _updateCurves), so this is the entire mechanism behind "easing": denser
+// keyframes, not a firmware curve type.  Re-applying to the same pair replaces
+// the previously-synthesized points rather than stacking on top of them.
+const TL_EASE_FNS = {
+  linear:    x => x,
+  easeIn:    x => x * x,
+  easeOut:   x => 1 - (1 - x) * (1 - x),
+  easeInOut: x => x < 0.5 ? 2 * x * x : 1 - Math.pow(-2 * x + 2, 2) / 2,
+};
+
+function _tlUpdateToolbar() {
+  const bar = document.getElementById('tl-easing-toolbar');
+  const delBtn = document.getElementById('tl-delete-btn');
+  if (!bar || !delBtn) return;
+  delBtn.style.display = _tlClip.selected ? '' : 'none';
+  if (_tlClip.selectedPair && _tlClip.selectedPair.length === 2) {
+    bar.style.display = 'flex';
+    bar.innerHTML = '';
+    const sel = document.createElement('select');
+    sel.id = 'tl-ease-fn';
+    Object.keys(TL_EASE_FNS).forEach(v => { const o = document.createElement('option'); o.value = v; o.textContent = v; sel.appendChild(o); });
+    const steps = document.createElement('input');
+    steps.type = 'number'; steps.min = 2; steps.max = 40; steps.value = 8; steps.style.width = '48px'; steps.id = 'tl-ease-steps';
+    const applyBtn = document.createElement('button');
+    applyBtn.className = 'btn btn-blue'; applyBtn.type = 'button'; applyBtn.textContent = 'Apply easing'; applyBtn.style.padding = '3px 10px';
+    applyBtn.onclick = _tlApplyEasing;
+    bar.append('Ease:', sel, 'steps:', steps, applyBtn);
+  } else {
+    bar.style.display = 'none';
+  }
+}
+
+function _tlApplyEasing() {
+  const pair = _tlClip.selectedPair;
+  if (!pair || pair.length !== 2) return;
+  const fnName = document.getElementById('tl-ease-fn')?.value || 'linear';
+  const steps = Math.max(2, Math.min(40, +(document.getElementById('tl-ease-steps')?.value || 8)));
+  const fn = TL_EASE_FNS[fnName] || TL_EASE_FNS.linear;
+  const [a, b] = pair;
+  const arr = a.kind === 'maestro' ? _tlClip.maestro[a.key] : _tlClip.hcr[a.key];
+  const kfA = arr.find(k => k.id === a.id), kfB = arr.find(k => k.id === b.id);
+  if (!kfA || !kfB) { _tlClip.selectedPair = null; _tlRender(); return; }
+  const valA = a.kind === 'maestro' ? kfA.pos : kfA.vol;
+  const valB = a.kind === 'maestro' ? kfB.pos : kfB.vol;
+  // Drop any keyframes strictly between A and B — a re-apply replaces the
+  // previous easing instead of layering more points onto it.
+  const filtered = arr.filter(k => k.t <= kfA.t || k.t >= kfB.t);
+  const inserted = [];
+  for (let i = 1; i < steps; i++) {
+    const frac = fn(i / steps);
+    const t = Math.round(kfA.t + (kfB.t - kfA.t) * (i / steps));
+    const v = valA + (valB - valA) * frac;
+    const kf = { id: _tlId(), t };
+    if (a.kind === 'maestro') kf.pos = Math.max(0, Math.round(v));
+    else kf.vol = Math.max(0, Math.min(99, Math.round(v)));
+    inserted.push(kf);
+  }
+  const merged = [...filtered, ...inserted].sort((x, y) => x.t - y.t);
+  if (a.kind === 'maestro') _tlClip.maestro[a.key] = merged; else _tlClip.hcr[a.key] = merged;
+  _tlClip.selectedPair = null;
+  _tlClip.dirty = true;
+  _tlRender();
+}
+
+// ── Scrub readout — mirrors the firmware's linear inter-keyframe
+// interpolation (navicore_record.h _updateCurves) so the preview matches what
+// replay will actually do.
+function _tlInterpolateAt(kfs, valueOf, t) {
+  if (!kfs.length) return null;
+  if (t <= kfs[0].t) return valueOf(kfs[0]);
+  if (t >= kfs[kfs.length - 1].t) return valueOf(kfs[kfs.length - 1]);
+  for (let i = 0; i < kfs.length - 1; i++) {
+    if (t >= kfs[i].t && t <= kfs[i + 1].t) {
+      const span = kfs[i + 1].t - kfs[i].t;
+      const frac = span > 0 ? (t - kfs[i].t) / span : 0;
+      return valueOf(kfs[i]) + (valueOf(kfs[i + 1]) - valueOf(kfs[i])) * frac;
+    }
+  }
+  return valueOf(kfs[kfs.length - 1]);
+}
+
+function _tlUpdateReadout() {
+  const el = document.getElementById('tl-readout');
+  if (!el || !_tlClip) return;
+  const parts = [`t = ${_tlClip.cursorMs} ms`];
+  Object.entries(_tlClip.maestro).forEach(([key, kfs]) => {
+    if (!kfs.length) return;
+    const v = _tlInterpolateAt(kfs, k => k.pos, _tlClip.cursorMs);
+    parts.push(`M${key.replace('-', ' Ch')} = ${Math.round(v / 4)}µs`);
+  });
+  Object.entries(_tlClip.hcr).forEach(([chan, kfs]) => {
+    if (!kfs.length) return;
+    const v = _tlInterpolateAt(kfs, k => k.vol, _tlClip.cursorMs);
+    parts.push(`HCR${chan} = ${Math.round(v)}`);
+  });
+  const activeActions = _tlClip.actions.filter(a => Math.abs(a.t - _tlClip.cursorMs) < 50);
+  if (activeActions.length) parts.push(...activeActions.map(a => '▸ ' + actionSummary(a.action).replace(/<[^>]+>/g, '')));
+  el.textContent = parts.join('   ·   ');
+}
+
+// ── Action editor popover (add/edit a discrete command on the timeline) ─────
+let _tlEditingActionId = null;
+
+function _tlOpenActionEditor(existing, defaultT) {
+  _tlEditingActionId = existing ? existing.id : null;
+  document.getElementById('tl-action-modal').classList.add('open');
+  document.getElementById('tl-action-title').textContent = existing ? 'Edit action' : 'New action';
+  const typeSel = document.getElementById('tl-action-type');
+  typeSel.innerHTML = '';
+  Object.entries(actionTypeLabels).forEach(([v, lbl]) => {
+    if (!v) return;   // skip the "— none —" placeholder — a timeline action must have a type
+    const o = document.createElement('option'); o.value = v; o.textContent = lbl;
+    typeSel.appendChild(o);
+  });
+  const action = existing ? existing.action : { type: typeSel.options[0].value };
+  typeSel.value = action.type || typeSel.options[0].value;
+  document.getElementById('tl-action-time').value = existing ? existing.t : Math.max(0, Math.round(defaultT || 0));
+  document.getElementById('tl-action-delay').value = action.delay || 0;
+  document.getElementById('tl-action-note').value = action.note || '';
+  const fields = document.getElementById('tl-action-fields');
+  appendActionFields(fields, action);
+  typeSel.onchange = () => appendActionFields(fields, { type: typeSel.value });
+  document.getElementById('tl-action-delete').style.display = existing ? '' : 'none';
+}
+
+function _tlCloseActionEditor() {
+  document.getElementById('tl-action-modal').classList.remove('open');
+  _tlEditingActionId = null;
+}
+
+function _tlApplyActionEditor() {
+  const type  = document.getElementById('tl-action-type').value;
+  const delay = +(document.getElementById('tl-action-delay').value || 0);
+  const note  = (document.getElementById('tl-action-note').value || '').trim();
+  const extras = { ...(delay ? { delay } : {}), ...(note ? { note } : {}) };
+  const action = readActionFromFid('tl-action-fields', type, extras);
+  if (!action) { alert('Fill in the required fields (e.g. a command) first.'); return; }
+  const t = Math.max(0, +(document.getElementById('tl-action-time').value || 0));
+  if (_tlEditingActionId) {
+    const entry = _tlClip.actions.find(a => a.id === _tlEditingActionId);
+    if (entry) { entry.t = t; entry.action = action; }
+  } else {
+    _tlClip.actions.push({ id: _tlId(), t, action });
+  }
+  _tlClip.actions.sort((a, b) => a.t - b.t);
+  _tlClip.dirty = true;
+  _tlCloseActionEditor();
+  _tlRender();
+}
+
+function _tlDeleteActionEditor() {
+  if (_tlEditingActionId) {
+    _tlClip.actions = _tlClip.actions.filter(a => a.id !== _tlEditingActionId);
+    _tlClip.dirty = true;
+  }
+  _tlCloseActionEditor();
+  _tlRender();
+}
+
+// ── Wiring ───────────────────────────────────────────────────────────────────
+document.getElementById('tl-close-btn').addEventListener('click', closeTimelineEditor);
+document.getElementById('tl-save-btn').addEventListener('click', _tlSave);
+document.getElementById('tl-delete-btn').addEventListener('click', _tlDeleteSelected);
+document.getElementById('tl-add-maestro').addEventListener('click', _tlAddMaestroTrack);
+document.getElementById('tl-add-hcr').addEventListener('click', _tlAddHcrTrack);
+document.getElementById('tl-zoom-in').addEventListener('click', () => {
+  if (!_tlClip) return;
+  _tlClip.pxPerMs = Math.min(2, _tlClip.pxPerMs * 1.4);
+  _tlRender();
+});
+document.getElementById('tl-zoom-out').addEventListener('click', () => {
+  if (!_tlClip) return;
+  _tlClip.pxPerMs = Math.max(0.01, _tlClip.pxPerMs / 1.4);
+  _tlRender();
+});
+document.getElementById('tl-action-close').addEventListener('click', _tlCloseActionEditor);
+document.getElementById('tl-action-apply').addEventListener('click', _tlApplyActionEditor);
+document.getElementById('tl-action-delete').addEventListener('click', _tlDeleteActionEditor);
+document.getElementById('tl-action-modal').addEventListener('click', e => {
+  if (e.target === document.getElementById('tl-action-modal')) _tlCloseActionEditor();
+});
+window.addEventListener('keydown', e => {
+  if ((e.key === 'Delete' || e.key === 'Backspace') && _tlClip && _tlClip.selected &&
+      document.getElementById('tl-modal').classList.contains('open') &&
+      !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName)) {
+    e.preventDefault();
+    _tlDeleteSelected();
+  }
+});
 
 // ── Read loop ──────────────────────────────────────────────────────────────
 async function startReading() {
@@ -4492,6 +5256,10 @@ function handleBoardMessage(line) {
   // [CLIPITEM]/[CLIPLIST:END]) and the old single [CLIPLIST]{...} marker; see
   // _clipListFeed.  "[CLIPLIST" (no ']') matches BEGIN/END and the old marker.
   if (line.startsWith('[CLIPLIST') || line.startsWith('[CLIPITEM]')) { _clipListFeed(null, line); return; }
+  // Timeline editor transport (?REC,EDITLOAD / EDITBEGIN|EDITEV|EDITEND) — see
+  // "Timeline editor" section below for _clipDlFeed / _tlFeedMarker.
+  if (line.startsWith('[CLIPDL:')) { _clipDlFeed(null, line); return; }
+  if (line.startsWith('[CLIPUL:')) { _tlFeedMarker(line); return; }
   // RTERM — a NaviCore CLI line the bridge WCB relayed to USB, formatted
   // "[TERM:<sourceWCB>]<text>".  This is the remote board's CLI output, so it
   // belongs in the primary (NaviCore) pane.  RC #20 lines show bare; any other
@@ -4499,9 +5267,13 @@ function handleBoardMessage(line) {
   if (line.startsWith('[TERM:')) {
     const m = line.match(/^\[TERM:(\d+)\]([\s\S]*)$/);
     if (m) {
-      // A [CLIPLIST] marker — or a continuation fragment of one already in
-      // progress — is consumed by the reassembler and kept out of the terminal.
+      // A [CLIPLIST]/[CLIPDL:] marker — or a continuation fragment of one
+      // already in progress — is consumed by the reassembler and kept out of
+      // the terminal. [CLIPUL:] replies are always single, short, unfragmented
+      // lines (an ACK/NAK), so they're fed straight to the waiter.
       if (_clipListFeed(m[1], m[2])) return;
+      if (_clipDlFeed(m[1], m[2])) return;
+      if (m[2].startsWith('[CLIPUL:')) { _tlFeedMarker(m[2]); return; }
       appendTerminalLine((m[1] === String(RC_WCB_DEVICE_ID) ? '' : `[#${m[1]}] `) + m[2], 'rx', 'main');
     } else {
       appendTerminalLine(line, 'rx', 'main');
@@ -6537,6 +7309,15 @@ function readActionFromUI(tier, ai) {
     ...(delay ? { delay } : {}),
     ...(note  ? { note  } : {}),
   };
+  return readActionFromFid(fid, type, extras);
+}
+
+// Shared by readActionFromUI (button/switch/knob tiers, fid="fields-<tier>-<ai>")
+// AND the timeline editor's single action-editor popover (fid="tl-action-fields")
+// — both render their fields via the SAME appendActionFields(container, action),
+// so reading them back needs to share this too, or the two editors would
+// silently drift apart over time.
+function readActionFromFid(fid, type, extras) {
   if (type === '') return null;
 
   if (type === 'wcb_unicast') {

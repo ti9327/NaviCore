@@ -218,16 +218,18 @@ clips,     data, spiffs,   0x400000,  0xC00000    # NEW — 12 MB, fills the 16 
 ## 9. Config-tool integration
 
 A **Clips** panel: list / rename / delete / play, transferred via a small **clip↔JSON bridge** (reuse
-`actionToJson` per event) over the existing WCB-bridge/USB JSON transport. Phase 2: the same panel opens
-a **timeline editor**, writing the clip back.
+`actionToJson` per event) over the existing WCB-bridge/USB JSON transport. Phase 2 (**built**, see §13):
+a 📈 button on each clip row opens a **timeline editor** — servo/HCR-volume curves as draggable keyframes,
+an easing tool, and an Actions row for adding/editing/deleting discrete commands (WCB/HCR/MP3/serial/
+Maestro/record/play/stop) — writing the clip back via a new `EDITBEGIN/EDITEV/EDITEND` upload transport.
 
 ## 10. Phase plan
 
-- **Phase 1:** `partitions.csv` + build wiring + clips FS mount; recorder (queue tap → Core-1 drain →
+- **Phase 1 (built):** `partitions.csv` + build wiring + clips FS mount; recorder (queue tap → Core-1 drain →
   PSRAM buffer, `lastPos` shadow, `goHome` invalidation, save); player (restore shadows + reset
   speed/accel + ease-in + interpolated replay, HCR-volume cache bypass); `RA_RECORD`/`RA_PLAY`
   functions; config-tool Clips panel.
-- **Phase 2:** timeline editor.
+- **Phase 2 (built, see §13):** timeline editor — download/edit/upload transport + SVG editor UI.
 
 ## 11. Resolved risks (from validation) + residual
 
@@ -240,8 +242,80 @@ a **timeline editor**, writing the clip back.
 - ⚠ Residual (documented, low-impact): MP3 NEXT/PREV non-deterministic; slot/device aliasing affects
   only ease-in pre-roll (config already illegal); cross-board replay mismatch (header warns).
 
+## 13. Phase 2 — timeline editor (built 2026-07-01, config-tool-verified; NOT hardware-tested)
+
+Opened via a new **📈** button on each Clips-panel row (`openTimelineEditor(name)`). Ground truth stays the
+on-device `.ncr` file — the editor downloads a clip, edits it client-side, and uploads the result back;
+`navicore_record.h` gained no new persistence format, it reuses `_buf`/`_count`/`saveClip()` exactly like
+LOAD/SAVE already do.
+
+**Wire protocol — two directions, two different integrity strategies (both `?REC,*` CLI sub-verbs):**
+
+- **Download** (`EDITLOAD,<name>`, read-only against `_buf`): `loadClip()`s, then streams every event as one
+  small JSON line — `[CLIPDL:BEGIN]{count,durationMs,mode}` → `[CLIPDL:EV]{t,k,...}` × N → `[CLIPDL:END]`.
+  Same "small self-contained line" shape as the [CLIPLIST]/[CLIPITEM] fix (§ earlier bugfix) so a line can't
+  be hard-wrapped mid-JSON by the WCB RTERM sink's 160-byte packet limit (a maximal action event — a 95-char
+  WCB `cmd` — CAN exceed 160 B, so the config tool applies the SAME per-source fragment-reassembly it already
+  uses for the old single [CLIPLIST] marker). No per-line ACK: a lost/incomplete download is read-only (no
+  device state mutated) and trivially retried, so the config tool just checks the BEGIN-declared `count`
+  against events actually received and shows a clear error + retry prompt on mismatch — full OTA-grade
+  ACKing would be overkill for something this cheap to just redo.
+- **Upload** (`EDITBEGIN` → `EDITEV,<json>` ×N → `EDITEND,<name>`): this WRITES, so a lost event would
+  silently corrupt the saved clip — needs real integrity. Per-event ACK/NAK with retry, mirroring naviota's
+  OTA DATA/ACK contract: `[CLIPUL:BEGIN,OK|ERR]`, `[CLIPUL:ACK,<count>]`/`[CLIPUL:NAK,<reason>]` per event
+  (3 attempts, then abort), `[CLIPUL:END,OK|ERR,<reason>]`. A NEW firmware state, `ST_EDITING`, brackets the
+  whole upload — every existing entry point (`startRecord`/`startReplay`/etc.) already gates on
+  `_state==ST_IDLE`, so adding one more state value automatically fences a concurrent live Record/Play
+  trigger out of stomping `_buf`/`_count` mid-upload, with zero other call sites needing to change. On
+  finalize, `editEnd()` `qsort()`s `_buf` by `tMs` before saving — drag/insert/delete edits can leave events
+  out of chronological order, which `clipDurationMs()`, the discrete-event replay cursor, AND the phase-1b
+  curve-chain builder all assume is monotonic.
+
+**Editor data model (client-side, `_tlClip`, config_tool/index.html):** flat downloaded events reshape into
+`maestro["<slot>-<ch>"] = [{t,pos}]` / `hcr["<chan>"] = [{t,vol}]` (both sorted, keyframe arrays) + a flat
+`actions[]` list. `action` objects are the EXACT SAME shape `actionToJson`/`actionFromJson` (firmware) and
+`appendActionFields`/`readActionFromFid` (config tool) already use everywhere else — the whole point (per
+§1's original "no-throwaway" principle) is that a timeline action is edited by the SAME code as a button
+action, just at an arbitrary timestamp instead of a tap tier. `readActionFromUI(tier,ai)` was refactored
+into a thin wrapper over a new `readActionFromFid(fid,type,extras)` so the button/switch/knob editors and
+the timeline's action popover share one field-reading implementation instead of drifting apart.
+
+**SVG timeline UI:** one row per Maestro `(slot,ch)` / HCR channel actually present in the clip (+ "add
+track" buttons for a channel the clip doesn't touch yet), each a draggable-keyframe polyline; a shared
+"Actions" row of diamond markers. Maestro positions are STORED in ¼µs (matches the wire `pos` field and the
+firmware directly — zero conversion on save) but DISPLAYED/EDITED in µs, same UI convention as the
+knob-passthrough Pos min/max fields added earlier this session, converted only at the render/drag boundary.
+Click empty track space → add a keyframe/action at that time+value; click a point → select (Delete key
+removes it); drag → move it (re-sorted on release); Shift-click a second ADJACENT keyframe on the same
+track → arms an **easing** toolbar (linear/easeIn/easeOut/easeInOut + step count) that INSERTS synthesized
+intermediate keyframes between the pair — the firmware only ever interpolates LINEARLY between whatever
+keyframes exist (phase 1b), so this is the entire mechanism behind "easing": denser keyframes approximating
+a curve, not a new firmware curve type. Re-applying easing to the same pair REPLACES the previously
+synthesized points (filters anything strictly between the two anchors) rather than stacking more on top. A
+draggable scrub cursor shows a live readout that mirrors the firmware's inter-keyframe linear interpolation
+(`_tlInterpolateAt`, deliberately parallel to `navicore_record.h`'s `_updateCurves`) plus any actions within
+±50 ms, so the user can preview values without hardware attached.
+
+**Verified (browser, no hardware):** full download→model→render pipeline (maestro + HCR + action events);
+fragment reassembly for a 191-byte action event split at the exact 160-byte RTERM boundary (reassembles to
+the original, unfragmented over Direct USB); add/select/delete keyframes and tracks; easing insert AND
+replace-not-stack re-apply; the action-editor popover (open/type-switch/apply/delete) round-tripping through
+`readActionFromFid`; the FULL upload sequence (BEGIN→8×EV→END) with simulated ACKs; NAK-then-retry recovery;
+a rejected EDITBEGIN failing cleanly with edits preserved (`dirty` stays true, nothing lost); an incomplete
+download (declared count vs. received count mismatch) showing a clear error without building a bogus partial
+model. Also regression-checked the existing button/switch/knob action editor through the refactored
+`readActionFromUI`→`readActionFromFid` path — unaffected. Firmware (`navicore_record.h` + the `?REC,EDIT*`
+CLI in `NaviCore.ino`) compiles clean. **NEXT: bench test** — a real clip loaded, edited (drag a servo curve,
+add an HCR command, apply easing), saved, and replayed to confirm the round-trip actually drives the Maestro
+as edited.
+
 ## 12. Changelog
 
+- **v3 (2026-07-01):** Phase 2 timeline editor built — see §13 for the full writeup. New firmware: `ST_EDITING`
+  state + `editBegin/editAddEvent/editEnd/editCancel/editStream` in `navicore_record.h`; `?REC,EDITLOAD/
+  EDITBEGIN/EDITEV/EDITEND/EDITCANCEL` CLI. New config tool: 📈 Clips-panel button, `tl-modal`/`tl-action-modal`,
+  the whole `_tl*` editor module, `_clipDlFeed` (download reassembly), `_tlWaitForMarker`/`_tlFeedMarker`
+  (upload ACK waiter), `readActionFromFid` (extracted from `readActionFromUI` for reuse).
 - **v2.1 (2026-07-01):** Phase 1b (interpolated replay) implemented in `navicore_record.h`. Per-channel
   `MaestroCurve` + a `_curveNext[]` chain (parallel array, one forward O(n) pass per `startReplay()`) give
   `_updateCurves()` **look-ahead**: it eases from the last *finalized* keyframe (`pPrev`@`tPrev`) toward the

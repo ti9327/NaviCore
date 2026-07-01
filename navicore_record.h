@@ -1,7 +1,8 @@
 #pragma once
 #include <Arduino.h>
 #include <FS.h>
-#include "rc_config.h"
+#include <stdlib.h>       // qsort — chronological re-sort after a timeline-editor upload
+#include "rc_config.h"    // RcAction, actionToJson/actionFromJson (shared with the button/knob editors)
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  NaviCore record / replay — PHASE 1 (in-PSRAM clip, no persistence yet)
@@ -23,7 +24,7 @@
 namespace navirec {
 
 enum RecKind : uint8_t { REC_ACTION = 0, REC_KF_MAESTRO = 1, REC_KF_HCRVOL = 2 };
-enum State    : uint8_t { ST_IDLE = 0, ST_RECORDING = 1, ST_REPLAYING = 2 };
+enum State    : uint8_t { ST_IDLE = 0, ST_RECORDING = 1, ST_REPLAYING = 2, ST_EDITING = 3 };
 
 struct RecEvent {
   uint32_t tMs;     // ms from record start
@@ -433,6 +434,126 @@ inline bool renameClip(const char* from, const char* to) {
   return _clipFS->rename(pf, pt);
 }
 
+// ── Phase 2: timeline editor transport ─────────────────────────────────────────
+// Ground truth is still the on-device .ncr binary — the editor reuses `_buf`/
+// `_count` exactly as LOAD/SAVE already do (only while ST_IDLE), so no second
+// buffer, no new persistence format. Two independent one-shot operations:
+//   DOWNLOAD (device→browser): ?REC,EDITLOAD,<name> loadClip()s, then dumps every
+//     event as one small tagged JSON line — [CLIPDL:BEGIN]/[CLIPDL:EV]/[CLIPDL:END]
+//     — same "small self-contained JSON line" shape as the [CLIPITEM] fix, so a
+//     line can't be split mid-JSON by the WCB RTERM sink's 160-byte hard-wrap
+//     (navicore_rterm.h). Read-only against `_buf` and doesn't hold any state —
+//     a lost/incomplete download is trivially retried (config tool checks the
+//     BEGIN-declared count against events actually received).
+//   UPLOAD (browser→device, saving edits): needs real integrity, since a lost
+//     event would silently corrupt the saved clip. So it's per-event ACK/NAK
+//     (mirrors naviota's OTA DATA/ACK contract) over three CLI verbs:
+//       ?REC,EDITBEGIN            → [CLIPUL:BEGIN,OK|ERR]
+//       ?REC,EDITEV,<event json>  → [CLIPUL:ACK,<count>] | [CLIPUL:NAK,<reason>]
+//       ?REC,EDITEND,<name>       → [CLIPUL:END,OK|ERR,<reason>]
+//     `ST_EDITING` (new state) blocks a concurrent live Record/Play trigger
+//     mid-upload from stomping `_buf`/`_count` out from under it — every other
+//     entry point already gates on `_state==ST_IDLE`, so adding one more state
+//     value automatically fences it out (no other call site needs to change).
+//     A JSON event can carry a long WCB command (cmd[] is 95 chars) and, same as
+//     download, could exceed 160 B — the config tool applies the SAME per-source
+//     fragment-reassembly it already uses for [CLIPLIST] to any [CLIPDL:EV] that
+//     arrives split.
+
+inline int _cmpEventByTime(const void* a, const void* b) {
+  uint32_t ta = ((const RecEvent*)a)->tMs, tb = ((const RecEvent*)b)->tMs;
+  return (ta > tb) - (ta < tb);
+}
+
+// DOWNLOAD: stream the currently-loaded clip (call loadClip() first) as tagged
+// JSON lines. `delay(2)` between lines is cheap insurance against a long burst
+// overrunning the ESP-NOW send queue when relayed Via WCB (same caution as
+// naviota's per-chunk ACK pacing, without needing the CLI layer to know which
+// transport armed the capture sink).
+inline void editStream(Print& out) {
+  out.printf("[CLIPDL:BEGIN]{\"count\":%lu,\"durationMs\":%lu,\"mode\":%u}\n",
+             (unsigned long)_count, (unsigned long)clipDurationMs(), (unsigned)_mode);
+  for (uint32_t i = 0; i < _count; i++) {
+    const RecEvent& ev = _buf[i];
+    if (ev.kind == REC_ACTION) {
+      StaticJsonDocument<384> doc;
+      JsonObject obj = doc.to<JsonObject>();
+      actionToJson(ev.u.act, obj);           // same serializer the button/knob/switch editors use
+      obj["t"] = ev.tMs; obj["k"] = (uint8_t)REC_ACTION;
+      out.print("[CLIPDL:EV]");
+      serializeJson(doc, out);
+      out.println();
+    } else if (ev.kind == REC_KF_MAESTRO) {
+      out.printf("[CLIPDL:EV]{\"t\":%lu,\"k\":%u,\"slot\":%u,\"ch\":%u,\"pos\":%u}\n",
+                 (unsigned long)ev.tMs, (unsigned)REC_KF_MAESTRO, ev.u.km.slot, ev.u.km.ch, ev.u.km.pos);
+    } else if (ev.kind == REC_KF_HCRVOL) {
+      out.printf("[CLIPDL:EV]{\"t\":%lu,\"k\":%u,\"chan\":%u,\"vol\":%u}\n",
+                 (unsigned long)ev.tMs, (unsigned)REC_KF_HCRVOL, ev.u.kv.chan, ev.u.kv.vol);
+    }
+    delay(2);
+  }
+  out.println("[CLIPDL:END]");
+}
+
+// UPLOAD step 1: stage a fresh edit session. Reuses `_buf`/`_count` (guarded to
+// ST_IDLE, same as every other clip operation) so there's no second buffer.
+inline bool editBegin() {
+  if (_state != ST_IDLE || !_buf) return false;
+  _count = 0;
+  _state = ST_EDITING;
+  return true;
+}
+
+// UPLOAD step 2: parse+append ONE event. Self-contained (parses its own JSON
+// rather than taking a pre-parsed JsonObject) so the StaticJsonDocument's
+// lifetime never crosses a function boundary.
+inline bool editAddEvent(const char* json) {
+  if (_state != ST_EDITING || !_buf || _count >= _cap) return false;
+  StaticJsonDocument<384> doc;
+  if (deserializeJson(doc, json)) return false;
+  JsonObject obj = doc.as<JsonObject>();     // mutable view — actionFromJson's signature requires it
+  uint32_t t = obj["t"] | 0;
+  uint8_t  k = (uint8_t)(obj["k"] | 0xFF);
+  RecEvent ev{}; ev.tMs = t;
+  bool ok = false;
+  if (k == REC_ACTION) {
+    ev.kind = REC_ACTION;
+    ok = actionFromJson(obj, ev.u.act);      // same parser the button/knob/switch editors use
+  } else if (k == REC_KF_MAESTRO) {
+    ev.kind = REC_KF_MAESTRO;
+    ev.u.km.slot = (uint8_t)(obj["slot"] | 0);
+    ev.u.km.ch   = (uint8_t)(obj["ch"]   | 0);
+    ev.u.km.pos  = (uint16_t)(obj["pos"] | 0);
+    ok = true;
+  } else if (k == REC_KF_HCRVOL) {
+    ev.kind = REC_KF_HCRVOL;
+    ev.u.kv.chan = (uint8_t)(obj["chan"] | 0);
+    ev.u.kv.vol  = (uint8_t)(obj["vol"]  | 0);
+    ok = true;
+  }
+  if (!ok) return false;
+  _buf[_count++] = ev;
+  return true;
+}
+
+// UPLOAD step 3: finalize. Edits (drag/insert/delete on the timeline) can leave
+// events out of chronological order, which every downstream consumer assumes
+// (clipDurationMs() reads the LAST buffer slot; replayTick()'s discrete-event
+// cursor and the phase-1b curve-chain builder both walk _buf assuming
+// non-decreasing tMs) — so re-sort before it's ever saved or played.
+inline bool editEnd(const char* name) {
+  if (_state != ST_EDITING) return false;
+  if (_count == 0) { _state = ST_IDLE; return false; }
+  qsort(_buf, _count, sizeof(RecEvent), _cmpEventByTime);
+  bool ok = saveClip(name);
+  _state = ST_IDLE;
+  return ok;
+}
+
+// Abort an in-progress upload (browser closed the editor, or a step NAK'd) —
+// discards whatever was staged; nothing was written to flash.
+inline void editCancel() { if (_state == ST_EDITING) _state = ST_IDLE; }
+
 // Emits the clip library as one small "[CLIPITEM]{...}" line per clip, bracketed
 // by "[CLIPLIST:BEGIN]" / "[CLIPLIST:END]", which the config-tool Clips panel
 // accumulates.  Each line stays well under the 160-byte RTERM packet limit, so it
@@ -491,7 +612,8 @@ inline void pollControl() {
 
 inline void info(Print& out) {
   uint32_t durMs = _count ? _buf[_count - 1].tMs : 0;
-  const char* st = _state == ST_RECORDING ? "RECORDING" : _state == ST_REPLAYING ? "REPLAYING" : "idle";
+  const char* st = _state == ST_RECORDING ? "RECORDING" : _state == ST_REPLAYING ? "REPLAYING" :
+                   _state == ST_EDITING   ? "EDITING"   : "idle";
   out.printf("[REC] state=%s  events=%lu/%lu  dur=%lums  drops=%lu  buf=%s\n",
              st, (unsigned long)_count, (unsigned long)_cap, (unsigned long)durMs,
              (unsigned long)_drops, _buf ? "ok" : "OOM");

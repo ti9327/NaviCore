@@ -988,6 +988,9 @@ static void rcExecuteActionNow(const RcAction& a) {
       // Play (toggles): press → play, press again → stop. fn = loop flag.
       navirec::requestPlay(a.fn != 0);
       break;
+    case RA_STOP:
+      navirec::requestStop();   // explicit halt (recording → save, or playback)
+      break;
     default: break;
   }
 }
@@ -1001,9 +1004,9 @@ void rcExecuteAction(const RcAction& a) {
   if (calibrationActive) return;
   // Replay owns the outputs — suppress LIVE button/switch/remote dispatch while
   // a clip plays (replay calls rcExecuteActionNow directly, bypassing this gate).
-  // EXCEPT the record/play controls themselves, so a mapped button can stop a
-  // running clip (Play toggles) or start a recording.
-  if (navirec::isReplaying() && a.type != RA_RECORD && a.type != RA_PLAY) return;
+  // EXCEPT the record/play/stop controls themselves, so a mapped button can stop
+  // a running clip (Play toggles / Stop) or start a recording.
+  if (navirec::isReplaying() && a.type != RA_RECORD && a.type != RA_PLAY && a.type != RA_STOP) return;
   if (a.delayMs > 0) { scheduleAction(a, a.delayMs); return; }
   rcExecuteActionNow(a);
 }

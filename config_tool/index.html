@@ -2233,7 +2233,7 @@
         <img src="../Images/r2logo.png" alt="R2 logo"
              style="width:72px;height:72px;object-fit:contain;opacity:0.9">
         <div style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.3px">
-          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">302315QJUN26</span>
+          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">302327QJUN26</span>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap">
@@ -3263,6 +3263,7 @@ const actionTypeLabels = {
   'mp3':           'MP3 Trigger',
   'record':        'Record (toggle)',
   'play':          'Play clip',
+  'stop':          'Stop',
 };
 
 // Serial port targets — RC firmware exposes S3 and S4 as aux SoftwareSerial.
@@ -5706,6 +5707,7 @@ function actionSummary(a) {
   }
   else if (a.type === 'record') core = a.cmd ? `Record "${escH(a.cmd)}"` : 'Record (toggle)';
   else if (a.type === 'play')   core = `Play${(+a.fn) ? ' ⟳' : ''}${a.cmd ? ' "' + escH(a.cmd) + '"' : ''}`;
+  else if (a.type === 'stop')   core = 'Stop';
   else core = a.type;
   if (a.note && a.note.length)
     core += ` <span style="color:#888;font-style:italic">"${escH(a.note)}"</span>`;
@@ -6267,6 +6269,11 @@ function appendActionFields(container, action) {
     loopLabel.appendChild(loopCb);
     loopLabel.appendChild(document.createTextNode('Loop'));
     container.appendChild(loopLabel);
+  } else if (type === 'stop') {
+    const hint = document.createElement('div');
+    hint.style.cssText = 'font-size:11px;color:var(--muted);align-self:center';
+    hint.textContent = 'Stops recording (saves) or playback — no parameters.';
+    container.appendChild(hint);
   }
 }
 
@@ -6337,6 +6344,9 @@ function readActionFromUI(tier, ai) {
     const clip = (document.getElementById(fid + '-clip')?.value || '').trim();
     const loop = document.getElementById(fid + '-loop')?.checked ? 1 : 0;
     return { type, cmd: clip, fn: loop, ...extras };
+  }
+  if (type === 'stop') {
+    return { type, ...extras };
   }
   return null;
 }

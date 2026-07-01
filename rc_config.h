@@ -46,6 +46,8 @@ enum RcActionType : uint8_t {
   RA_PLAY              = 9,   // Play a recorded clip. cmd = clip name; fn = loop
                                //   (0=once, 1=repeat). NOT captured. Both defer to
                                //   loop() so a remote (Core-0) trigger is safe.
+  RA_STOP              = 10,  // Stop recording (save) OR playback — explicit halt,
+                               //   in case you'd rather not use the Record/Play toggle.
 };
 
 // MP3 Trigger function codes, stored in RcAction::fn for RA_MP3 actions.
@@ -676,6 +678,10 @@ static void actionToJson(const RcAction& a, JsonObject obj) {
       obj["fn"]   = a.fn;    // loop: 0=once, 1=repeat
       if (a.delayMs) obj["delay"] = a.delayMs;
       break;
+    case RA_STOP:
+      obj["type"] = "stop";
+      if (a.delayMs) obj["delay"] = a.delayMs;
+      break;
     default: break;
   }
   if (a.note[0]) obj["note"] = a.note;
@@ -743,6 +749,10 @@ static bool actionFromJson(const JsonObject& obj, RcAction& a) {
     a.type    = RA_PLAY;
     strlcpy(a.cmd, obj["cmd"] | "", sizeof(a.cmd));   // clip name
     a.fn      = (uint8_t)(obj["fn"] | 0);             // loop 0/1
+    a.delayMs = obj["delay"] | 0;
+    ok = true;
+  } else if (strcmp(type, "stop") == 0) {
+    a.type    = RA_STOP;
     a.delayMs = obj["delay"] | 0;
     ok = true;
   }

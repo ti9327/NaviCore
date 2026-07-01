@@ -99,7 +99,7 @@ inline void shadowInvalidateSlot(uint8_t slot) {            // goHome/stopScript
 //    full — a dropped keyframe just thins one frame; a stall would brick. ───────
 inline void __attribute__((noinline)) captureAction(const RcAction& a) {
   if (!_capturing) return;
-  if (a.type == RA_RECORD || a.type == RA_PLAY) return;   // meta — never record the record/play triggers
+  if (a.type == RA_RECORD || a.type == RA_PLAY || a.type == RA_STOP) return;   // meta — never record the record/play/stop triggers
   RecEvent ev; ev.tMs = millis() - _recStart; ev.kind = REC_ACTION; ev.u.act = a;
   if (xQueueSend(_queue, &ev, 0) != pdTRUE) _drops++;
 }

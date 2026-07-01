@@ -543,11 +543,16 @@ inline bool editAddEvent(const char* json) {
 // non-decreasing tMs) — so re-sort before it's ever saved or played.
 inline bool editEnd(const char* name) {
   if (_state != ST_EDITING) return false;
-  if (_count == 0) { _state = ST_IDLE; return false; }
-  qsort(_buf, _count, sizeof(RecEvent), _cmpEventByTime);
-  bool ok = saveClip(name);
+  // Drop to ST_IDLE *before* saving: saveClip() guards on `_state == ST_IDLE`
+  // (it's meant to refuse a save mid-record/replay). The upload is complete and
+  // _buf/_count are stable now, and this whole function runs synchronously in the
+  // CLI handler on Core 1 — nothing can race between here and the save — so the
+  // transition is safe. (Leaving it ST_EDITING is what made every timeline save
+  // fail with "[CLIPUL:END,ERR]".)
   _state = ST_IDLE;
-  return ok;
+  if (_count == 0) return false;
+  qsort(_buf, _count, sizeof(RecEvent), _cmpEventByTime);
+  return saveClip(name);
 }
 
 // Abort an in-progress upload (browser closed the editor, or a step NAK'd) —

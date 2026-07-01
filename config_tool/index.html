@@ -2234,7 +2234,7 @@
         <img src="../Images/r2logo.png" alt="R2 logo"
              style="width:72px;height:72px;object-fit:contain;opacity:0.9">
         <div style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.3px">
-          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">011250QJUL26</span>
+          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">011428QJUL26</span>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap">
@@ -2412,10 +2412,11 @@
         <svg id="tl-svg" xmlns="http://www.w3.org/2000/svg"></svg>
       </div>
       <div style="font-size:11px;color:var(--muted)">
-        Click empty track space to add a keyframe/action · drag a servo/HCR dot to move it — nearby dots
-        follow smoothly (see “Smooth drag”) · drag an action diamond to move it in time, or click it to edit ·
-        Shift-click two ADJACENT keyframes on a track to pick a pair for easing · drag the yellow handle to
-        scrub · Delete/Backspace removes the selection · Ctrl+scroll to zoom at the pointer, or ⤢ Fit.
+        Click empty track space to add a keyframe (near the line it snaps ON so it stays smooth — then drag to
+        shape) · drag a dot to move it — nearby dots follow smoothly (see “Smooth drag”) · <b>right-click a dot
+        to delete it</b> (or select it and press Delete/Backspace, or use 🗑 Delete selected) · drag an action
+        diamond to move it in time, click to edit, right-click to delete · Shift-click two ADJACENT keyframes to
+        pick an easing pair · drag the yellow handle to scrub · Ctrl+scroll to zoom at the pointer, or ⤢ Fit.
       </div>
     </div>
   </div>
@@ -4894,14 +4895,21 @@ function _tlRender() {
       const x = _tlTimeToX(kf.t), y = _tlValueToY(valueOf(kf), lo, hi, rowTop);
       const isSel = clip.selected && clip.selected.kind === track.kind && clip.selected.key === track.key && clip.selected.id === kf.id;
       const isPair = clip.selectedPair && clip.selectedPair.some(p => p.kind === track.kind && p.key === track.key && p.id === kf.id);
+      // Visible dot is display-only; a larger transparent circle on top carries
+      // the pointer events so the dot is easy to grab/select/delete (the small
+      // visible radius made it easy to miss and accidentally add a new point).
       const dot = _tlSvgEl('circle', {
-        cx: x, cy: y, r: (isSel || isPair) ? 6 : 4.5,
+        cx: x, cy: y, r: (isSel || isPair) ? 6 : 5,
         fill: isSel ? 'var(--red)' : isPair ? 'var(--yellow)' : 'var(--accent2)',
         stroke: '#fff', 'stroke-width': 1,
       });
-      dot.style.cursor = 'grab';
-      dot.addEventListener('pointerdown', ev => _tlStartDragKeyframe(ev, track, kf, lo, hi, rowTop));
+      dot.style.pointerEvents = 'none';
       svg.appendChild(dot);
+      const hit = _tlSvgEl('circle', { cx: x, cy: y, r: 11, fill: 'transparent' });
+      hit.style.cursor = 'grab';
+      hit.addEventListener('pointerdown', ev => _tlStartDragKeyframe(ev, track, kf, lo, hi, rowTop));
+      hit.addEventListener('contextmenu', ev => { ev.preventDefault(); ev.stopPropagation(); _tlDeleteKeyframe(track, kf); });
+      svg.appendChild(hit);
     });
   });
 
@@ -4925,6 +4933,7 @@ function _tlRender() {
     });
     d.style.cursor = 'grab';
     d.addEventListener('pointerdown', ev => _tlStartDragAction(ev, a));
+    d.addEventListener('contextmenu', ev => { ev.preventDefault(); ev.stopPropagation(); _tlDeleteAction(a); });
     svg.appendChild(d);
   });
 
@@ -4943,9 +4952,19 @@ function _tlRender() {
 function _tlOnTrackClick(ev, track, rowTop, lo, hi) {
   const rect = document.getElementById('tl-svg').getBoundingClientRect();
   const t = _tlXToTime(ev.clientX - rect.left);
-  const v = _tlYToValue(ev.clientY - rect.top, lo, hi, rowTop);
+  const clickY = ev.clientY - rect.top;
+  let v = _tlYToValue(clickY, lo, hi, rowTop);
   const map = track.kind === 'maestro' ? _tlClip.maestro : _tlClip.hcr;
   const arr = map[track.key] || (map[track.key] = []);
+  // Snap-to-line: when inserting BETWEEN existing keyframes and the click lands
+  // near the current curve, drop the new point exactly ON the line so it doesn't
+  // kink the motion — you're adding a control point, then drag it (smoothly) to
+  // shape it. A deliberate click well off the line still places where you clicked.
+  if (arr.length >= 2 && t > arr[0].t && t < arr[arr.length - 1].t) {
+    const valueOf = track.kind === 'maestro' ? (k => k.pos / 4) : (k => k.vol);
+    const lineV = _tlInterpolateAt(arr, valueOf, t);
+    if (lineV != null && Math.abs(clickY - _tlValueToY(lineV, lo, hi, rowTop)) <= 8) v = lineV;   // "aimed at the line" → snap on
+  }
   const kf = { id: _tlId(), t: Math.max(0, t) };
   if (track.kind === 'maestro') kf.pos = Math.max(0, Math.round(v * 4));
   else kf.vol = Math.max(0, Math.min(99, Math.round(v)));
@@ -4953,6 +4972,23 @@ function _tlOnTrackClick(ev, track, rowTop, lo, hi) {
   arr.sort((a, b) => a.t - b.t);
   _tlClip.selected = { kind: track.kind, key: track.key, id: kf.id };
   _tlClip.selectedPair = null;
+  _tlClip.dirty = true;
+  _tlRender();
+}
+
+// Delete a specific keyframe / action (right-click, or select + Delete key).
+function _tlDeleteKeyframe(track, kf) {
+  const map = track.kind === 'maestro' ? _tlClip.maestro : _tlClip.hcr;
+  map[track.key] = (map[track.key] || []).filter(k => k.id !== kf.id);
+  if (!map[track.key].length) delete map[track.key];
+  if (_tlClip.selected && _tlClip.selected.id === kf.id) _tlClip.selected = null;
+  _tlClip.selectedPair = null;
+  _tlClip.dirty = true;
+  _tlRender();
+}
+function _tlDeleteAction(a) {
+  _tlClip.actions = _tlClip.actions.filter(x => x.id !== a.id);
+  if (_tlClip.selected && _tlClip.selected.id === a.id) _tlClip.selected = null;
   _tlClip.dirty = true;
   _tlRender();
 }

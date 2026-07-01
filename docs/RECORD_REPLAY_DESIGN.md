@@ -311,6 +311,15 @@ as edited.
 
 ## 12. Changelog
 
+- **v3.3 (2026-07-01):** Timeline-editor delete + smooth-add (config-tool only), from Greg's feedback ("how do I
+  delete dots? clicking anywhere makes a new one" + "clicking off the line makes a sharp angle"). Each keyframe
+  now renders a display-only visible dot (`pointer-events:none`) under a larger **transparent r=11 hit circle**
+  that carries the drag/select events — small dots were easy to miss, so mis-aimed clicks kept ADDING points.
+  **Right-click a dot or an action diamond deletes it** (`contextmenu` → `_tlDeleteKeyframe`/`_tlDeleteAction`,
+  preventDefault kills the browser menu); select+Delete/🗑 still work. **Snap-to-line on add:** clicking empty
+  space to insert a keyframe BETWEEN two existing ones snaps its value onto the interpolated line when the click
+  is within 8px of it (so a near-miss doesn't kink the curve — you add a control point then drag to shape);
+  a deliberate off-line click still places a peak, and extending past the ends always uses the click value.
 - **v3.2 (2026-07-01):** Timeline-editor zoom + trim (config-tool only). **Zoom** now preserves a focal point
   — `_tlZoomAt(factor, clientX)` converts the focal client-x to a clip time, rescales `pxPerMs`, then restores
   that time to the same viewport offset via `scrollLeft` (previously every zoom jumped back to t=0). Wired to

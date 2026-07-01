@@ -1639,6 +1639,12 @@ bool execCliLine(const String& line) {
     else if (sub.equalsIgnoreCase("LOAD"))  Serial.println(navirec::loadClip(name.c_str()) ? "[REC] loaded" : "[REC] load failed (not found / no FS)");
     else if (sub.equalsIgnoreCase("LS"))    { Serial.println("[REC] clips:"); navirec::listClips(Serial); }
     else if (sub.equalsIgnoreCase("RM"))    Serial.println(navirec::deleteClip(name.c_str()) ? "[REC] deleted" : "[REC] delete failed");
+    else if (sub.equalsIgnoreCase("RENAME")) {
+      int c2 = name.indexOf(',');
+      if (c2 > 0) Serial.println(navirec::renameClip(name.substring(0, c2).c_str(), name.substring(c2 + 1).c_str())
+                                 ? "[REC] renamed" : "[REC] rename failed (exists / not found)");
+      else Serial.println("[REC] usage: ?REC,RENAME,<from>,<to>");
+    }
     else if (sub.equalsIgnoreCase("CLEAR")) { navirec::clearClip(); Serial.println("[REC] cleared"); }
     else                                    navirec::info(Serial);   // bare "?REC" or "?REC,INFO"
     return true;

@@ -286,17 +286,36 @@ inline bool deleteClip(const char* name) {
   return _clipFS->remove(path);
 }
 
+inline bool renameClip(const char* from, const char* to) {
+  if (!_clipFS) return false;
+  char pf[48], pt[48];
+  if (!_clipPath(pf, sizeof(pf), from) || !_clipPath(pt, sizeof(pt), to)) return false;
+  if (_clipFS->exists(pt)) return false;              // don't clobber an existing clip
+  return _clipFS->rename(pf, pt);
+}
+
+// Human-readable list PLUS a single machine-parseable "[CLIPLIST]{...}" line the
+// config-tool Clips panel intercepts (same idea as the [OTA:]/[TERM:] markers).
 inline void listClips(Print& out) {
-  if (!_clipFS) { out.println("[REC] no clip filesystem (needs the 16 MB partition build)"); return; }
-  File dir = _clipFS->open("/");
-  if (!dir) { out.println("[REC] (clip dir open failed)"); return; }
+  String json = "[CLIPLIST]{\"clips\":[";
   int n = 0;
-  for (File e = dir.openNextFile(); e; e = dir.openNextFile()) {
-    if (e.isDirectory()) continue;
-    out.printf("  %s  (%u B)\n", e.name(), (unsigned)e.size());
-    n++;
+  if (_clipFS) {
+    File dir = _clipFS->open("/");
+    for (File e = dir ? dir.openNextFile() : File(); e; e = dir.openNextFile()) {
+      if (e.isDirectory()) continue;
+      String nm = e.name();
+      int slash = nm.lastIndexOf('/'); if (slash >= 0) nm = nm.substring(slash + 1);
+      if (nm.endsWith(".ncr")) nm = nm.substring(0, nm.length() - 4);
+      uint32_t dur = 0; ClipFileHeader h;
+      if (e.read((uint8_t*)&h, sizeof(h)) == (int)sizeof(h) && memcmp(h.magic, "NCR1", 4) == 0) dur = h.durationMs;
+      out.printf("  %s  (%u B, %lu ms)\n", nm.c_str(), (unsigned)e.size(), (unsigned long)dur);
+      if (n++) json += ",";
+      json += "{\"name\":\"" + nm + "\",\"bytes\":" + String((unsigned)e.size()) + ",\"dur\":" + String((unsigned long)dur) + "}";
+    }
   }
   if (!n) out.println("  (no clips saved)");
+  json += "]}";
+  out.println(json);   // parsed by the config tool; harmless JSON to a human
 }
 
 // Run a deferred Record/Play trigger from loop() (Core 1). Play toggles: press

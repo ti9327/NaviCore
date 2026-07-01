@@ -946,6 +946,7 @@
     <button class="btn btn-ghost" id="btn-export-cfg" type="button">Export</button>
     <button class="btn btn-ghost" id="btn-import-cfg" type="button">Import</button>
     <button class="btn btn-ghost" id="btn-terminal" type="button" title="Open terminal">⌨ Terminal</button>
+    <button class="btn btn-ghost" id="btn-clips" type="button" title="Record/replay clip library" onclick="openClipsModal()">🎬 Clips</button>
     <button class="btn btn-ghost" id="btn-theme" type="button" title="Toggle light / dark theme" aria-label="Toggle theme" style="min-width:36px;justify-content:center;font-size:15px">☾</button>
   </div>
 </div>
@@ -2233,7 +2234,7 @@
         <img src="../Images/r2logo.png" alt="R2 logo"
              style="width:72px;height:72px;object-fit:contain;opacity:0.9">
         <div style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.3px">
-          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">302354QJUN26</span>
+          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">010010QJUL26</span>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap">
@@ -2324,6 +2325,50 @@
         <input id="terminal-input-wcb" class="terminal-input" type="text" placeholder="Type WCB command (e.g. ?STATUS) and press Enter" autocomplete="off">
         <button class="btn btn-blue terminal-send" id="terminal-send-wcb" type="button">Send</button>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Clips Modal — record/replay clip library ──────────────────────
+     Drives the on-device recorder entirely through the ?REC CLI (Core-1
+     safe: the CLI runs in loop(), never on the ESP-NOW task).  ?REC,LS
+     emits a [CLIPLIST]{json} marker the board message handler intercepts
+     and feeds to renderClips().  In Via-WCB mode every command is relayed
+     with the ;w20, prefix by sendRcCli(). -->
+<div class="modal-overlay" id="clips-modal">
+  <div class="modal" style="max-width:560px;width:92%">
+    <div class="modal-header">
+      <span class="modal-title">🎬 Clips — record &amp; replay</span>
+      <button class="btn btn-ghost" onclick="closeClipsModal()" style="padding:4px 10px">✕</button>
+    </div>
+    <div style="padding:16px 18px;display:flex;flex-direction:column;gap:14px">
+
+      <!-- Recorder controls -->
+      <div class="sb-section" style="margin:0">
+        <h3 style="margin-top:0">Record</h3>
+        <div class="wcb-send-row" style="flex-wrap:wrap;gap:8px">
+          <input type="text" id="clip-record-name" class="terminal-input" maxlength="32"
+                 placeholder="clip name (e.g. wave)" style="flex:1;min-width:140px" autocomplete="off">
+          <button class="btn btn-danger" id="clip-record-btn" type="button" onclick="clipRecordToggle()">● Record</button>
+          <button class="btn btn-ghost"  type="button" onclick="sendRcCli('?REC,STOP')" title="Stop recording or playback">■ Stop</button>
+        </div>
+        <div style="margin-top:6px;font-size:12px;color:var(--muted)">
+          Start capturing, perform the moves, then Stop &amp; Save under the name above.
+          Leave the name blank to just capture into RAM.
+        </div>
+      </div>
+
+      <!-- Clip library -->
+      <div class="sb-section" style="margin:0">
+        <div style="display:flex;align-items:center;justify-content:space-between">
+          <h3 style="margin:0">Library</h3>
+          <button class="btn btn-ghost" type="button" onclick="clipsRefresh()" style="padding:3px 10px" title="Reload clip list from the board">⟳ Refresh</button>
+        </div>
+        <div id="clips-list" style="margin-top:10px;display:flex;flex-direction:column;gap:6px">
+          <div id="clips-empty" style="font-size:12px;color:var(--muted)">No clips loaded. Press ⟳ Refresh to query the board.</div>
+        </div>
+      </div>
+
     </div>
   </div>
 </div>
@@ -4202,6 +4247,150 @@ function initTerminal() {
 
 initTerminal();
 
+// ══════════════════════════════════════════════════════════════════════════
+// Clips panel — record/replay library GUI (Slice 2d).
+//
+// The whole panel is a thin front-end over the on-device ?REC CLI.  That CLI
+// runs in loop() (Core 1), so it's safe to drive from here even Via WCB —
+// unlike the RA_RECORD/RA_PLAY TX-trigger path, which must defer because it can
+// dispatch on the ESP-NOW (Core 0) task.  Commands go out via sendRcCli()
+// (adds the ;w20, bridge prefix in Via-WCB mode); the board's ?REC,LS reply
+// returns as a [CLIPLIST]{json} marker that handleBoardMessage() routes to
+// _handleClipList() → renderClips().
+// ══════════════════════════════════════════════════════════════════════════
+let _clipRecording = false;
+
+// Send a NaviCore CLI command, mirroring the terminal's primary-pane send:
+// wrapped as ;w20,<cmd> Via WCB, raw over Direct USB.  Echoes the clean command
+// to the terminal (main pane) so there's a trace even when the Clips modal is
+// doing the talking.
+async function sendRcCli(cmd) {
+  if (!writer) { clipsStatus('Not connected to a board.'); return false; }
+  if (viaWcbActive) {
+    appendTerminalLine('> ' + cmd, 'tx', 'main');
+    await sendLine(';w' + RC_WCB_DEVICE_ID + ',' + cmd, /*silent=*/true);
+  } else {
+    await sendLine(cmd);   // direct USB — straight to the connected board
+  }
+  return true;
+}
+
+function openClipsModal() {
+  document.getElementById('clips-modal').classList.add('open');
+  clipsRefresh();
+}
+function closeClipsModal() {
+  document.getElementById('clips-modal').classList.remove('open');
+}
+// Dismiss on backdrop click, matching the other modals.
+document.getElementById('clips-modal').addEventListener('click', e => {
+  if (e.target === document.getElementById('clips-modal')) closeClipsModal();
+});
+
+// Replace the clip list with a single muted status line (loading / empty / error).
+function clipsStatus(msg) {
+  const list = document.getElementById('clips-list');
+  if (!list) return;
+  list.innerHTML = '';
+  const d = document.createElement('div');
+  d.id = 'clips-empty';
+  d.style.cssText = 'font-size:12px;color:var(--muted)';
+  d.textContent = msg;
+  list.appendChild(d);
+}
+
+function clipsRefresh() {
+  clipsStatus('Loading…');
+  sendRcCli('?REC,LS');
+}
+
+// Parse the [CLIPLIST]{json} payload the board emits for ?REC,LS.
+function _handleClipList(payload) {
+  let obj;
+  try { obj = JSON.parse(payload); }
+  catch (e) { console.warn('bad [CLIPLIST] payload', payload, e); return; }
+  renderClips(Array.isArray(obj.clips) ? obj.clips : []);
+}
+
+function _fmtDur(ms)  { ms = +ms || 0; return ms < 1000 ? ms + ' ms' : (ms / 1000).toFixed(1) + ' s'; }
+function _fmtBytes(b) { b = +b || 0;  return b < 1024 ? b + ' B'  : (b / 1024).toFixed(1) + ' KB'; }
+
+function renderClips(clips) {
+  const list = document.getElementById('clips-list');
+  if (!list) return;
+  if (!clips.length) { clipsStatus('No saved clips. Record one above, then Refresh.'); return; }
+  list.innerHTML = '';
+  clips.forEach(c => {
+    const name = String(c.name || '');
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:7px 9px;' +
+                        'border:1px solid var(--border);border-radius:8px;background:var(--card)';
+
+    const meta = document.createElement('div');
+    meta.style.cssText = 'flex:1;min-width:0';
+    const nm = document.createElement('div');
+    nm.textContent = name;
+    nm.style.cssText = 'font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
+    const sub = document.createElement('div');
+    sub.style.cssText = 'margin-top:2px;font-size:11px;color:var(--muted)';
+    sub.textContent = _fmtDur(c.dur) + ' · ' + _fmtBytes(c.bytes);
+    meta.appendChild(nm); meta.appendChild(sub);
+
+    const play = document.createElement('button');
+    play.className = 'btn btn-blue'; play.type = 'button'; play.textContent = '▶ Play';
+    play.style.padding = '4px 10px';
+    play.onclick = () => sendRcCli('?REC,PLAY,' + name);
+
+    const ren = document.createElement('button');
+    ren.className = 'btn btn-ghost'; ren.type = 'button'; ren.textContent = '✎'; ren.title = 'Rename';
+    ren.style.padding = '4px 9px';
+    ren.onclick = () => clipRename(name);
+
+    const del = document.createElement('button');
+    del.className = 'btn btn-ghost'; del.type = 'button'; del.textContent = '🗑'; del.title = 'Delete';
+    del.style.padding = '4px 9px';
+    del.onclick = () => clipDelete(name);
+
+    row.append(meta, play, ren, del);
+    list.appendChild(row);
+  });
+}
+
+async function clipRename(from) {
+  const to = prompt('Rename clip "' + from + '" to:', from);
+  if (to === null) return;                     // cancelled
+  const clean = to.trim().replace(/[^A-Za-z0-9_-]/g, '').slice(0, 32);
+  if (!clean || clean === from) return;
+  await sendRcCli('?REC,RENAME,' + from + ',' + clean);
+  setTimeout(clipsRefresh, 400);
+}
+
+async function clipDelete(name) {
+  if (!confirm('Delete clip "' + name + '"? This cannot be undone.')) return;
+  await sendRcCli('?REC,RM,' + name);
+  setTimeout(clipsRefresh, 400);
+}
+
+// Record ↔ Stop&Save toggle.  START begins capture into RAM; on stop we STOP
+// then SAVE,<name> (the on-device STOP does NOT auto-persist), so a named clip
+// lands in flash and shows up on the next LS.
+async function clipRecordToggle() {
+  const btn = document.getElementById('clip-record-btn');
+  const nameEl = document.getElementById('clip-record-name');
+  if (!_clipRecording) {
+    if (!(await sendRcCli('?REC,START'))) return;
+    _clipRecording = true;
+    if (btn) { btn.textContent = '■ Stop & Save'; btn.classList.remove('btn-danger'); btn.classList.add('btn-blue'); }
+  } else {
+    await sendRcCli('?REC,STOP');
+    const name = (nameEl && nameEl.value || '').trim().replace(/[^A-Za-z0-9_-]/g, '').slice(0, 32);
+    if (name) await sendRcCli('?REC,SAVE,' + name);
+    _clipRecording = false;
+    if (btn) { btn.textContent = '● Record'; btn.classList.remove('btn-blue'); btn.classList.add('btn-danger'); }
+    if (name) setTimeout(clipsRefresh, 500);
+  }
+}
+
 // ── Read loop ──────────────────────────────────────────────────────────────
 async function startReading() {
   const decoder = new TextDecoder();
@@ -4253,12 +4442,16 @@ function handleBoardMessage(line) {
   // JSON — feed them to the OTA-over-USB orchestrator's marker resolver (when an
   // OTA is active) so it can advance its ACK-paced loop, then echo to the terminal.
   if (line.startsWith('[OTA:')) { _otaHandleMarker(line); appendTerminalLine('< ' + line, 'rx'); return; }
+  // Clip library list (?REC,LS) — plain here (Direct USB) or wrapped in [TERM:20]
+  // (Via WCB, handled below). Intercepted like the other markers; drives the Clips panel.
+  if (line.startsWith('[CLIPLIST]')) { _handleClipList(line.slice(10)); return; }
   // RTERM — a NaviCore CLI line the bridge WCB relayed to USB, formatted
   // "[TERM:<sourceWCB>]<text>".  This is the remote board's CLI output, so it
   // belongs in the primary (NaviCore) pane.  RC #20 lines show bare; any other
   // source is tagged so a multi-board relay stays legible.
   if (line.startsWith('[TERM:')) {
     const m = line.match(/^\[TERM:(\d+)\]([\s\S]*)$/);
+    if (m && m[2].startsWith('[CLIPLIST]')) { _handleClipList(m[2].slice(10)); return; }
     if (m) appendTerminalLine((m[1] === String(RC_WCB_DEVICE_ID) ? '' : `[#${m[1]}] `) + m[2], 'rx', 'main');
     else   appendTerminalLine(line, 'rx', 'main');
     return;

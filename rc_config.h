@@ -199,9 +199,26 @@ struct RcKnob {
                        // before mapping to outputs (so a stick "up" produces
                        // what would normally be "down").  Set per-knob in the
                        // GUI; per-output posMin/posMax can still trim further.
-  uint8_t outputCount; // number of valid entries in outputs[]
+  bool    modeAware;   // OPT-IN: when true, the OUTPUTS follow the 3-way mode
+                       // switch (FunctionSwState 1/2/3) — one stick drives
+                       // different servos per mode. Default false = one output
+                       // set for all modes (unchanged legacy behavior). The
+                       // source (channel/function/reverse) stays global.
+  uint8_t outputCount; // mode-1 outputs (and ALL modes when !modeAware)
   RcKnobOutput outputs[RC_KNOB_MAX_OUTPUTS];
+  uint8_t outputCount2[2];                       // modes 2 & 3 (only when modeAware)
+  RcKnobOutput outputs2[2][RC_KNOB_MAX_OUTPUTS];
 };
+
+// Output set for a given mode (1-3). Keeps every existing kn.outputs/
+// kn.outputCount read valid — they ARE the mode-1 set. Non-mode-aware knobs
+// always use mode 1; mode-aware knobs use outputs2[mode-2] for modes 2/3.
+inline uint8_t rcKnobOutCount(const RcKnob& k, int mode) {
+  return (k.modeAware && mode >= 2 && mode <= 3) ? k.outputCount2[mode - 2] : k.outputCount;
+}
+inline const RcKnobOutput* rcKnobOuts(const RcKnob& k, int mode) {
+  return (k.modeAware && mode >= 2 && mode <= 3) ? k.outputs2[mode - 2] : k.outputs;
+}
 
 // Default SBUS channels assume typical X18 Mode-2 layout:
 //   J1 = CH1 (AIL = R-stick X)   J3 = CH3 (THR = L-stick Y)
@@ -542,8 +559,11 @@ void rcConfigLoadDefaults() {
     rcConfig.knobs[i].channel     = RC_KNOB_DEFAULT_CH[i];
     rcConfig.knobs[i].function    = RC_KNOB_DEFAULT_FN[i];
     rcConfig.knobs[i].reverse     = false;
+    rcConfig.knobs[i].modeAware   = false;
     rcConfig.knobs[i].outputCount = 0;
     memset(rcConfig.knobs[i].outputs, 0, sizeof(rcConfig.knobs[i].outputs));
+    rcConfig.knobs[i].outputCount2[0] = rcConfig.knobs[i].outputCount2[1] = 0;
+    memset(rcConfig.knobs[i].outputs2, 0, sizeof(rcConfig.knobs[i].outputs2));
   }
 
   // Default global HCR destination — local Serial S3, disabled until user
@@ -702,6 +722,34 @@ static bool actionFromJson(const JsonObject& obj, RcAction& a) {
   return ok;
 }
 
+// Write a knob output set into a JSON array (shared by the 3 per-mode arrays).
+static void rcWriteKnobOuts(JsonArray arr, uint8_t count, const RcKnobOutput* outs) {
+  for (uint8_t o = 0; o < count && o < RC_KNOB_MAX_OUTPUTS; o++) {
+    JsonObject oObj = arr.createNestedObject();
+    oObj["target"]    = outs[o].target;
+    oObj["maestroCh"] = outs[o].maestroCh;
+    oObj["posMin"]    = outs[o].posMin;
+    oObj["posMax"]    = outs[o].posMax;
+  }
+}
+
+// Parse a knob output set from a JSON array. Returns the count written.
+static uint8_t rcReadKnobOuts(JsonArray arr, RcKnobOutput* outs) {
+  uint8_t n = 0;
+  for (JsonObject oObj : arr) {
+    if (n >= RC_KNOB_MAX_OUTPUTS) break;
+    RcKnobOutput& out = outs[n];
+    // New schema: "target" = Maestro ID 1-8 / audio chan. Legacy: "slot" (0=local→ID 1).
+    if (oObj.containsKey("target")) out.target = (uint8_t)(oObj["target"] | 0);
+    else { uint8_t legacy = (uint8_t)(oObj["slot"] | 0); out.target = (legacy == 0) ? 1 : legacy; }
+    out.maestroCh = (uint8_t) (oObj["maestroCh"] | 0);
+    out.posMin    = (uint16_t)(oObj["posMin"]    | 4000);
+    out.posMax    = (uint16_t)(oObj["posMax"]    | 8000);
+    n++;
+  }
+  return n;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 //  Serialise full config to JSON string (for GET_CONFIG WebSocket response)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -778,16 +826,14 @@ String rcConfigToJSON() {
   for (int i = 0; i < RC_NUM_KNOBS; i++) {
     const RcKnob& kn = rcConfig.knobs[i];
     JsonObject kObj = knObj.createNestedObject(RC_KNOB_LABELS[i]);
-    kObj["channel"]  = kn.channel;
-    kObj["function"] = kn.function;
-    kObj["reverse"]  = kn.reverse;
-    JsonArray outsArr = kObj.createNestedArray("outputs");
-    for (uint8_t o = 0; o < kn.outputCount && o < RC_KNOB_MAX_OUTPUTS; o++) {
-      JsonObject oObj = outsArr.createNestedObject();
-      oObj["target"]    = kn.outputs[o].target;        // Maestro ID 1-8 OR audio chan
-      oObj["maestroCh"] = kn.outputs[o].maestroCh;
-      oObj["posMin"]    = kn.outputs[o].posMin;
-      oObj["posMax"]    = kn.outputs[o].posMax;
+    kObj["channel"]   = kn.channel;
+    kObj["function"]  = kn.function;
+    kObj["reverse"]   = kn.reverse;
+    kObj["modeAware"] = kn.modeAware;
+    rcWriteKnobOuts(kObj.createNestedArray("outputs"), kn.outputCount, kn.outputs);  // mode 1
+    if (kn.modeAware) {   // per-mode sets only when opted in
+      rcWriteKnobOuts(kObj.createNestedArray("outputs2"), kn.outputCount2[0], kn.outputs2[0]);
+      rcWriteKnobOuts(kObj.createNestedArray("outputs3"), kn.outputCount2[1], kn.outputs2[1]);
     }
   }
 
@@ -935,30 +981,19 @@ bool rcConfigFromJSON(const JsonObject& doc) {
       if (!knObj.containsKey(RC_KNOB_LABELS[i])) continue;
       JsonObject kObj = knObj[RC_KNOB_LABELS[i]];
       RcKnob& kn = rcConfig.knobs[i];
-      kn.channel  = kObj["channel"]  | RC_KNOB_DEFAULT_CH[i];
-      kn.function = kObj["function"] | RC_KNOB_DEFAULT_FN[i];
-      kn.reverse  = kObj["reverse"]  | false;
-      kn.outputCount = 0;
-      memset(kn.outputs, 0, sizeof(kn.outputs));
-      if (kObj.containsKey("outputs")) {
-        JsonArray outsArr = kObj["outputs"];
-        for (JsonObject oObj : outsArr) {
-          if (kn.outputCount >= RC_KNOB_MAX_OUTPUTS) break;
-          RcKnobOutput& out = kn.outputs[kn.outputCount];
-          // New schema: "target" holds Maestro ID 1-8 or audio chan 0-2.
-          // Legacy schema: "slot" with 0 = local, 1-8 = remote slot — map
-          // slot 0 → Maestro ID 1 and the others 1:1.
-          if (oObj.containsKey("target")) {
-            out.target = (uint8_t)(oObj["target"] | 0);
-          } else {
-            uint8_t legacy = (uint8_t)(oObj["slot"] | 0);
-            out.target = (legacy == 0) ? 1 : legacy;
-          }
-          out.maestroCh = (uint8_t) (oObj["maestroCh"] | 0);
-          out.posMin    = (uint16_t)(oObj["posMin"]    | 4000);
-          out.posMax    = (uint16_t)(oObj["posMax"]    | 8000);
-          kn.outputCount++;
-        }
+      kn.channel   = kObj["channel"]   | RC_KNOB_DEFAULT_CH[i];
+      kn.function  = kObj["function"]  | RC_KNOB_DEFAULT_FN[i];
+      kn.reverse   = kObj["reverse"]   | false;
+      kn.modeAware = kObj["modeAware"] | false;
+      kn.outputCount = 0; memset(kn.outputs, 0, sizeof(kn.outputs));
+      kn.outputCount2[0] = kn.outputCount2[1] = 0; memset(kn.outputs2, 0, sizeof(kn.outputs2));
+      if (kObj.containsKey("outputs"))                       // mode 1 (also loads legacy configs)
+        kn.outputCount = rcReadKnobOuts(kObj["outputs"], kn.outputs);
+      if (kn.modeAware) {                                    // modes 2 & 3 — seed from mode 1 if absent
+        if (kObj.containsKey("outputs2")) kn.outputCount2[0] = rcReadKnobOuts(kObj["outputs2"], kn.outputs2[0]);
+        else { kn.outputCount2[0] = kn.outputCount; memcpy(kn.outputs2[0], kn.outputs, sizeof(kn.outputs)); }
+        if (kObj.containsKey("outputs3")) kn.outputCount2[1] = rcReadKnobOuts(kObj["outputs3"], kn.outputs2[1]);
+        else { kn.outputCount2[1] = kn.outputCount; memcpy(kn.outputs2[1], kn.outputs, sizeof(kn.outputs)); }
       }
     }
   }

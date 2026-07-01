@@ -2233,7 +2233,7 @@
         <img src="../Images/r2logo.png" alt="R2 logo"
              style="width:72px;height:72px;object-fit:contain;opacity:0.9">
         <div style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.3px">
-          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">301940QJUN26</span>
+          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">302024QJUN26</span>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap">
@@ -6366,6 +6366,22 @@ function openKnobModal(name) {
   if (inferredHcr) k.function = KF_HCR_VOLUME;
   if (k.function === 1 && k.outputs.length === 0) k.function = KF_NONE;
 
+  // ─── Mode-aware (opt-in) ──────────────────────────────────────────────────
+  // When on, the OUTPUTS follow the 3-way switch. mode 1 = k.outputs (above,
+  // incl. legacy migration); modes 2/3 from outputs2/outputs3, else seeded from
+  // mode 1 when enabled. A single editor edits one mode at a time (editMode);
+  // editingKnobDraft.outputs always mirrors the active mode's array.
+  k.modeAware = !!d.modeAware;
+  const _m2 = Array.isArray(d.outputs2) ? d.outputs2.map(o => ({...o})) : [];
+  const _m3 = Array.isArray(d.outputs3) ? d.outputs3.map(o => ({...o})) : [];
+  k.outputsByMode = [ k.outputs, _m2, _m3 ];
+  if (k.modeAware) {
+    if (!k.outputsByMode[1].length) k.outputsByMode[1] = k.outputs.map(o => ({...o}));
+    if (!k.outputsByMode[2].length) k.outputsByMode[2] = k.outputs.map(o => ({...o}));
+  }
+  k.editMode = 1;
+  k.outputs  = k.outputsByMode[0];
+
   editingKnobDraft = k;
 
   document.getElementById('modal-title').textContent = sourceTitleFor(name);
@@ -6401,13 +6417,30 @@ function openKnobModal(name) {
             Reverse direction
           </label>
         </div>
+        <div class="field-group" style="align-self:flex-end">
+          <label style="display:flex; align-items:center; gap:6px; cursor:pointer"
+                 title="When on, this knob drives a DIFFERENT output set per 3-way-switch mode — one stick, three behaviors. Off = one output set for all modes.">
+            <input type="checkbox" id="kn-modeaware" ${k.modeAware ? 'checked' : ''}
+                   onchange="toggleKnobModeAware(this.checked)">
+            Follow 3 modes
+          </label>
+        </div>
       </div>
       <div style="font-size:11px;color:var(--muted);margin-top:6px">${helpText}</div>
     </div>
     <div class="tier-card">
       <div class="tier-title" style="display:flex;justify-content:space-between;align-items:center">
         <span id="kn-outputs-title">Outputs</span>
-        <span style="color:var(--muted);font-size:10px" id="kn-output-count"></span>
+        <span style="display:flex;align-items:center;gap:10px">
+          <select id="kn-editmode" onchange="setKnobEditMode(+this.value)"
+                  style="display:${k.modeAware ? '' : 'none'}"
+                  title="Which mode's outputs you're editing (this knob follows the 3-way switch)">
+            <option value="1">Mode 1 · SW down</option>
+            <option value="2">Mode 2 · SW mid</option>
+            <option value="3">Mode 3 · SW up</option>
+          </select>
+          <span style="color:var(--muted);font-size:10px" id="kn-output-count"></span>
+        </span>
       </div>
       <div id="kn-outputs-rows" class="rows-container"></div>
       <button type="button" class="btn btn-ghost btn-add-action" id="kn-add-output"
@@ -6424,23 +6457,50 @@ function changeKnobFunction(newFn) {
   if (!editingKnobDraft) return;
   syncKnobOutputsFromDom();
   editingKnobDraft.function = newFn;
-  if (newFn === KF_NONE) {
-    // Keep outputs[] in memory so flipping back doesn't lose work
-  } else if (editingKnobDraft.outputs.length === 0) {
-    // Seed one output so the user has something to edit immediately
-    addKnobOutput();
-    return;
-  } else {
-    editingKnobDraft.outputs.forEach(o => {
-      if (newFn === KF_HCR_VOLUME) {
-        if (o.posMax > 99) { o.posMin = 0; o.posMax = 99; }
-        if (o.target > 2)  o.target = 0;
-      } else if (newFn === KF_MAESTRO_PASSTHROUGH) {
-        if (o.posMax <= 99) { o.posMin = 4000; o.posMax = 8000; }
-        if (o.target < 1 || o.target > 8) o.target = 1;
-      }
-    });
+  const coerce = o => {
+    if (newFn === KF_HCR_VOLUME) {
+      if (o.posMax > 99) { o.posMin = 0; o.posMax = 99; }
+      if (o.target > 2)  o.target = 0;
+    } else if (newFn === KF_MAESTRO_PASSTHROUGH) {
+      if (o.posMax <= 99) { o.posMin = 4000; o.posMax = 8000; }
+      if (o.target < 1 || o.target > 8) o.target = 1;
+    }
+  };
+  if (newFn !== KF_NONE) {
+    // Function is global across modes → coerce EVERY mode's outputs.
+    (editingKnobDraft.outputsByMode || [editingKnobDraft.outputs]).forEach(arr => arr.forEach(coerce));
+    // Seed one output for the active mode so there's something to edit.
+    if (editingKnobDraft.outputs.length === 0) { addKnobOutput(); return; }
   }
+  renderKnobOutputs();
+}
+
+// Toggle a knob's mode-awareness (the "Follow 3 modes" checkbox). On enable,
+// seed modes 2/3 from mode 1 so the stick behaves the same until edited.
+function toggleKnobModeAware(checked) {
+  if (!editingKnobDraft) return;
+  syncKnobOutputsFromDom();
+  editingKnobDraft.modeAware = checked;
+  if (checked) {
+    if (!editingKnobDraft.outputsByMode[1].length)
+      editingKnobDraft.outputsByMode[1] = editingKnobDraft.outputsByMode[0].map(o => ({...o}));
+    if (!editingKnobDraft.outputsByMode[2].length)
+      editingKnobDraft.outputsByMode[2] = editingKnobDraft.outputsByMode[0].map(o => ({...o}));
+  }
+  editingKnobDraft.editMode = 1;
+  editingKnobDraft.outputs  = editingKnobDraft.outputsByMode[0];
+  const sel = document.getElementById('kn-editmode');
+  if (sel) { sel.value = '1'; sel.style.display = checked ? '' : 'none'; }
+  renderKnobOutputs();
+}
+
+// Switch which mode's outputs the editor is bound to (commits the current mode
+// first). The single Outputs editor rebinds to the selected mode's array.
+function setKnobEditMode(m) {
+  if (!editingKnobDraft) return;
+  syncKnobOutputsFromDom();
+  editingKnobDraft.editMode = m;
+  editingKnobDraft.outputs  = editingKnobDraft.outputsByMode[m - 1];
   renderKnobOutputs();
 }
 
@@ -6539,6 +6599,9 @@ function syncKnobOutputsFromDom() {
     next.push({ target, maestroCh: ch, posMin: pn, posMax: px });
   });
   editingKnobDraft.outputs = next;
+  // Keep the active mode's array in the per-mode source-of-truth in sync.
+  if (editingKnobDraft.outputsByMode)
+    editingKnobDraft.outputsByMode[(editingKnobDraft.editMode || 1) - 1] = next;
 }
 
 function addKnobOutput() {
@@ -6569,8 +6632,8 @@ function saveKnobModal() {
   syncKnobOutputsFromDom();
   const fn = +document.getElementById('kn-function').value;
   // Drop maestroCh for HCR Volume outputs (it's unused). For Maestro
-  // Pass-Through, keep all four fields.
-  const cleanedOutputs = editingKnobDraft.outputs.map(o => {
+  // Pass-Through, keep all four fields. Applied per mode.
+  const clean = arr => (arr || []).map(o => {
     if (fn === KF_HCR_VOLUME) {
       return { target: +o.target || 0, posMin: +o.posMin || 0, posMax: +o.posMax || 99 };
     }
@@ -6581,12 +6644,20 @@ function saveKnobModal() {
       posMax:    +o.posMax || 0,
     };
   });
-  config.knobs[editingKnob] = {
-    channel:  +document.getElementById('kn-channel').value,
-    function: fn,
-    reverse:  !!document.getElementById('kn-reverse').checked,
-    outputs:  fn === KF_NONE ? [] : cleanedOutputs,
+  const modeAware = !!document.getElementById('kn-modeaware')?.checked;
+  const byMode = editingKnobDraft.outputsByMode || [editingKnobDraft.outputs, [], []];
+  const obj = {
+    channel:   +document.getElementById('kn-channel').value,
+    function:  fn,
+    reverse:   !!document.getElementById('kn-reverse').checked,
+    modeAware: modeAware,
+    outputs:   fn === KF_NONE ? [] : clean(byMode[0]),   // mode 1 (+ all modes when !modeAware)
   };
+  if (modeAware && fn !== KF_NONE) {                      // per-mode sets only when opted in
+    obj.outputs2 = clean(byMode[1]);
+    obj.outputs3 = clean(byMode[2]);
+  }
+  config.knobs[editingKnob] = obj;
   editingKnobDraft = null;
   closeModal();
   renderKnobHighlights();

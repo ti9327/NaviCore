@@ -80,6 +80,7 @@ extern bool          lostFrameOld;       // SBUS lost-frame flag (no signal)
 extern bool          sbusFailsafe;       // SBUS failsafe flag (TX lost / disarmed)
 extern bool          wcbReady;           // true only after wcb->begin() succeeded (ESP-NOW usable)
 void                rcDispatch(int buttonId, uint8_t tapCount);
+void                resetModeAwareKnobs();   // re-arm mode-aware knobs on a mode change (defined in .ino)
 
 // Forward declarations from rc_config.h — needed for SET_CONFIG / GET_CONFIG
 // fragmentation handlers below.  Both already exist; declared here so
@@ -900,6 +901,7 @@ inline bool handle(uint8_t senderID, const char* command) {
     int mode = doc["mode"] | 0;
     if (mode >= 1 && mode <= 3 && mode != FunctionSwState) {
       FunctionSwState = mode;
+      resetModeAwareKnobs();   // snap mode-aware knob servos to the stick in the new mode
       emitMode(mode);
     }
     return true;

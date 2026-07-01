@@ -1190,7 +1190,13 @@ void processKnobs() {
   for (int i = 0; i < RC_NUM_KNOBS; i++) {
     RcKnob& kn = rcConfig.knobs[i];
     if (kn.channel < 1 || kn.channel > 24) continue;
-    if (kn.function == KF_NONE || kn.outputCount == 0) continue;
+    if (kn.function == KF_NONE) continue;
+    // Mode-aware knobs use the current 3-way-switch mode's output set; others
+    // always use mode 1. (lastKnobRaw[i] is reset to 0xFFFF on a mode change so
+    // the new mode's servo snaps to the current stick position — see processSbus.)
+    const int m = kn.modeAware ? FunctionSwState : 1;
+    const uint8_t         cnt  = rcKnobOutCount(kn, m);
+    const RcKnobOutput*   outs = rcKnobOuts(kn, m);
     uint16_t raw = sbusValues[kn.channel - 1];
 
     // Per-knob direction reversal — invert around the SBUS centre so a
@@ -1209,9 +1215,10 @@ void processKnobs() {
     // Only dispatch when the source actually moved (or on the first frame).
     if (abs((int)raw - (int)lastKnobRaw[i]) < KNOB_CHANGE_DEADBAND) continue;
     lastKnobRaw[i] = raw;
+    if (cnt == 0) continue;   // this mode drives nothing (still tracked lastKnobRaw above)
 
-    for (uint8_t o = 0; o < kn.outputCount && o < RC_KNOB_MAX_OUTPUTS; o++) {
-      const RcKnobOutput& out = kn.outputs[o];
+    for (uint8_t o = 0; o < cnt && o < RC_KNOB_MAX_OUTPUTS; o++) {
+      const RcKnobOutput& out = outs[o];
       uint16_t mapped = sbusToRange(raw, out.posMin, out.posMax);
       if (kn.function == KF_MAESTRO_PASSTHROUGH) {
         // out.target is the Maestro slot ID (1-8)
@@ -1223,6 +1230,16 @@ void processKnobs() {
       }
     }
   }
+}
+
+// On a mode change, re-arm each MODE-AWARE knob's change-detection sentinel so
+// its new mode's output(s) re-dispatch on the very next frame at the current
+// stick position — otherwise the servo would sit at the previous mode's target
+// until the stick is nudged past the deadband. Called from both mode-commit
+// sites (processSbus SBUS decode + rc_telemetry SET_MODE).
+void resetModeAwareKnobs() {
+  for (int i = 0; i < RC_NUM_KNOBS; i++)
+    if (rcConfig.knobs[i].modeAware) lastKnobRaw[i] = 0xFFFF;
 }
 
 // =============================================================================
@@ -1270,6 +1287,7 @@ void processSbus() {
     int newMode = (modeVal < 582) ? 1 : (modeVal < 1401 ? 2 : 3);
     if (newMode != FunctionSwState) {
       FunctionSwState = newMode;
+      resetModeAwareKnobs();   // re-arm mode-aware knobs so their new-mode servos snap to the stick
       // Surface the mode change on the WCB network immediately — config
       // tools watching via the bridge get instant feedback instead of
       // waiting up to 2 s for the next rc_hb heartbeat.

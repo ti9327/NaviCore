@@ -311,6 +311,11 @@ as edited.
 
 ## 12. Changelog
 
+- **v3.4 (2026-07-01):** Timeline **double-click-drag = SOLO (single-point) keyframe drag** (config-tool only) —
+  Greg wanted a way to nudge one dot without the smooth-drag pulling its neighbours. A second pointerdown on the
+  SAME keyframe id within 350ms (`_tlKfDownStamp`) makes that gesture ignore the falloff (weight 1 for the grabbed
+  dot, 0 for all others) regardless of the "Smooth drag" radius. Guards verified: a press on a different dot, or
+  past the 350ms window, both stay smooth.
 - **v3.3 (2026-07-01):** Timeline-editor delete + smooth-add (config-tool only), from Greg's feedback ("how do I
   delete dots? clicking anywhere makes a new one" + "clicking off the line makes a sharp angle"). Each keyframe
   now renders a display-only visible dot (`pointer-events:none`) under a larger **transparent r=11 hit circle**

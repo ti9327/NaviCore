@@ -2234,7 +2234,7 @@
         <img src="../Images/r2logo.png" alt="R2 logo"
              style="width:72px;height:72px;object-fit:contain;opacity:0.9">
         <div style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.3px">
-          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">011428QJUL26</span>
+          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">011549QJUL26</span>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap">
@@ -2413,10 +2413,11 @@
       </div>
       <div style="font-size:11px;color:var(--muted)">
         Click empty track space to add a keyframe (near the line it snaps ON so it stays smooth — then drag to
-        shape) · drag a dot to move it — nearby dots follow smoothly (see “Smooth drag”) · <b>right-click a dot
-        to delete it</b> (or select it and press Delete/Backspace, or use 🗑 Delete selected) · drag an action
-        diamond to move it in time, click to edit, right-click to delete · Shift-click two ADJACENT keyframes to
-        pick an easing pair · drag the yellow handle to scrub · Ctrl+scroll to zoom at the pointer, or ⤢ Fit.
+        shape) · drag a dot to move it — nearby dots follow smoothly (see “Smooth drag”) · <b>double-click-drag a
+        dot to move just that one</b> (no smooth influence) · <b>right-click a dot to delete it</b> (or select it
+        and press Delete/Backspace, or use 🗑 Delete selected) · drag an action diamond to move it in time, click
+        to edit, right-click to delete · Shift-click two ADJACENT keyframes to pick an easing pair · drag the
+        yellow handle to scrub · Ctrl+scroll to zoom at the pointer, or ⤢ Fit.
       </div>
     </div>
   </div>
@@ -4632,6 +4633,11 @@ let _tlSoftRadius = 350;
 // so the y-axis (and thus the cursor→value mapping) can't rescale mid-drag as
 // values change — otherwise the grabbed dot drifts out from under the cursor.
 let _tlFrozenRange = null;   // { kind, key, lo, hi } | null
+// Double-click-drag support: a second press on the SAME dot within this window
+// makes that gesture a SOLO drag (moves only that dot, ignoring the smooth
+// radius) — a precise single-point nudge without disturbing its neighbours.
+let _tlKfDownStamp = null;   // { id, t } of the previous keyframe pointerdown
+const TL_DBLCLICK_MS = 350;
 
 // Cosine falloff: 1 at the grabbed keyframe, easing to 0 at the radius edge
 // (zero slope at both ends → no visible seam where the influence stops).
@@ -5011,6 +5017,12 @@ function _tlStartDragKeyframe(ev, track, kf, lo, hi, rowTop) {
   _tlFrozenRange = { kind: track.kind, key: track.key, lo, hi };
   const origins = arr.map(k => ({ k, t0: k.t, v0: valOf(k) }));
   const self = origins.find(o => o.k.id === kf.id);
+  // Double-click-drag on the SAME dot → SOLO drag: move only this dot, ignoring
+  // the smooth radius. Detected as a second pointerdown on the same keyframe id
+  // within the double-click window.
+  const nowMs = Date.now();
+  const solo = !!(_tlKfDownStamp && _tlKfDownStamp.id === kf.id && (nowMs - _tlKfDownStamp.t) < TL_DBLCLICK_MS);
+  _tlKfDownStamp = { id: kf.id, t: nowMs };
   let moved = false, ended = false;
   // Single idempotent teardown so the window listeners are ALWAYS removed —
   // whether the drag ends normally, throws, or the editor is closed mid-gesture
@@ -5039,8 +5051,10 @@ function _tlStartDragKeyframe(ev, track, kf, lo, hi, rowTop) {
       // Proportional edit: every keyframe on THIS track shares the drag, weighted
       // by a smooth falloff of its time-distance from the grabbed one — so pulling
       // one dot bends its neighbours into a smooth hump/warp instead of a spike.
+      // SOLO (double-click) drag skips the falloff entirely: only the grabbed dot
+      // gets weight 1, everything else 0 (untouched).
       origins.forEach(o => {
-        const w = _tlSoftWeight(Math.abs(o.t0 - self.t0));
+        const w = solo ? (o.k.id === kf.id ? 1 : 0) : _tlSoftWeight(Math.abs(o.t0 - self.t0));
         if (w === 0 && o.k.id !== kf.id) return;             // outside the radius — untouched
         o.k.t = Math.max(0, Math.round(o.t0 + w * dt));
         setVal(o.k, o.v0 + w * dv);

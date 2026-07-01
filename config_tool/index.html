@@ -2234,7 +2234,7 @@
         <img src="../Images/r2logo.png" alt="R2 logo"
              style="width:72px;height:72px;object-fit:contain;opacity:0.9">
         <div style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.3px">
-          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">010050QJUL26</span>
+          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">010102QJUL26</span>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap">
@@ -3386,7 +3386,7 @@ const mp3ArgBounds = {
 // Maestro commands (comma-delimited "cmd[]" format, fits in 32 chars).
 // label, arg fields ([{label, default, min, max}])
 const maestroCommands = {
-  'setTarget':    { args: [{l:'ch', d:0, min:0, max:31}, {l:'pos (qus)', d:6000, min:0, max:16383}] },
+  'setTarget':    { args: [{l:'ch', d:0, min:0, max:31}, {l:'pos ¼µs (6000=1.5ms)', d:6000, min:0, max:16383}] },
   'goHome':       { args: [] },
   'stopScript':   { args: [] },
   'restartScript':{ args: [{l:'sub', d:0, min:0, max:127}] },
@@ -6721,8 +6721,8 @@ function openKnobModal(name) {
   document.getElementById('modal-exclusive').parentElement.parentElement.style.display = 'none';
 
   const helpText = (def.kind === 'joystick')
-    ? `Joystick axis pass-through. SBUS 172→posMin, SBUS 1811→posMax. Flip min/max to invert direction.`
-    : `Continuous pass-through. SBUS 172→posMin, SBUS 1811→posMax. Flip min/max to invert.`;
+    ? `Joystick axis pass-through. SBUS 172→Pos min, SBUS 1811→Pos max (µs; 1000–2000 standard, 1500 = centre). Flip min/max to invert direction.`
+    : `Continuous pass-through. SBUS 172→Pos min, SBUS 1811→Pos max (µs; 1000–2000 standard, 1500 = centre). Flip min/max to invert.`;
 
   const container = document.getElementById('tiers-container');
   container.innerHTML = `
@@ -6908,26 +6908,36 @@ function renderKnobOutputFields(idx, o, fn) {
       <input type="number" id="kn-out-${idx}-ch" min="0" max="31" value="${o.maestroCh ?? 0}" style="width:60px">
     </div>
     <div class="field-group">
-      <label>Pos min (qus)</label>
-      <input type="number" id="kn-out-${idx}-min" min="0" max="16383" value="${o.posMin ?? 4000}" style="width:75px">
+      <label>Pos min (µs)</label>
+      <input type="number" id="kn-out-${idx}-min" min="500" max="2500" step="1" value="${Math.round((o.posMin ?? 4000) / 4)}" style="width:75px">
     </div>
     <div class="field-group">
-      <label>Pos max (qus)</label>
-      <input type="number" id="kn-out-${idx}-max" min="0" max="16383" value="${o.posMax ?? 8000}" style="width:75px">
+      <label>Pos max (µs)</label>
+      <input type="number" id="kn-out-${idx}-max" min="500" max="2500" step="1" value="${Math.round((o.posMax ?? 8000) / 4)}" style="width:75px">
     </div>
   `;
 }
+// Servo endpoints are entered in microseconds (standard 1000–2000, 1500 = centre)
+// but the Maestro's Set Target command — and therefore the stored config, the
+// record/replay clips, and everything on the wire — is in quarter-µs.  The knob
+// output fields convert at the UI boundary only (÷4 to display, ×4 to store), so
+// the firmware is untouched and old ¼µs configs still round-trip correctly.
+const US_TO_QUS = 4;
 
 function syncKnobOutputsFromDom() {
   if (!editingKnobDraft) return;
   const rows = document.querySelectorAll('#kn-outputs-rows .action-row');
   const next = [];
+  // Maestro Pass-Through pos fields are shown in µs but stored in quarter-µs;
+  // HCR Volume fields are a raw 0-99 and pass through unchanged.
+  const fn = +(document.getElementById('kn-function')?.value ?? editingKnobDraft.function ?? KF_NONE);
+  const toStore = (fn === KF_MAESTRO_PASSTHROUGH) ? (v => Math.round(v * US_TO_QUS)) : (v => v);
   rows.forEach(r => {
     const idx = r.dataset.idx;
     const target = +(document.getElementById(`kn-out-${idx}-target`)?.value || 0);
     const ch     = +(document.getElementById(`kn-out-${idx}-ch`)?.value     || 0);
-    const pn     = +(document.getElementById(`kn-out-${idx}-min`)?.value    || 0);
-    const px     = +(document.getElementById(`kn-out-${idx}-max`)?.value    || 0);
+    const pn     = toStore(+(document.getElementById(`kn-out-${idx}-min`)?.value || 0));
+    const px     = toStore(+(document.getElementById(`kn-out-${idx}-max`)?.value || 0));
     next.push({ target, maestroCh: ch, posMin: pn, posMax: px });
   });
   editingKnobDraft.outputs = next;

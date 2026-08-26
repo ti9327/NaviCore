@@ -449,7 +449,7 @@
   #modal .modal-header, #modal .modal-footer { background: #202939; }
   #modal .tier-card { background: #2b3749; border: 1px solid #384662; }
   #modal .action-row { background: #35435a; border: 1px solid #475874; border-left: 3px solid var(--accent); }
-  /* Tap-tier tabs — one tier (single/double/triple tap) shown at a time. */
+  /* Tap-tier tabs — one tier (single/double/triple tap, or long press) shown at a time. */
   .tier-tabs { display: flex; gap: 6px; margin-bottom: 12px; }
   .tier-tab { appearance: none; flex: 1; cursor: pointer; user-select: none; font-family: inherit;
     padding: 9px 8px; border-radius: 8px; border: 1px solid var(--border);
@@ -462,6 +462,31 @@
     min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px;
     font-size: 11px; font-weight: 700; background: var(--accent); color: #fff; }
   .tier-tab-count.empty { display: none; }
+
+  /* Mesh push budget — a live "how big is the next Save" readout in the config
+     modal footer. Sized to sit quietly next to Save until it goes amber/red. */
+  .push-budget { font-size: 11px; color: var(--muted); align-self: center;
+    margin-right: 10px; white-space: nowrap; display: flex; align-items: center; gap: 7px;
+    /* the count changes every tick — same reason #status-text sets this */
+    font-variant-numeric: tabular-nums; }
+  .push-budget.empty { display: none; }
+
+  /* Assignment-card tier row flash — lights the exact tier that just fired, in
+     the same orange the transmitter graphic uses for live activity. Fades out
+     on its own so a burst of taps reads as separate pulses. */
+  .tier-row { border-radius: 4px; padding: 1px 4px; margin-left: -4px;
+    transition: background-color .45s ease, color .45s ease, box-shadow .45s ease; }
+  .tier-row.trig-fired {
+    background: rgba(255,122,61,.18);
+    color: var(--accent3) !important;
+    box-shadow: 0 0 0 1px rgba(255,122,61,.45);
+    transition: none;   /* snap ON, fade OFF — a pulse, not a swell */
+  }
+  .push-budget-bar { width: 62px; height: 5px; border-radius: 3px;
+    background: var(--border); overflow: hidden; flex: none; }
+  .push-budget-bar > div { height: 100%; border-radius: 3px; transition: width .18s, background .18s; }
+  .push-budget.warn { color: var(--yellow); }
+  .push-budget.over { color: var(--red); font-weight: 600; }
 
   /* Command-library picker: collapsible board sections (collapsed by default). */
   .cmdlib-board > summary { list-style: none; }
@@ -1109,7 +1134,7 @@
       </div>
 
       <div style="text-align:center; margin-bottom:12px; font-size:12px; color:var(--muted)">
-        Click any button to configure · <b>Shift+Click</b> to fire a TRIGGER (single tap) · <b>Shift+Ctrl+Click</b> for double tap · <b>Shift+Alt+Click</b> for triple tap
+        Click any button to configure · <b>Shift+Click</b> to fire a TRIGGER (single tap) · <b>Shift+Ctrl+Click</b> for double tap · <b>Shift+Alt+Click</b> for triple tap · <b>Shift+Ctrl+Alt+Click</b> for long press
       </div>
 
       <!-- FrSky TANDEM X18 transmitter SVG -->
@@ -2294,7 +2319,7 @@
         <img src="../Images/r2logo.png" alt="R2 logo"
              style="width:72px;height:72px;object-fit:contain;opacity:0.9">
         <div style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.3px">
-          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">21.15:52.Q.AUG.2026</span>
+          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">25.15:37.Q.AUG.2026</span>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap">
@@ -2401,6 +2426,11 @@
   <div class="modal" style="max-width:560px;width:92%">
     <div class="modal-header">
       <span class="modal-title">🎬 Clips — record &amp; replay</span>
+      <span style="flex:1"></span>
+      <button class="btn btn-ghost" type="button" onclick="clipsDownloadAllToFile(this)" style="padding:4px 10px"
+              title="Save EVERY clip to one file, with the config. Warns first with the size and a time estimate — this is slow over the WCB mesh.">⤓ All + config</button>
+      <button class="btn btn-ghost" type="button" onclick="clipsImportFromFile()" style="padding:4px 10px"
+              title="Restore clips from a clip or backup file. Existing clips are skipped by default — you are asked per collision.">⤒ Restore</button>
       <button class="btn btn-ghost" onclick="closeClipsModal()" style="padding:4px 10px">✕</button>
     </div>
     <div style="padding:16px 18px;display:flex;flex-direction:column;gap:14px">
@@ -3068,10 +3098,28 @@
           <div class="sb-section">
             <h3>Tap Window</h3>
             <div class="tapwin-row">
-              <input type="number" id="tapwin-input" min="100" max="2000" step="50" value="500">
+              <input type="number" id="tapwin-input" min="100" max="2000" step="50" value="500"
+                     oninput="updateHoldMsHint()">
               <span style="color:var(--muted);font-size:12px">ms</span>
             </div>
             <div class="noconn" style="margin-top:4px">Time window for multi-tap detection</div>
+          </div>
+          <div class="sb-section">
+            <h3>Long Press</h3>
+            <div class="tapwin-row">
+              <input type="number" id="holdms-input" min="200" max="5000" step="50" value="750"
+                     oninput="updateHoldMsHint()">
+              <span style="color:var(--muted);font-size:12px">ms</span>
+            </div>
+            <div class="noconn" style="margin-top:4px" id="holdms-hint">Hold a button this long to fire its Long&nbsp;press tier</div>
+          </div>
+          <div class="sb-section">
+            <h3>Switch Settle</h3>
+            <div class="tapwin-row">
+              <input type="number" id="switchsettle-input" min="0" max="1000" step="10" value="80">
+              <span style="color:var(--muted);font-size:12px">ms</span>
+            </div>
+            <div class="noconn" style="margin-top:4px">A switch must rest this long before its actions fire. Stops a 3‑position switch from firing the <b>middle</b> position on its way from one end to the other. 0 = fire immediately.</div>
           </div>
           <div class="sb-section">
             <h3>Telemetry Rate</h3>
@@ -3193,7 +3241,7 @@
                 ⬆ Update Firmware
               </button>
               <button class="btn btn-danger" id="btn-fw-wipe" type="button"
-                      title="Full wipe: erases EVERYTHING — bootloader, partitions, app, AND saved configuration (NVS). Use for first-time programming or recovery.">
+                      title="Full wipe: rewrites bootloader, partitions and app, AND erases the saved configuration (NVS). Use for first-time programming or recovery. Recorded CLIPS are NOT erased — the clips partition (0x400000) is never written by the flasher. Clips are also not in any backup, so that is the only copy you have.">
                 ⚠ Full Wipe &amp; Flash
               </button>
               <button class="btn btn-blue" id="btn-fw-ota" type="button"
@@ -3233,6 +3281,7 @@
       <button class="btn btn-ghost" id="btn-calibrate" type="button">🎯 Calibrate RC</button>
       <button class="btn btn-warn" id="btn-defaults" disabled
               style="margin-right:auto" type="button">Restore Defaults</button>
+      <span id="push-budget" class="push-budget" title="How much of the Via-WCB upload budget the next Save would use"></span>
       <button class="btn btn-success" id="btn-hwsetup-save" disabled type="button">Save</button>
       <button class="btn btn-ghost" onclick="closeHwSetup()">Done</button>
     </div>
@@ -3299,7 +3348,7 @@
     <div class="modal-body">
       <div class="toggle-row">
         <label class="toggle"><input type="checkbox" id="modal-exclusive"><span class="slider"></span></label>
-        <span style="font-size:13px">Exclusive mode — only the matched tier fires (off = cumulative: a double-tap fires tap 1 <i>and</i> tap 2)</span>
+        <span style="font-size:13px">Exclusive mode — only the matched tier fires (off = cumulative: a double-tap fires tap 1 <i>and</i> tap 2). <b>Long press always fires alone</b>, either way.</span>
       </div>
       <div id="tiers-container"></div>
     </div>
@@ -3307,7 +3356,7 @@
       <button class="btn btn-ghost"   onclick="clearModalDispatch()">Clear All</button>
       <button class="btn btn-ghost"   onclick="closeModal()">Cancel</button>
       <button class="btn btn-success" onclick="saveModalDispatch()"
-              title="Apply this mapping and save the full config to the board (same as the top-bar Save). Updates the page only if not connected.">Apply</button>
+              title="Apply this mapping and save the full config to the board (same as the Config window's Save). Updates the page only if not connected.">Apply</button>
     </div>
   </div>
 </div>
@@ -3632,7 +3681,9 @@ let config = {
   maeGateMs:        250,      // remote/via-WCB skip-if-running fail-open window (ms)
   boardType:        0,        // hardware pin profile: 0 = NaviCore v2 PCB (default), 1 = WCB HW 3.2
   tapWindowMs:   500,
-  chRateHz:      5,          // rc_ch live-monitor broadcast rate (Hz, 1–20; 5 = smooth + light mesh load)
+  holdMs:        750,        // long-press (tap tier 4) threshold; must exceed tapWindowMs
+  switchSettleMs: 80,        // a switch must rest this long before its tier fires (0 = immediate)
+  chRateHz:      5,       // rc_ch live-monitor broadcast rate (Hz, 1–20; 5 = smooth + light mesh load)
   matrixChannel: 7,
   matrixDebounceFrames: 1,
   funcBindings: { mode: 4 },
@@ -4144,6 +4195,14 @@ const RC_PHYSICAL_SLOTS = 21;
 const RC_LOGICAL_COUNT  = 15;
 const RC_TOTAL_SLOTS    = RC_PHYSICAL_SLOTS + RC_LOGICAL_COUNT;  // 36
 
+// Tap tiers per button mapping. Tiers 1-3 are tap counts; tier 4 is the LONG
+// PRESS (hold past config.holdMs), which is a different gesture rather than a
+// 4th tap — it always dispatches exclusively, and a 4-tap flurry still saturates
+// at triple. Mirrors the firmware's RC_NUM_TAP_TIERS / RC_TAP_LONG.
+const NUM_TAP_TIERS = 4;
+const TAP_LONG      = 4;
+const TIER_KEYS     = ['t1', 't2', 't3', 't4'];   // config.mappings[key] action arrays, tier order
+
 // Display label for a matrix slot — the ONE place label precedence lives.
 // LOGICAL slots (22-36): config.thresholds[].label is the source of truth
 // (user-named in the Logical Buttons tab). PHYSICAL slots (1-21): the active
@@ -4161,7 +4220,7 @@ function getBtnLabel(id) {
 // Shared "configured / in use" predicates — ONE definition used by the
 // assignment cards, the Logical Buttons tab, and the CSV export, so the views
 // can never drift apart on which slots count as in use.
-function mappingHasActions(m) { return !!(m && ((m.t1 && m.t1.length) || (m.t2 && m.t2.length) || (m.t3 && m.t3.length))); }
+function mappingHasActions(m) { return !!(m && TIER_KEYS.some(k => m[k] && m[k].length)); }
 function mappingInUse(m)      { return mappingHasActions(m) || !!(m && m.exclusive); }
 function thresholdHasBand(t)  { return !!(t && (((t.minPwm || 0) !== 0) || ((t.maxPwm || 0) !== 0))); }
 function slotInUseAnyMode(id) {
@@ -4422,6 +4481,18 @@ async function openPortAndStart(p, settleMs = 4000, allowViaWcb = true, forceVia
   { const tg = document.getElementById('via-wcb-toggle'); if (tg) tg.checked = false; }
   updateTerminalSplit();   // fresh connect starts single-pane until auto-detect bridges
   await p.open({ baudRate: 115200 });
+  // DEASSERT DTR/RTS IMMEDIATELY. On a NaviCore v2 the ESP32-S3 drives USB
+  // natively (USB Serial/JTAG, no bridge chip) and those two control lines are
+  // what its ROM watches to RESET the chip. Whatever state the browser/OS leaves
+  // them in after open() is what the board sees — and a board that resets here
+  // spends the whole direct-PING window rebooting, which reads as "connection
+  // lost" and then, because nothing answers directly, as a bogus auto-switch to
+  // Via WCB. The board diagnoses it itself: "Reset reason: 11 - USB peripheral
+  // (host toggled DTR/RTS)".
+  // The teardown path (_releaseSerialOnUnload) has always deasserted these for
+  // exactly this reason; open() simply never did. The shared hub already
+  // defaults assertDTR:false, so only this direct path was exposed.
+  try { await p.setSignals({ dataTerminalReady: false, requestToSend: false }); } catch (_) {}
   let w;
   try {
     w = p.writable.getWriter();
@@ -4446,13 +4517,17 @@ async function openPortAndStart(p, settleMs = 4000, allowViaWcb = true, forceVia
   // auto-enables with no manual toggle, and if neither answers we revert to
   // direct so no stale Via-WCB flag lingers. (Replaces the old status-text
   // sniff, which a real direct board would set within the first ping.)
+  // Each phase takes its own epoch so a LATE reply from the previous phase can
+  // never satisfy this one — see _pongEpoch. Without that, a slow direct board
+  // is misdetected as a bridged one.
   const pingForPong = async () => {
+    const ep = ++_pongEpoch;
     _pongSeen = false;
-    for (let i = 0; i < 6 && !_pongSeen; i++) {
+    for (let i = 0; i < 6 && _pongSeenEpoch !== ep; i++) {
       await sendJSON({ type: 'PING' });
       await new Promise(r => setTimeout(r, 500));
     }
-    return _pongSeen;
+    return _pongSeenEpoch === ep;
   };
   if (forceViaWcb) onViaWcbToggle(true);      // caller KNOWS it's a WCB — start in Via WCB, skip the direct probe
   let pongOk = await pingForPong();          // try current transport (Direct USB, or forced Via WCB)
@@ -4463,6 +4538,12 @@ async function openPortAndStart(p, settleMs = 4000, allowViaWcb = true, forceVia
     if (!pongOk) {
       onViaWcbToggle(false);                  // neither answered — don't leave a stale flag
       document.getElementById('status-text').textContent = 'Waiting for board…';
+    } else {
+      // Say so. Silently switching transport changes real behaviour — Save
+      // strips WCB Network over the bridge — and if the user did not plug in a
+      // WCB, this is a MISDETECTION they need to see rather than discover later.
+      showToast('No direct reply — switched to Via WCB. If nothing is bridged, disconnect and retry.', 'warn', 8000);
+      appendTerminalLine('< [link] no direct PONG — auto-switched to Via WCB', 'rx');
     }
   }
   if (!pongOk) console.warn('PING never received PONG (direct or Via WCB) — proceeding anyway.');
@@ -5218,6 +5299,15 @@ async function sendLine(msg, silent = false) {
 const RC_WCB_DEVICE_ID = 20;
 let viaWcbActive = false;   // false = Direct USB mode; true = bridging via tethered WCB
 let _pongSeen    = false;   // set by the PONG handler — connect uses it to auto-detect the transport
+// Transport auto-detect probes in PHASES (direct first, then Via WCB), and a
+// bare boolean cannot tell which phase a PONG belongs to. A board that answers
+// LATE — stalled loop(), a busy USB host — replies after the direct phase has
+// given up, and that reply then lands during the Via-WCB probe and is credited
+// to it: the tool reports "Connected via WCB" with no WCB attached, and Save
+// silently strips WCB Network because it believes it is bridged.
+// So each probe takes an epoch, and a PONG only satisfies the epoch it arrived in.
+let _pongEpoch     = 0;
+let _pongSeenEpoch = -1;
 let _rcTrigReleaseTimer = null;   // setTimeout handle for rc_trig auto-release
 // Via WCB: SBUS RECEIVER block freshness tracking.  PWM_UPDATE carries
 // the RC's local SBUS metrics inline (Direct USB path).  Over WCB we
@@ -5949,6 +6039,27 @@ function clipsRefresh() {
 let _clipItems = null;   // { src, items } accumulating between BEGIN and END (new format)
 let _clipAsm   = null;   // { src, buf }   rejoining a split single marker (old format)
 let _clipFsFresh = false; // a [CLIPFS] arrived in the current LS reply (cleared at LIST:END)
+// Promise form of ?REC,LS, for callers that need the list as DATA rather than as
+// a rendered panel: the backup enumerator, the pre-restore flash-space check,
+// and the post-restore read-back (listClips re-opens each .ncr, so its reported
+// event count is a genuine flash read-back, not an echo of what we sent).
+let _clipListWaiters = [];
+let _clipFsLast = null;   // last [CLIPFS] {total, used} seen — pre-flight space check
+function clipsListOnce(timeoutMs = 8000) {
+  return new Promise((resolve, reject) => {
+    const entry = { resolve, reject };
+    entry.timer = setTimeout(() => {
+      _clipListWaiters = _clipListWaiters.filter(w => w !== entry);
+      reject(new Error('the board did not answer ?REC,LS'));
+    }, timeoutMs);
+    _clipListWaiters.push(entry);
+    sendRcCli('?REC,LS', true);
+  });
+}
+function _clipListResolve(items) {
+  const ws = _clipListWaiters; _clipListWaiters = [];
+  ws.forEach(w => { clearTimeout(w.timer); w.resolve(items); });
+}
 
 // Feed one candidate line to the ingester.  `src` is the relaying WCB id (a
 // string) for [TERM:<src>] lines, or null for a bare Direct-USB line.  Returns
@@ -5957,13 +6068,13 @@ let _clipFsFresh = false; // a [CLIPFS] arrived in the current LS reply (cleared
 function _clipListFeed(src, text) {
   // Clips-partition storage (arrives just before the list on ?REC,LS).
   if (text.startsWith('[CLIPFS]')) {
-    try { _renderClipStorage(JSON.parse(text.slice(8))); _clipFsFresh = true; } catch (_) {}
+    try { const fs = JSON.parse(text.slice(8)); _clipFsLast = fs; _renderClipStorage(fs); _clipFsFresh = true; } catch (_) {}
     return true;
   }
   // ── New per-item format ──
   if (text.startsWith('[CLIPLIST:BEGIN]')) { _clipItems = { src, items: [] }; return true; }
   if (text.startsWith('[CLIPLIST:END]')) {
-    if (_clipItems && _clipItems.src === src) { renderClips(_clipItems.items); _clipItems = null; }
+    if (_clipItems && _clipItems.src === src) { _clipListResolve(_clipItems.items); renderClips(_clipItems.items); _clipItems = null; }
     // A completed list with NO [CLIPFS] in the same reply = firmware that doesn't
     // report storage — hide the bar rather than leave a previous board's numbers.
     if (!_clipFsFresh) { const cs = document.getElementById('clips-storage'); if (cs) cs.style.display = 'none'; }
@@ -6049,6 +6160,12 @@ function renderClips(clips) {
     edit.style.padding = '4px 9px';
     edit.onclick = () => openTimelineEditor(name);
 
+    const dl = document.createElement('button');
+    dl.className = 'btn btn-ghost'; dl.type = 'button'; dl.textContent = '⤓';
+    dl.title = 'Download this clip to a file (verified — a clip that will not transfer completely is never written)';
+    dl.style.padding = '4px 9px';
+    dl.onclick = () => clipDownloadToFile(name, dl);
+
     const ren = document.createElement('button');
     ren.className = 'btn btn-ghost'; ren.type = 'button'; ren.textContent = '✎'; ren.title = 'Rename';
     ren.style.padding = '4px 9px';
@@ -6059,7 +6176,7 @@ function renderClips(clips) {
     del.style.padding = '4px 9px';
     del.onclick = () => clipDelete(name);
 
-    row.append(meta, play, edit, ren, del);
+    row.append(meta, play, edit, dl, ren, del);
     list.appendChild(row);
   });
 }
@@ -6074,7 +6191,7 @@ function _forEachClipActionArray(cb) {
   if (typeof config === 'undefined' || !config) return;
   if (config.mappings) for (const key in config.mappings) {
     const m = config.mappings[key]; if (!m) continue;
-    ['t1', 't2', 't3'].forEach(t => { if (Array.isArray(m[t])) cb(m[t], na => { m[t] = na; }); });
+    TIER_KEYS.forEach(t => { if (Array.isArray(m[t])) cb(m[t], na => { m[t] = na; }); });
   }
   if (config.switches) for (const nm in config.switches) {
     const s = config.switches[nm]; if (!s) continue;
@@ -6230,7 +6347,323 @@ async function clipRecordToggle() {
 // fragments are rejoined until the buffered text parses as valid JSON.
 let _tlDownload = null;   // { name, src, header, events, evBuf } while EDITLOAD is streaming in
 
+// ════════════════════════════════════════════════════════════════════════════
+//  Verified ranged clip download
+// ════════════════════════════════════════════════════════════════════════════
+// The timeline editor's downloader accepts whatever arrives and compares counts
+// at the end. That is not good enough to put a clip in a BACKUP: a count check
+// cannot survive retry, because a re-requested range that partly arrives twice
+// nets a shortfall of zero while events are still missing.
+//
+// This path uses the ranged protocol instead (see docs/PROTOCOLS.md): every
+// event carries its absolute index, so completeness is a SET check over
+// 0..count-1, and only the genuinely missing indices are re-requested. It keeps
+// its own session state rather than sharing _tlDownload, so the editor's path is
+// untouched.
+let _clipRange = null;
+
+function _clipRangeFeed(text) {
+  const s = _clipRange;
+  if (!s) return false;
+
+  if (text.startsWith('[CLIPDL:BEGIN]')) {
+    try { s.hdr = JSON.parse(text.slice(14)); } catch (_) { s.hdr = {}; }
+    s.evBuf = null; s.pendIdx = -1;
+    return true;
+  }
+  if (text.startsWith('[CLIPDL:ERR]')) { s.err = text.slice(12).replace(/^,\d+\]?/, ''); s.finish(); return true; }
+  if (text.startsWith('[CLIPDL:END]')) {
+    try { s.tail = JSON.parse(text.slice(12)); } catch (_) { s.tail = {}; }
+    s.finish();
+    return true;
+  }
+
+  const m = /^\[CLIPDL:EV,(\d+)\]/.exec(text);
+  if (m) { s.pendIdx = +m[1]; s.evBuf = text.slice(m[0].length); }
+  else if (s.evBuf !== null) { s.evBuf += text; }   // continuation of a wrapped line
+  else return false;
+
+  try {
+    const ev = JSON.parse(s.evBuf);
+    if (s.pendIdx >= 0) s.got.set(s.pendIdx, ev);
+    s.evBuf = null; s.pendIdx = -1;
+  } catch (_) {
+    if (s.evBuf.length > 4096) { s.evBuf = null; s.pendIdx = -1; }   // corrupt chain — next EV recovers
+  }
+  return true;
+}
+
+// Download one clip COMPLETELY, or throw. Never returns partial data — that is
+// the whole point. onProgress(got, total) is optional.
+// opts.allowPartial: return what arrived (with `missing` set) instead of throwing.
+// Backup callers must NOT set it — a partial clip must never be banked. The
+// timeline editor does, so an unrecoverable clip still opens read-only rather
+// than showing an error over a blank canvas.
+async function clipDownloadVerified(name, onProgress, opts) {
+  // Smaller slices over the mesh: each event line is an RTERM packet and the
+  // bridge's relay queue is only 16 deep, so a big burst is exactly what gets
+  // dropped. Over USB the availableForWrite gate makes large slices safe.
+  const CHUNK = viaWcbActive ? 48 : 400;
+  const MAX_ROUNDS = 40;
+
+  const got = new Map();
+  let total = -1, fp = null, meta = null;
+
+  const runRange = async (from, count) => {
+    await new Promise((resolve) => {
+      _clipRange = { hdr: null, tail: null, err: null, got, evBuf: null, pendIdx: -1,
+                     finish: null, timer: null };
+      const done = () => {
+        clearTimeout(_clipRange.timer);
+        const s = _clipRange; _clipRange = null; resolve(s);
+      };
+      _clipRange.finish = done;
+      _clipRange.timer = setTimeout(done, 15000);   // a silent board must not hang the backup
+      sendRcCli(`?REC,EDITLOAD,${name},${from},${count}`, true);
+    }).then(s => {
+      if (s.err) throw new Error(s.err);
+      if (!s.hdr) throw new Error('no reply from the board');
+      if (s.hdr.from === undefined) throw new Error('this firmware has no ranged download — reflash to back up clips');
+      // fc is the FILE header's count; loadClip truncates silently when a clip
+      // exceeds the buffer cap, so count alone would call a short read complete.
+      if (+s.hdr.fc !== +s.hdr.count)
+        throw new Error(`clip is truncated on the board (file says ${s.hdr.fc} events, buffer holds ${s.hdr.count})`);
+      if (total < 0) {
+        total = +s.hdr.count; fp = s.hdr.fp;
+        // Keep the clip's own duration/mode — a restore must reproduce them, and
+        // they are only reported here.
+        meta = { durationMs: +s.hdr.durationMs || 0, mode: +s.hdr.mode || 1 };
+      }
+      // A changed fingerprint means the buffer was replaced mid-assembly (a
+      // Record/Play trigger on the transmitter will do it). Splicing ranges
+      // across two different buffers would produce a plausible, wrong clip.
+      const seen = [s.hdr.fp, s.tail && s.tail.fp].filter(Boolean);
+      if (seen.some(v => v !== fp)) throw new Error('the clip changed on the board mid-download — start again');
+    });
+  };
+
+  await runRange(0, 0);                      // header-only probe: count, fc, fp
+  if (total === 0) return { name, header: { count: 0, ...meta }, events: [] };
+
+  for (let round = 0; round < MAX_ROUNDS; round++) {
+    if (got.size >= total) break;
+    // Ask only for what is actually missing, coalesced into runs so a clean
+    // first pass is one request per CHUNK rather than one per event.
+    let from = -1;
+    for (let i = 0; i < total; i++) {
+      if (!got.has(i)) { from = i; break; }
+    }
+    if (from < 0) break;
+    let n = 0;
+    while (n < CHUNK && from + n < total && !got.has(from + n)) n++;
+    await runRange(from, n);
+    if (onProgress) onProgress(got.size, total);
+  }
+
+  const missing = total - got.size;
+  if (missing && !(opts && opts.allowPartial)) {
+    throw new Error(`${missing} of ${total} events would not transfer` +
+                    (viaWcbActive ? ' — the WCB mesh is dropping packets; try Direct USB' : ''));
+  }
+
+  // Indices make the gaps KNOWN, so a partial result is ordered and honest —
+  // unlike the legacy stream, where a dropped line could splice two events into
+  // one that parsed fine and carried a nonsense timestamp.
+  const events = [];
+  for (let i = 0; i < total; i++) if (got.has(i)) events.push(got.get(i));
+  return { name, header: { count: total, ...meta }, events, missing };
+}
+
+// One clip → one file. The single-clip shape is deliberately the same object the
+// bundle carries in its `clips` array, so Import can take either without caring.
+function clipToFileObject(dl) {
+  return { name: dl.name, durationMs: dl.header.durationMs | 0,
+           mode: dl.header.mode | 0 || 1, events: dl.events };
+}
+
+async function clipDownloadToFile(name, btn) {
+  if (!port && !sharedActive) { alert('Connect to the board first.'); return; }
+  const label = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '…'; }
+  const t = showToast(`Downloading "${name}"…`, 'info', 0);
+  try {
+    const dl = await clipDownloadVerified(name, (g, n) => {
+      if (t) t.textContent = `Downloading "${name}"… ${g}/${n} events`;
+    });
+    const out = { navicore: 'clip/v1', savedAt: Date.now(), clip: clipToFileObject(dl) };
+    _cfgDownloadTextFile(`navicore-clip-${name}.json`, JSON.stringify(out, null, 2));
+    _dismissToast(t);
+    showToast(`Saved "${name}" — ${dl.events.length} events`, 'success');
+  } catch (e) {
+    _dismissToast(t);
+    // Deliberately no partial file. A clip file that is quietly short is worse
+    // than no file: you would only discover it when you needed the restore.
+    alert(`Could not download "${name}" completely, so nothing was saved.\n\n${e.message}`);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = label; }
+  }
+}
+
+// Download EVERY clip, verified, for a bundle. Returns {clips, skipped}.
+// A clip that will not transfer completely is SKIPPED and named — never banked
+// half-written, and never silently omitted either.
+async function clipsDownloadAll(onProgress) {
+  const items = await clipsListOnce();
+  if (!items.length) return { clips: [], skipped: [] };
+
+  // Concrete warning, not a vague one: [CLIPITEM] carries bytes and (on current
+  // firmware) the event count, so we can state size and a real time estimate.
+  const totalBytes = items.reduce((s, c) => s + (+c.bytes || 0), 0);
+  const totalEv    = items.reduce((s, c) => s + (+c.n || 0), 0);
+  // Mesh throughput is the binding constraint; ~150 events/s is the measured
+  // ceiling of the bridge's UART drain. USB is limited by nothing that matters.
+  const secs = viaWcbActive ? Math.ceil(totalEv / 150) : Math.ceil(totalEv / 2000);
+  const mins = secs >= 90 ? `${Math.ceil(secs / 60)} minutes` : `${Math.max(1, secs)} seconds`;
+  const msg = `Download all ${items.length} clip(s)?\n\n` +
+              `${_fmtBytes(totalBytes)}${totalEv ? ` · ${totalEv} events` : ''}\n` +
+              `Estimated ${mins} over ${viaWcbActive ? 'the WCB mesh' : 'Direct USB'}.` +
+              (viaWcbActive ? '\n\nThe mesh is much slower than USB for this. Direct USB is worth it for a full backup.' : '');
+  if (!confirm(msg)) return null;
+
+  const clips = [], skipped = [];
+  for (let i = 0; i < items.length; i++) {
+    const nm = items[i].name;
+    if (onProgress) onProgress(i, items.length, nm);
+    try {
+      clips.push(clipToFileObject(await clipDownloadVerified(nm)));
+    } catch (e) {
+      skipped.push({ name: nm, why: e.message });
+    }
+  }
+  return { clips, skipped };
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  Clip restore (write a clip file back onto the droid)
+// ════════════════════════════════════════════════════════════════════════════
+// Uses the SAME ACK-gated upload the timeline editor uses: EDITBEGIN, then
+// indexed EDITEV whose ACK echoes the index (so the board writes AT that index —
+// a retry after a lost ACK cannot append a duplicate), then EDITEND.
+//
+// EDITEND OVERWRITES silently — saveClip opens the .ncr truncating with no
+// existence check — and [CLIPITEM] carries no mtime, so nothing can tell whether
+// the backup copy or the on-droid copy is newer. Blanket overwrite is therefore
+// unsafe BY CONSTRUCTION: it would let a month-old backup destroy a clip
+// recorded yesterday, unrecoverably. Callers must resolve collisions first;
+// this function just writes what it is told to write.
+async function clipRestoreOne(clip, destName, onProgress) {
+  const events = clip.events || [];
+  if (!events.length) throw new Error('clip has no events');
+
+  const beginP = _tlWaitForMarker(t => t.startsWith('[CLIPUL:BEGIN'));
+  await sendRcCli('?REC,EDITBEGIN', true);
+  const begin = await beginP;
+  if (!begin.includes('OK')) throw new Error('board rejected EDITBEGIN (busy recording or replaying?)');
+
+  for (let i = 0; i < events.length; i++) {
+    const cmdStr = '?REC,EDITEV,' + i + ',' + JSON.stringify(events[i]);
+    // Over the bridge the whole relayed line must fit one ESP-NOW packet.
+    if (viaWcbActive && cmdStr.length > 180)
+      throw new Error(`event ${i + 1}/${events.length} is too large for the WCB bridge (${cmdStr.length} chars) — restore over Direct USB`);
+    const ackMark = '[CLIPUL:ACK,' + i + ']';
+    let ok = false;
+    for (let attempt = 0; attempt < 3 && !ok; attempt++) {
+      try {
+        const p = _tlWaitForMarker(t => t.startsWith(ackMark) || t.startsWith('[CLIPUL:NAK'));
+        await sendRcCli(cmdStr, true);
+        ok = (await p).startsWith(ackMark);
+      } catch (_) { /* timeout — retry; the write is idempotent by index */ }
+    }
+    if (!ok) throw new Error(`event ${i + 1}/${events.length} rejected after 3 attempts`);
+    if (onProgress && (i % 10 === 0)) onProgress(i + 1, events.length);
+  }
+
+  const endP = _tlWaitForMarker(t => t.startsWith('[CLIPUL:END'));
+  await sendRcCli('?REC,EDITEND,' + destName, true);
+  const end = await endP;
+  if (!end.includes('OK')) {
+    const m = end.match(/\[CLIPUL:END,ERR,([^\]]*)\]/);
+    throw new Error('board rejected the save' + (m ? ' — ' + m[1] : ''));
+  }
+  return events.length;
+}
+
+// Read back what actually landed on flash. listClips RE-OPENS each .ncr and
+// reads its header, so the reported event count is a genuine flash read-back,
+// not an echo of what we sent. Costs one CLI round trip per restored clip and
+// catches a truncated write (flash full) that EDITEND still reported OK.
+async function clipVerifyOnBoard(destName, expectCount) {
+  try {
+    const items = await clipsListOnce();
+    const hit = items.find(c => c.name === destName);
+    if (!hit) return 'clip is not listed on the board after saving';
+    if (hit.n !== undefined && +hit.n !== +expectCount)
+      return `board holds ${hit.n} events, expected ${expectCount}`;
+    return null;                       // verified
+  } catch (_) {
+    return null;                       // could not check — do not fail the restore on this
+  }
+}
+
+// Restore a set of clips onto the droid. Returns a human summary.
+//
+// DEFAULTS TO SKIP-EXISTING, deliberately. EDITEND overwrites silently and
+// [CLIPITEM] carries no mtime, so nothing here can tell whether the backup copy
+// or the on-droid copy is newer — a blanket overwrite would let a month-old
+// backup destroy a clip recorded yesterday, with no undo. The user is asked per
+// collision instead, and the safe answer is the default.
+async function clipsRestore(clips) {
+  if (!clips || !clips.length) return 'No clips in that file.';
+  if (!port && !sharedActive) throw new Error('Connect to the board first.');
+
+  const existing = await clipsListOnce().catch(() => []);
+  const haveNames = new Set(existing.map(c => c.name));
+
+  // Pre-flight the flash. A full clips partition mid-restore destroys the clip
+  // being overwritten AND leaves a truncated .ncr that loads silently short —
+  // so refuse up front rather than discover it halfway.
+  if (_clipFsLast && _clipFsLast.total) {
+    const free = (+_clipFsLast.total - +_clipFsLast.used);
+    // ~140 B/event on flash, plus header; 30% headroom for LittleFS overhead.
+    const need = clips.reduce((s, c) => s + (c.events || []).length * 140, 0) * 1.3;
+    if (need > free)
+      throw new Error(`Not enough space on the clips partition — need about ${_fmtBytes(need)}, ` +
+                      `${_fmtBytes(free)} free. Delete some clips first.`);
+  }
+
+  let written = 0; const skipped = [], failed = [];
+  for (const clip of clips) {
+    let dest = clip.name;
+    if (haveNames.has(dest)) {
+      const choice = prompt(
+        `"${dest}" already exists on the droid.\n\n` +
+        `The board does not record when a clip was made, so neither of us can tell which copy is newer — ` +
+        `overwriting is not undoable.\n\n` +
+        `Type:  skip  (default) · overwrite · or a NEW NAME to restore alongside it`, 'skip');
+      if (choice === null) break;                       // Cancel = stop the whole restore
+      const c = choice.trim();
+      if (!c || /^skip$/i.test(c)) { skipped.push(dest); continue; }
+      if (!/^overwrite$/i.test(c)) dest = c.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 30);
+      if (!dest) { skipped.push(clip.name); continue; }
+    }
+    try {
+      const n = await clipRestoreOne(clip, dest);
+      const bad = await clipVerifyOnBoard(dest, n);     // genuine flash read-back
+      if (bad) failed.push(`${dest} (${bad})`); else { written++; haveNames.add(dest); }
+    } catch (e) {
+      failed.push(`${clip.name} (${e.message})`);
+      sendRcCli('?REC,EDITCANCEL', true);               // never leave the board wedged in ST_EDITING
+    }
+  }
+  clipsRefresh();
+  return `Restored ${written} clip(s).` +
+         (skipped.length ? `\nSkipped (already on the droid): ${skipped.join(', ')}` : '') +
+         (failed.length  ? `\nFailed: ${failed.join('; ')}` : '');
+}
+
 function _clipDlFeed(src, text) {
+  // A verified ranged download owns the [CLIPDL:*] stream while it runs.
+  if (_clipRange) return _clipRangeFeed(text);
   if (!_tlDownload) return false;
   if (_tlDownload.src !== null && _tlDownload.src !== src && !text.startsWith('[CLIPDL:BEGIN]')) return false;
 
@@ -6269,14 +6702,23 @@ function _tlDownloadComplete() {
   // unary + always yields a number (NaN, never null/undefined), so `?? -1` never
   // fired — make the -1 sentinel real so a missing/NaN count is caught by >=0.
   const expected = (dl.header && Number.isFinite(+dl.header.count)) ? +dl.header.count : -1;
-  if (!(expected >= 0) || dl.events.length !== expected) {
-    _tlDownload = null;
-    _tlShowLoadError(`Download incomplete — got ${dl ? dl.events.length : 0} of ${dl && dl.header ? dl.header.count : '?'} events.` +
-                      (viaWcbActive ? ' This can happen over the WCB mesh with a large clip — Retry, or switch to Direct USB.' : ' Retry?'));
-    return;
-  }
-  _tlBuildModelFromEvents(dl.name, dl.header, dl.events);
+  // A short download used to be discarded outright and the canvas wiped, which
+  // showed an error over an empty editor and threw away everything that DID
+  // arrive. Render it instead — READ-ONLY. The model builder never reads
+  // header.count (it groups by slot/channel and sorts each track by time), so a
+  // partial event list produces a perfectly valid model; the only reason to
+  // refuse it was the risk of saving it back, and `partial` closes that below.
+  const short_ = (expected >= 0) ? (expected - dl.events.length) : -1;
+  _tlBuildModelFromEvents(dl.name, dl.header, dl.events, short_ !== 0 ? short_ : 0);
   _tlDownload = null;
+  if (short_ !== 0) {
+    // _tlSetStatus, NOT _tlShowLoadError — the latter blanks the SVG we just drew.
+    _tlSetStatus(
+      (short_ > 0 ? `⚠ Incomplete — ${short_} of ${expected} events missing. ` : '⚠ Event count did not match the clip header. ') +
+      'READ-ONLY: saving is disabled so this cannot overwrite the full clip on the droid. ' +
+      'Motion BETWEEN the keyframes shown is not trustworthy — a dropped keyframe draws as a straight line, not a gap. ' +
+      (viaWcbActive ? 'Reopen to retry, or use Direct USB for a reliable copy.' : 'Close and reopen the clip to retry.'));
+  }
 }
 
 // ── Upload marker waiter (?REC,EDITBEGIN / EDITEV / EDITEND replies) ──────────
@@ -6381,8 +6823,28 @@ function openTimelineEditor(name) {
   _tlStopPlay(); _tlLive = false; _tlLiveLast = {}; _tlUpdateLiveBtns();   // fresh session starts disarmed
   const svg = document.getElementById('tl-svg');
   if (svg) svg.innerHTML = '';
-  _tlDownload = { name, src: null, header: null, events: [], evBuf: null };
-  sendRcCli('?REC,EDITLOAD,' + name);
+  // Use the VERIFIED ranged downloader, not the legacy whole-clip stream. The
+  // legacy path has no per-event index, so it cannot retry a dropped event —
+  // and worse, its continuation handling appends to whatever came before with no
+  // ownership check, so a dropped line can fuse two events into one that parses
+  // fine and carries a nonsense timestamp (which is how a 22-second clip ends up
+  // reporting a 2-hour length). Indices make gaps known instead of guessed.
+  // allowPartial keeps the read-only fallback: an unrecoverable clip still opens,
+  // rather than showing an error over a blank canvas.
+  _tlDownload = null;
+  clipDownloadVerified(name, (g, n) => _tlSetStatus(`Loading ${g}/${n} events…`), { allowPartial: true })
+    .then(dl => {
+      _tlBuildModelFromEvents(dl.name, dl.header, dl.events, dl.missing || 0);
+      if (dl.missing) {
+        _tlSetStatus(
+          `⚠ Incomplete — ${dl.missing} of ${dl.header.count} events would not transfer. ` +
+          'READ-ONLY: saving is disabled so this cannot overwrite the full clip on the droid. ' +
+          'Motion BETWEEN the keyframes shown is not trustworthy — a dropped keyframe draws as a ' +
+          'straight line, not a gap. ' +
+          (viaWcbActive ? 'Direct USB is far more reliable for this.' : 'Close and reopen to retry.'));
+      }
+    })
+    .catch(e => _tlShowLoadError('Could not load "' + name + '" — ' + e.message));
 }
 
 function _tlShowLoadError(msg) {
@@ -6410,12 +6872,16 @@ document.getElementById('tl-modal').addEventListener('click', e => {
 });
 
 // Flat downloaded events → per-channel tracks + action list.
-function _tlBuildModelFromEvents(name, header, events) {
+// `partial` = how many events the download was short (0 = complete). A non-zero
+// value makes the clip READ-ONLY — see _tlSave. It must never be saved back: the
+// upload writes whatever the model holds, so saving a 175-event model over a
+// 204-event clip would destroy the 29 that merely failed to arrive.
+function _tlBuildModelFromEvents(name, header, events, partial = 0) {
   const clip = {
     name, durationMs: +(header.durationMs || 0), mode: +(header.mode || 1),
     maestro: {}, hcr: {}, actions: [],
     selected: null, selectedPair: null, cursorMs: 0,
-    pxPerMs: 0, dirty: false, uploading: false,
+    pxPerMs: 0, dirty: false, uploading: false, partial,
   };
   events.forEach(ev => {
     const t = +ev.t || 0;
@@ -6451,6 +6917,16 @@ function _tlBuildModelFromEvents(name, header, events) {
   }
   clip.pxPerMs = Math.max(0.04, Math.min(0.6, 700 / Math.max(1, clip.durationMs)));
   _tlClip = clip;
+  // Make read-only VISIBLE, not just enforced — a greyed Save explains itself
+  // before the user has invested edits they cannot keep. _tlSave re-checks
+  // `partial` because the save path re-enables this button.
+  { const sb = document.getElementById('tl-save-btn');
+    if (sb) {
+      sb.disabled = !!clip.partial;
+      sb.title = clip.partial
+        ? 'Read-only — this clip downloaded incomplete. Saving would overwrite the full clip on the droid with this partial copy.'
+        : '';
+    } }
   _tlSetStatus(`${events.length} events · ${_fmtDur(clip.durationMs)}`);
   _tlRender();
 }
@@ -6483,6 +6959,17 @@ function _tlFlattenEvents() {
 
 async function _tlSave() {
   if (!_tlClip || _tlClip.uploading) return;
+  // Load-bearing: a partially-downloaded clip is a VIEW, not a document. The
+  // upload replaces the clip on the droid with exactly what this model holds, so
+  // saving one would turn "29 events failed to arrive" into "29 events destroyed".
+  // The button is also disabled on load; this is the guard that actually matters,
+  // because the save path re-enables that button.
+  if (_tlClip.partial) {
+    alert('This clip downloaded incomplete and is open read-only.\n\n' +
+          'Saving would overwrite the full clip on the droid with the partial copy shown here.\n\n' +
+          'Close and reopen it (ideally over Direct USB) to get a complete copy first.');
+    return;
+  }
   // Hold the clip reference for the whole async upload: closeTimelineEditor()
   // nulls the _tlClip global mid-flight, which used to null-deref in the loop
   // (name), the success path (dirty) and the finally (uploading). Operating on
@@ -6644,7 +7131,9 @@ function _tlTrackList() {
 // firmware directly — no conversion on save) but DISPLAYED/EDITED in µs, same
 // UI convention as the knob-passthrough Pos min/max fields, converted only at
 // this render/interaction boundary. HCR volume is a raw 0-99 either way.
-function _tlTrackRange(track) {
+// dataOnly: ignore imported servo endpoints and scale to the RECORDED travel.
+// Used when Normalize is on — see trackLoHi in _tlRender.
+function _tlTrackRange(track, dataOnly) {
   // A drag freezes the grabbed track's range so it can't rescale under the cursor.
   if (_tlFrozenRange && _tlFrozenRange.kind === track.kind && _tlFrozenRange.key === track.key)
     return [_tlFrozenRange.lo, _tlFrozenRange.hi];
@@ -6652,7 +7141,7 @@ function _tlTrackRange(track) {
   // Imported Maestro endpoints → fixed scale (with a little headroom so the
   // min/max guide-lines sit inside the row), so the whole track reads against
   // the servo's real travel rather than auto-scaling to the current data.
-  const cr = _tlChannelRange(track);
+  const cr = dataOnly ? null : _tlChannelRange(track);
   if (cr) { const pad = Math.max(20, (cr.maxUs - cr.minUs) * 0.12); return [Math.max(0, cr.minUs - pad), cr.maxUs + pad]; }
   const kfs = _tlClip.maestro[track.key] || [];
   if (!kfs.length) return [1000, 2000];
@@ -6705,7 +7194,18 @@ function _tlRender() {
   // Overlay + Normalize (default) OR the normal per-lane view → each track by its
   // OWN range (`_tlTrackRange`: imported endpoints if any, else the recorded
   // travel). Overlay + actual-µs → the shared absolute scale so equal µs align.
-  const trackLoHi = track => (overlay && !_tlNormalize) ? (track.kind === 'maestro' ? [uLo, uHi] : [0, 99]) : _tlTrackRange(track);
+  // Normalize means what the label says: EACH TRACK BY ITS OWN TRAVEL. That has
+  // to ignore imported endpoints, or a channel with a configured servo range is
+  // drawn against the servo's WHOLE travel while its neighbours auto-scale to
+  // their data — so a channel parked near one end of its range renders as a flat
+  // line pinned to the edge of its lane, looking like it belongs to the lane next
+  // door. `_tlTrackRange` prefers imported endpoints (correct for editing, where
+  // the scale should reflect real servo travel), so normalizing asks for the data
+  // range explicitly.
+  const trackLoHi = track =>
+    (overlay && !_tlNormalize) ? (track.kind === 'maestro' ? [uLo, uHi] : [0, 99])
+    : _tlNormalize             ? _tlTrackRange(track, /*dataOnly=*/true)
+    :                            _tlTrackRange(track);
 
   // Draw one track's interactive foreground (curve line, control-point dots +
   // hit targets, tangent handles). `color` tints the line/dots — each overlaid
@@ -8515,7 +9015,13 @@ function handleBoardMessage(line) {
     return;
   }
   if (msg.type === 'rc_trig') {
-    if (msg.id !== RC_WCB_DEVICE_ID) return;
+    // Over the mesh this is a BROADCAST, so the id check keeps another NaviCore's
+    // triggers out. On Direct USB it arrives down the wire from the one board we
+    // are talking to, so the id is irrelevant there — and enforcing it would drop
+    // every event from a board whose deviceId was changed off the default.
+    if (viaWcbActive && msg.id !== RC_WCB_DEVICE_ID) return;
+    // Light the exact tier that fired, in the assignment cards.
+    try { flashAssignmentTier(msg.mode, msg.btn, msg.tap); } catch (_) {}
     // Surface the trigger in the live button-highlight system.  We don't
     // have matrixVal/modeVal here (those come on the locally-detected
     // PWM_UPDATE path); pass undefined so updatePWMDisplay just runs the
@@ -8660,6 +9166,7 @@ function handleBoardMessage(line) {
 
   if (msg.type === 'PONG') {
     _pongSeen = true;
+    _pongSeenEpoch = _pongEpoch;   // stamp WHICH probe phase this reply belongs to
     document.getElementById('status-text').textContent =
       viaWcbActive ? `Connected via WCB → RC #${RC_WCB_DEVICE_ID}` : 'Connected ✓';
     // The board reports its firmware version (FW_VERSION = base_DTG)
@@ -8799,6 +9306,14 @@ function applyConfig(data) {
     const t = +data.tapWindowMs;                    // coerce: a string here would show
     if (Number.isFinite(t)) config.tapWindowMs = t; // as a false "dirty" diff on save
   }
+  if (data.holdMs !== undefined) {
+    const h = +data.holdMs;                         // same coercion as tapWindowMs
+    if (Number.isFinite(h)) config.holdMs = h;
+  }
+  if (data.switchSettleMs !== undefined) {
+    const s = +data.switchSettleMs;                  // same coercion as tapWindowMs
+    if (Number.isFinite(s)) config.switchSettleMs = s;
+  }
   if (data.chRateHz !== undefined) {
     const r = +data.chRateHz;                       // rc_ch live-monitor rate (Hz)
     if (Number.isFinite(r)) config.chRateHz = Math.max(1, Math.min(20, r));
@@ -8922,6 +9437,10 @@ function applyConfig(data) {
     if (showMeshStats) requestMeshStats();
   }
   document.getElementById('tapwin-input').value = config.tapWindowMs;
+  { const h = document.getElementById('holdms-input');
+    if (h) { h.value = config.holdMs ?? 750; updateHoldMsHint(); } }
+  { const s = document.getElementById('switchsettle-input');
+    if (s) s.value = config.switchSettleMs ?? 80; }
   { const cr = document.getElementById('chrate-input');
     if (cr) { const hz = Math.max(1, Math.min(20, config.chRateHz ?? 5));
               cr.value = hz;
@@ -10762,7 +11281,7 @@ function renderAssignmentList() {
     const excBadge = m?.exclusive ? ' <span style="color:var(--yellow);font-size:10px">⚡ excl</span>' : '';
     card.innerHTML = `
       <div style="font-weight:700;margin-bottom:4px;color:${isConfig?'var(--text)':'var(--muted)'}">${getBtnLabel(btn)}${excBadge}</div>
-      ${tierSummary(m, 1)}${tierSummary(m, 2)}${tierSummary(m, 3)}
+      ${tierSummary(m, 1, btn)}${tierSummary(m, 2, btn)}${tierSummary(m, 3, btn)}${tierSummary(m, TAP_LONG, btn)}
     `;
     list.appendChild(card);
   });
@@ -10794,19 +11313,75 @@ function renderAssignmentList() {
       card.innerHTML = `
         <div style="font-weight:700;margin-bottom:4px;color:${isConfig ? 'var(--text)' : 'var(--muted)'}">${escH(lbl)}${excBadge}
           <span style="color:var(--muted);font-weight:400;font-size:10px">· ch${config.matrixChannel || 7}@${center ? fmtVal(center) : '—'}</span></div>
-        ${tierSummary(m, 1)}${tierSummary(m, 2)}${tierSummary(m, 3)}
+        ${tierSummary(m, 1, id)}${tierSummary(m, 2, id)}${tierSummary(m, 3, id)}${tierSummary(m, TAP_LONG, id)}
       `;
       list.appendChild(card);
     });
   }
 }
 
-function tierSummary(m, tier) {
+// Live warning under the Long Press box. The threshold has to clear the tap
+// window or the deferred tap dispatch fires first and the hold is unreachable —
+// the firmware silently rewrites such a value on load, so say so before Save
+// rather than letting the board hand back a number the user didn't type.
+function updateHoldMsHint() {
+  const inp  = document.getElementById('holdms-input');
+  const hint = document.getElementById('holdms-hint');
+  if (!inp || !hint) return;
+  const hm = parseInt(inp.value, 10);
+  const tw = parseInt(document.getElementById('tapwin-input')?.value, 10) || 500;
+  if (Number.isFinite(hm) && hm < tw + 100) {
+    hint.innerHTML = `⚠ Must be at least ${tw + 100} ms — the ${tw} ms tap window fires first. ` +
+                     `Will be saved as ${tw + 250} ms.`;
+    hint.style.color = 'var(--red)';
+  } else {
+    hint.innerHTML = 'Hold a button this long to fire its Long&nbsp;press tier';
+    hint.style.color = '';
+  }
+}
+
+// One tier's line in an assignment card. `slot` tags the row so a live trigger
+// can flash the exact tier that fired (see flashAssignmentTier).
+function tierSummary(m, tier, slot) {
   if (!m) return '';
   const acts = m['t' + tier];
   if (!acts || !acts.length) return '';
   const desc = acts.map(actionSummary).join(' + ');
-  return `<div style="font-size:11px;color:var(--muted);margin-top:2px">${tier}×: ${desc}</div>`;
+  // Tier 4 is the long press, not a 4th tap — label it as a gesture, not a count.
+  const lbl = tier === TAP_LONG ? 'Hold' : `${tier}×`;
+  return `<div class="tier-row" data-slot="${slot == null ? '' : slot}" data-tier="${tier}"` +
+         ` style="font-size:11px;color:var(--muted);margin-top:2px">${lbl}: ${desc}</div>`;
+}
+
+// Flash the tier row(s) that a just-received rc_trig actually fired, so you can
+// see WHICH gesture the board decoded rather than inferring it from whether the
+// hardware moved. Mirrors rcDispatch()'s own rule: exclusive fires only the
+// matched tier, cumulative fires every tier up to it — and a long press (tier 4)
+// is always exclusive regardless, because it is a different gesture, not a 4th tap.
+const _trigFlashTimers = new Map();   // row element → pending clear timeout
+function flashAssignmentTier(mode, btn, tap) {
+  if (mode !== currentMode) return;          // card grid only shows the active mode
+  if (!(tap >= 1 && tap <= NUM_TAP_TIERS)) return;
+  const m = config.mappings[String(mode * 100 + btn)];
+  const cumulative = m && !m.exclusive && tap !== TAP_LONG;
+  const tiers = cumulative ? Array.from({ length: tap }, (_, i) => i + 1) : [tap];
+
+  const list = document.getElementById('assignment-list');
+  if (!list) return;
+  tiers.forEach(t => {
+    const row = list.querySelector(`.tier-row[data-slot="${btn}"][data-tier="${t}"]`);
+    if (!row) return;                        // tier has no actions → no row to light
+    // Re-trigger cleanly on a repeat hit: drop the class, force a reflow, re-add,
+    // so a second tap pulses again instead of extending the first flash silently.
+    clearTimeout(_trigFlashTimers.get(row));
+    row.classList.remove('trig-fired');
+    void row.offsetWidth;
+    row.classList.add('trig-fired');
+    _trigFlashTimers.set(row, setTimeout(() => {
+      row.classList.remove('trig-fired');
+      _trigFlashTimers.delete(row);
+    }, 900));
+  });
 }
 
 // Friendly one-liner for a raw Maestro command string (used in the assignment
@@ -10892,7 +11467,7 @@ function updateButtonHighlights() {
   for (let btn = 1; btn <= RC_VISIBLE_BUTTONS; btn++) {
     const key   = String(currentMode * 100 + btn);
     const m     = config.mappings[key];
-    const hasData = m && (m.t1?.length || m.t2?.length || m.t3?.length);
+    const hasData = m && TIER_KEYS.some(k => m[k]?.length);
     // Several data-btn IDs are shared between the X18 and X-Lite SVG
     // groups (face buttons 1-4, plus trim slots 9-16).  Apply the
     // highlight to ALL matching zones, not just the first — the X-Lite's
@@ -10917,8 +11492,11 @@ function openModal(btn) {
   if (ev && ev.shiftKey) {
     ev.preventDefault();
     let tap = 1;
-    if (ev.ctrlKey || ev.metaKey) tap = 2;
-    else if (ev.altKey)            tap = 3;
+    // Order matters: test the two-modifier chord BEFORE either single modifier,
+    // or Shift+Ctrl+Alt would match the Ctrl branch and fire a double tap.
+    if ((ev.ctrlKey || ev.metaKey) && ev.altKey) tap = TAP_LONG;   // Shift+Ctrl+Alt
+    else if (ev.ctrlKey || ev.metaKey)           tap = 2;
+    else if (ev.altKey)                          tap = 3;
     if (!port && !sharedActive) { alert('Connect to the board first.'); return; }
     sendJSON({ type: 'TRIGGER', mode: currentMode, btn, tap });
     console.log(`TRIGGER → mode=${currentMode} btn=${btn} tap=${tap}`);
@@ -11000,13 +11578,14 @@ function openModal(btn) {
   });
 
   // Tap-tier tabs — show ONE tier at a time so the modal stays short and Apply
-  // stays in view. All three cards are still built (state lives in the DOM; Save
-  // reads all three); the tabs just toggle which is visible, and each tab shows a
-  // count so a configured-but-hidden tier is obvious.
+  // stays in view. All NUM_TAP_TIERS cards are still built (state lives in the
+  // DOM; Save reads them all); the tabs just toggle which is visible, and each
+  // tab shows a count so a configured-but-hidden tier is obvious. The last tab
+  // is the long press, which is a hold rather than a tap count.
   const tabBar = document.createElement('div');
   tabBar.className = 'tier-tabs';
-  const tierNames = ['', 'Single tap', 'Double tap', 'Triple tap'];
-  for (let tier = 1; tier <= 3; tier++) {
+  const tierNames = ['', 'Single tap', 'Double tap', 'Triple tap', 'Long press'];
+  for (let tier = 1; tier <= NUM_TAP_TIERS; tier++) {
     const tb = document.createElement('button');
     tb.type = 'button'; tb.className = 'tier-tab'; tb.dataset.tier = tier;
     tb.onclick = () => setActionTier(tier);
@@ -11015,13 +11594,13 @@ function openModal(btn) {
   }
   container.appendChild(tabBar);
 
-  for (let tier = 1; tier <= 3; tier++) {
+  for (let tier = 1; tier <= NUM_TAP_TIERS; tier++) {
     const acts = m['t' + tier] || [];
     container.appendChild(buildTierCard(tier, acts, m['t' + tier + 'note'] || ''));
   }
   // Now the cards are in the DOM — set the tab counts + row-button state (the
   // build-time call inside buildTierCard runs while the card is still detached).
-  for (let tier = 1; tier <= 3; tier++) refreshTierState(tier);
+  for (let tier = 1; tier <= NUM_TAP_TIERS; tier++) refreshTierState(tier);
   setActionTier(1);   // start on single-tap
 
   document.getElementById('modal').classList.add('open');
@@ -11032,7 +11611,7 @@ function setActionTier(tier) {
   tier = +tier;
   document.querySelectorAll('#tiers-container .tier-tab')
           .forEach(t => t.classList.toggle('active', +t.dataset.tier === tier));
-  for (let t = 1; t <= 3; t++) {
+  for (let t = 1; t <= NUM_TAP_TIERS; t++) {
     const card = document.getElementById(`tier-card-${t}`);
     if (card) card.style.display = (t === tier) ? '' : 'none';
   }
@@ -14598,7 +15177,7 @@ function saveButton() {
   const key = String(currentMode * 100 + editingBtn);
   const exclusive = document.getElementById('modal-exclusive').checked;
   const mapping = { exclusive };
-  for (let tier = 1; tier <= 3; tier++) {
+  for (let tier = 1; tier <= NUM_TAP_TIERS; tier++) {
     const acts = collectTierActions(tier);
     if (acts.length) mapping['t' + tier] = acts;
     const noteEl = document.getElementById('tier-note-' + tier);
@@ -15362,7 +15941,7 @@ async function saveModalDispatch() {
   if (editingKnob)     saveKnobModal();
   else if (editingSw)  saveSwitchModal();
   else                 saveButton();
-  // …then push the whole config to the board, same as the top-bar Save.
+  // …then push the whole config to the board, same as the Config window's Save.
   // No-op if not connected (sendLine bails when there's no writer).
   try { await saveConfigToBoard(); } catch (_) {}
 }
@@ -15609,6 +16188,185 @@ let _shareWaitToast = null; // persistent "couldn't attach to a shared WCB" noti
 let _pendingDefaultsReset = false;   // a RESET_DEFAULTS is awaiting its confirming CONFIG reload
 let _pendingDefaultsTimer = null;    // watchdog for a missing post-reset CONFIG
 
+// ════════════════════════════════════════════════════════════════════════════
+//  Mesh push budget
+// ════════════════════════════════════════════════════════════════════════════
+let _pushBudgetTimer = null;   // poll handle; runs only while the config modal is open
+
+// A Via-WCB SET_CONFIG is app-level fragmented, and the board's reassembly pool
+// is FRAG_MAX_PARTS(192) STATIC String slots — a payload needing more is refused
+// outright by sendJSON with "Use Direct USB for a config this large". That
+// refusal is safe but it arrives at Save time, after the user has done the work.
+// This shows the same number continuously so the ceiling is visible on approach.
+//
+// It MUST mirror the real send path or it lies. Three transforms, all easy to
+// miss, each of which alone makes the number wrong by a large factor:
+//   1. The payload is a BRANCH DIFF against the on-board baseline
+//      (`_diffConfigBranches`), NOT the whole config — and `mappings` is
+//      sub-diffed PER BUTTON, so a one-button edit ships one button.
+//   2. Via WCB additionally strips the wcbNetwork transport fields.
+//   3. sendJSON wraps the result as {sys:1, type:'SET_CONFIG', data, saveId}
+//      and chunks THAT string. The count is over the wrapped envelope, not the
+//      bare diff. (The per-fragment envelope is applied after chunking, so it
+//      does NOT enter the count — only this outer wrapper does.)
+// Anything that changes saveConfigToBoard()'s payload construction has to change
+// here too, or the readout silently drifts from what Save actually sends.
+function _pushBudgetInfo() {
+  // saveConfigToBoard() commits pending DOM edits into `config` BEFORE diffing.
+  // A passive readout must not do that — those writes mutate the very object the
+  // unsaved-changes prompt diffs, so polling them would fabricate dirty state and
+  // make closeHwSetup() claim unsaved changes the user never made.
+  //
+  // But it cannot skip them either. The numeric fields (tapWindow/hold/chRate) are
+  // a few bytes and genuinely don't matter — however syncPeerEventFromDom() writes
+  // a whole action tier into peerEvent, and _snapshotLiveIntoSelectedProfile()
+  // writes wcbProfiles, a top-level branch that is NOT stripped over the bridge.
+  // Skipping those can omit an entire branch the real Save would ship.
+  // So: replay the commits against a CLONE. Accurate and side-effect free.
+  const snap = _deepClone(config);
+  if (document.getElementById('rows-peer')) {
+    if (!snap.peerEvent) snap.peerEvent = { alert: true, actions: [] };
+    if (_peerEventDirty) snap.peerEvent.actions = collectTierActions('peer');
+    const cb = document.getElementById('peer-alert');
+    if (cb) snap.peerEvent.alert = cb.checked;
+  }
+  if (_wcbSelectedProfile && Array.isArray(snap.wcbProfiles)) {
+    const p = snap.wcbProfiles.find(pr => pr.name === _wcbSelectedProfile);
+    if (p) Object.assign(p, _wcbProfileParams(snap.wcbNetwork));
+  }
+  // Diff against the SAME base _configUnsaved() uses. While a save is in flight
+  // _pendingSaveBaseline holds the just-sent snapshot; diffing the older
+  // _configBaseline would keep counting that payload as still-pending for the
+  // whole ACK window — up to 12 s, and a 37-fragment bridged save takes ~5.7 s at
+  // 150 ms pacing — showing a live budget for a save already gone, while Save is
+  // blocked and the close prompt correctly reports nothing unsaved.
+  const base = _pendingSaveBaseline || _configBaseline;
+  let payload = _diffConfigBranches(snap, base);
+  if (viaWcbActive && payload.wcbNetwork) {
+    const { deviceId, macOct2, macOct3, password, quantity, channel, ...rest } = payload.wcbNetwork;
+    payload.wcbNetwork = rest;
+    if (Object.keys(payload.wcbNetwork).length === 0) delete payload.wcbNetwork;
+  }
+  const branches = Object.keys(payload);
+  if (!branches.length) return { branches, bytes: 0, frags: 0, empty: true };
+
+  // saveId is a small integer whose width can't shift the fragment count; using
+  // the next real one keeps the string byte-identical to what Save would build.
+  const inner = JSON.stringify({ sys: 1, type: 'SET_CONFIG', data: payload, saveId: _saveSeq + 1 });
+  const bytes = new TextEncoder().encode(inner).length;
+  // sendJSON's single-packet fast path: <= FRAG_MAX_ENV_BYTES never enters the
+  // fragmenter at all, so it consumes none of the 192-slot pool.
+  if (bytes <= FRAG_MAX_ENV_BYTES) return { branches, bytes, frags: 1, empty: false, single: true };
+
+  const chunks = _utf8Chunks(inner, FRAG_CHUNK_BYTES);
+  // sendJSON has a SECOND abort the fragment count alone cannot predict: it
+  // re-checks EACH fragment's escaped envelope against FRAG_MAX_ENV_BYTES and
+  // bails mid-send if one is over. A chunk of 80 quote/backslash-heavy bytes can
+  // escape past 187 even when the total fragment count is comfortable — so a
+  // count-only readout would show green on a save that still fails. Run the same
+  // per-chunk check here so the readout predicts BOTH refusals, not just one.
+  // sid is the sender's session id (1..65535); assume its widest form so the
+  // estimate is conservative rather than optimistic.
+  const enc = new TextEncoder();
+  let worstEnv = 0;
+  for (let i = 0; i < chunks.length; i++) {
+    const n = enc.encode(JSON.stringify({ f: i + 1, of: chunks.length, sid: 65535, s: chunks[i] })).length;
+    if (n > worstEnv) worstEnv = n;
+  }
+  return { branches, bytes, frags: chunks.length, empty: false, single: false,
+           worstEnv, envOver: worstEnv > FRAG_MAX_ENV_BYTES };
+}
+
+// Render the readout. Honest about transport: the 192-fragment cap binds ONLY on
+// the Via-WCB path, so on Direct USB this reports size WITHOUT implying a limit
+// that is not in force (USB parses the whole line — see the 98304 buffer in
+// handleSerialInput). Never invent a ceiling, never hide a real one.
+function updatePushBudget() {
+  const el = document.getElementById('push-budget');
+  if (!el) return;
+  // The honest connected test — the same one the Connect button uses. A plain
+  // `port || sharedActive` lies after a shared-hub step-down: onSharedState()
+  // calls setConnected(false) but leaves sharedActive/viaWcbActive set, so the
+  // header reads Disconnected while a naive test still reports a live budget.
+  const connected = !!(port || (sharedActive && sharedHub && sharedHub.portOpen));
+  if (!connected) { el.className = 'push-budget empty'; el.textContent = ''; return; }
+
+  let info;
+  try { info = _pushBudgetInfo(); }
+  catch (e) { el.className = 'push-budget empty'; el.textContent = ''; console.warn('pushBudget:', e); return; }
+
+  // A save already sent and awaiting its ACK. Save is blocked until it resolves
+  // (saveConfigToBoard's overlapping-save guard), so a budget figure here would
+  // describe an action the user cannot currently take.
+  if (_pendingSaveBaseline) {
+    el.className = 'push-budget';
+    el.textContent = info.empty ? 'Save sent — awaiting ACK' : 'Save sent — further edits pending';
+    el.title = 'A SET_CONFIG is in flight. Save is blocked until the board ACKs it (12 s watchdog).' +
+               (info.empty ? '' : '\nEdits made since then will go in the next Save.');
+    return;
+  }
+
+  if (info.empty) {
+    el.className = 'push-budget';
+    el.textContent = 'No changes to save';
+    el.title = 'The config matches the board — Save would be a no-op.';
+    return;
+  }
+
+  const kb = _fmtBytes(info.bytes);   // the file's byte formatter — match it, don't reinvent
+  const branchList = info.branches.join(', ');
+
+  // Route on viaWcbActive ALONE, exactly as sendJSON does — not on sharedActive,
+  // and not on `port` (openPortAndStart falls back to Via WCB when no direct PONG
+  // arrives, leaving a real USB cable subject to the fragment cap).
+  if (!viaWcbActive) {
+    // Direct USB — the fragment cap does not apply. Not "unlimited" though: the
+    // firmware's serial accumulator and SET_CONFIG parse doc are both 98304 B.
+    el.className = 'push-budget';
+    el.textContent = `Save: ${kb}`;
+    el.title = `Direct USB — no fragment cap (the board's serial limit is 96 KB, far above any real config).\n` +
+               `Branches: ${branchList}\n` +
+               `Over Via WCB this would need ${info.frags} of ${FRAG_MAX_PARTS} fragments.`;
+    return;
+  }
+
+  const pct = Math.round((info.frags / FRAG_MAX_PARTS) * 100);
+  const overCount = info.frags > FRAG_MAX_PARTS;
+  // Two independent ways a bridged Save is refused, and the readout must predict
+  // both: too many fragments, OR one fragment whose escaped envelope busts the
+  // bridge's CRC-suffix budget. The second can fire at a low fragment count.
+  const cls = (overCount || info.envOver) ? 'over' : (pct >= 70 ? 'warn' : '');
+  // Bands: the cost of being wrong is asymmetric. Under-warning means the user
+  // discovers the refusal at Save; over-warning is just noise. Warn at 70%.
+  const barCol = cls === 'over' ? 'var(--red)' : cls === 'warn' ? 'var(--yellow)' : 'var(--green)';
+  const fillPct = Math.min(100, pct);
+
+  // The <=187 B fast path never enters the fragmenter, so it consumes NONE of the
+  // 192-slot pool — report it as a single packet rather than "1/192 (1%)", which
+  // would overstate pool use.
+  const label = overCount ? `Mesh push ${info.frags}/${FRAG_MAX_PARTS} — too large`
+              : info.envOver ? `Mesh push ${info.frags}/${FRAG_MAX_PARTS} — unsendable`
+              : info.single ? 'Mesh push — single packet'
+              : `Mesh push ${info.frags}/${FRAG_MAX_PARTS} (${pct}%)`;
+
+  el.className = 'push-budget' + (cls ? ' ' + cls : '');
+  el.innerHTML = `<span>${label}</span>` +
+    `<span class="push-budget-bar"><div style="width:${fillPct}%;background:${barCol}"></div></span>`;
+  el.title =
+    `Via WCB — a SET_CONFIG is fragmented and the board holds at most ${FRAG_MAX_PARTS} fragments.\n` +
+    `This Save: ${kb} → ${info.frags} fragment(s).\n` +
+    `Branches: ${branchList}\n` +
+    (overCount
+      ? 'Over budget — this Save will be refused. Save over Direct USB, which has no fragment cap.'
+      : info.envOver
+        ? `A fragment escapes to ${info.worstEnv} B, over the ${FRAG_MAX_ENV_BYTES} B bridge cap — ` +
+          'the send would abort partway even though the fragment count fits. Usually a command ' +
+          'with many quotes or backslashes. Save over Direct USB.'
+        : !_configBaseline
+          ? 'No baseline loaded, so this is a FULL config push. Load from the board first and the next Save ships only what changed.'
+          : 'Only changed branches are sent, so this shrinks as you save.');
+}
+
 async function saveConfigToBoard() {
   if (!_configLoaded) {
     const proceed = confirm(
@@ -15639,6 +16397,22 @@ async function saveConfigToBoard() {
     // Floor at the UI minimum — a sub-100 ms window silently disables double/
     // triple taps (the firmware applies the same guard on load).
     if (Number.isFinite(tw)) config.tapWindowMs = Math.max(100, tw);
+  }
+  {
+    const hm = parseInt(document.getElementById('holdms-input').value, 10);
+    // Mirror the firmware's load guard exactly (rcConfigFromJSON): a threshold at
+    // or below the tap window can never be reached, because the tap dispatch is
+    // deferred by tapWindowMs and fires first. Clamp here too so the value the
+    // board reports back matches what was sent and Save doesn't look dirty.
+    if (Number.isFinite(hm)) {
+      const floor = (config.tapWindowMs || 500) + 100;
+      config.holdMs = Math.min(5000, hm < floor ? (config.tapWindowMs || 500) + 250 : hm);
+    }
+  }
+  {
+    const ss = parseInt(document.getElementById('switchsettle-input').value, 10);
+    // 0 is legal and means "fire immediately"; the firmware clamps the same way.
+    if (Number.isFinite(ss)) config.switchSettleMs = Math.max(0, Math.min(1000, ss));
   }
   {
     const cr = parseInt(document.getElementById('chrate-input').value, 10);
@@ -15871,6 +16645,15 @@ function openHwSetup() {
   // a field a render lazily padded after the on-board diff baseline was taken.
   _hwSetupBaseline = _deepClone(config);
   document.getElementById('hwsetup-modal').classList.add('open');
+  // Push-budget readout. Polled rather than event-driven ON PURPOSE: config is
+  // mutated from dozens of editors across this file with no central "changed"
+  // event, so hooking each one would rot the moment a new editor is added. The
+  // readout is only visible inside this modal, so the poll is self-limiting —
+  // it starts here and is cleared in closeHwSetup(). Cost is one
+  // _diffConfigBranches, the same call _configUnsaved() already makes.
+  updatePushBudget();
+  clearInterval(_pushBudgetTimer);
+  _pushBudgetTimer = setInterval(updatePushBudget, 750);
 }
 
 // Called by the Transmitter tab's <select> onchange. Applies the new
@@ -15880,7 +16663,7 @@ function openHwSetup() {
 function onTxModelChange(modelId) {
   applyTxModel(modelId, /*persist=*/true);
   const help = document.getElementById('tx-model-help');
-  if (help) help.textContent = 'Click Save (top bar) to push this to the board.';
+  if (help) help.textContent = 'Click Save (Config window footer) to push this to the board.';
   // Show/hide the X20-specific options pane.
   const x20Opts = document.getElementById('cfg-x20-options');
   if (x20Opts) x20Opts.style.display = (modelId === TX_MODEL_X20) ? '' : 'none';
@@ -15935,6 +16718,8 @@ function closeHwSetup() {
     }
   }
   document.getElementById('hwsetup-modal').classList.remove('open');
+  clearInterval(_pushBudgetTimer);   // readout is invisible now — stop diffing
+  _pushBudgetTimer = null;
 }
 
 // Tabbed Config modal — single function flips the active tab + pane
@@ -17243,6 +18028,64 @@ function exportConfigJson() {
   _cfgDownloadTextFile(name, JSON.stringify(out, null, 2));
   showToast('Exported full config backup (JSON)', 'success');
 }
+
+// Config + EVERY clip, in one file. `clips` is an OPTIONAL member of the same
+// config-backup/v1 shape, so this file restores through the ordinary Import and
+// an older tool simply ignores the extra key.
+async function clipsDownloadAllToFile(btn) {
+  if (!port && !sharedActive) { alert('Connect to the board first.'); return; }
+  const label = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; }
+  const t = showToast('Enumerating clips…', 'info', 0);
+  try {
+    const res = await clipsDownloadAll((i, n, nm) => {
+      if (t) t.textContent = `Downloading clip ${i + 1}/${n} — ${nm}…`;
+    });
+    _dismissToast(t);
+    if (res === null) return;                       // user declined the size warning
+    const out = { navicore: 'config-backup/v1', savedAt: Date.now(), note: '', config,
+                  clips: res.clips };
+    _cfgDownloadTextFile('navicore-backup-' + new Date().toISOString().slice(0, 10) + '.json',
+                         JSON.stringify(out, null, 2));
+    // Name what did NOT make it. A backup that quietly omits clips is the kind
+    // you only discover is short when you need it.
+    if (res.skipped.length)
+      alert(`Saved config + ${res.clips.length} clip(s).\n\n` +
+            `These could NOT be downloaded completely and were LEFT OUT:\n` +
+            res.skipped.map(s => `  • ${s.name} — ${s.why}`).join('\n') +
+            `\n\nTry again over Direct USB for those.`);
+    else
+      showToast(`Saved config + ${res.clips.length} clip(s)`, 'success');
+  } catch (e) {
+    _dismissToast(t);
+    alert('Backup failed, nothing was saved.\n\n' + e.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = label; }
+  }
+}
+
+// Restore clips from a clip/v1 file, or from the clips carried by a
+// config-backup/v1 bundle. Config is NOT touched here — use Import for that.
+function clipsImportFromFile() {
+  const inp = document.createElement('input');
+  inp.type = 'file'; inp.accept = '.json,application/json';
+  inp.onchange = async () => {
+    const f = inp.files && inp.files[0];
+    if (!f) return;
+    try {
+      const obj = JSON.parse(await f.text());
+      const clips = obj.clip ? [obj.clip] : (Array.isArray(obj.clips) ? obj.clips : null);
+      if (!clips || !clips.length) { alert('That file contains no clips.'); return; }
+      const t = showToast('Restoring…', 'info', 0);
+      try {
+        const summary = await clipsRestore(clips);
+        _dismissToast(t);
+        alert(summary);
+      } catch (e) { _dismissToast(t); alert('Restore failed.\n\n' + e.message); }
+    } catch (e) { alert('Could not read that file — ' + e.message); }
+  };
+  inp.click();
+}
 function exportConfigCsv() {
   // NOTE: the new-peer event (config.peerEvent = { alert, actions[] }) is
   // intentionally NOT in the CSV — its actions[] is a variable-length action
@@ -17266,6 +18109,8 @@ function exportConfigCsv() {
 
   rows.push(csvRow(pad(['config','matrixChannel','','' + (config.matrixChannel || '')])));
   rows.push(csvRow(pad(['config','tapWindowMs','','' + (config.tapWindowMs || '')])));
+  rows.push(csvRow(pad(['config','holdMs','','' + (config.holdMs || 750)])));
+  rows.push(csvRow(pad(['config','switchSettleMs','','' + (config.switchSettleMs ?? 80)])));
   rows.push(csvRow(pad(['config','chRateHz','','' + (config.chRateHz || 5)])));
   rows.push(csvRow(pad(['config','matrixDebounceFrames','','' + (config.matrixDebounceFrames || 1)])));
   if (config.funcBindings && config.funcBindings.mode !== undefined) {
@@ -17432,7 +18277,7 @@ function exportConfigCsv() {
       // X20 SK/SL clicks).
       if (btn === RC_PHYSICAL_SLOTS) continue;
       if (btn > RC_PHYSICAL_SLOTS && !slotInUseAnyMode(btn)) continue;
-      for (let tier = 1; tier <= 3; tier++) {
+      for (let tier = 1; tier <= NUM_TAP_TIERS; tier++) {
         const actions = mapping['t' + tier] || [];
         if (!actions.length) {
           rows.push(csvRow(pad(['button', getBtnLabel(btn), btn, config.matrixChannel || '', '', mode, tier, '', '', '', '', '', '', '', '', '', '', '', pwmValue, isExclusive, ''])));
@@ -17520,7 +18365,21 @@ function handleConfigImportFile(event) {
         if (typeof _syncMaestroChFromConfig === 'function') _syncMaestroChFromConfig();
         if (typeof renderMaestroLocations === 'function')   renderMaestroLocations();
         if (typeof renderWledSlots === 'function')          renderWledSlots();
-        alert('Full config imported (JSON). Review it, then Save to write it to the NaviCore.');
+        // A bundle may carry clips. Offer them SEPARATELY and after the config,
+        // because the two commit differently: the config lands in the tool and
+        // waits for Save, while each clip is written to flash immediately and
+        // irreversibly. Rolling them into one silent action would hide that.
+        const bundled = Array.isArray(parsed.clips) ? parsed.clips : [];
+        if (bundled.length && (port || sharedActive) &&
+            confirm(`Config imported.\n\nThis file also contains ${bundled.length} clip(s).\n\n` +
+                    `Restore them to the droid now? Existing clips are skipped by default — ` +
+                    `you will be asked about each collision.\n\n` +
+                    `(Clips write to flash immediately. The config still needs Save.)`)) {
+          clipsRestore(bundled).then(s => alert(s)).catch(e => alert('Clip restore failed.\n\n' + e.message));
+        } else {
+          alert('Full config imported (JSON). Review it, then Save to write it to the NaviCore.' +
+                (bundled.length ? `\n\nThe file also holds ${bundled.length} clip(s) — open Clips → ⤒ Restore to write those.` : ''));
+        }
         input.value = '';
         return;
       }
@@ -17595,7 +18454,7 @@ function handleConfigImportFile(event) {
         if (imported.mappings[key]) return imported.mappings[key];
         const prev = (config.mappings || {})[key] || {};
         const m = {};
-        for (let t = 1; t <= 3; t++) if (prev['t' + t + 'note']) m['t' + t + 'note'] = prev['t' + t + 'note'];
+        for (let t = 1; t <= NUM_TAP_TIERS; t++) if (prev['t' + t + 'note']) m['t' + t + 'note'] = prev['t' + t + 'note'];
         imported.mappings[key] = m;
         return m;
       };
@@ -17689,6 +18548,13 @@ function handleConfigImportFile(event) {
             imported.matrixChannel = Number(value || channel || imported.matrixChannel);
           } else if (control === 'tapwindowms') {
             imported.tapWindowMs = Number(value || channel || imported.tapWindowMs);
+          } else if (control === 'holdms') {
+            imported.holdMs = Number(value || channel || imported.holdMs);
+          } else if (control === 'switchsettlems') {
+            // Not `value || channel` — 0 is a legitimate setting here (fire immediately)
+            // and would otherwise fall through to the default.
+            const sv = Number(value !== '' ? value : channel);
+            if (Number.isFinite(sv)) imported.switchSettleMs = sv;
           } else if (control === 'chratehz') {
             imported.chRateHz = Math.max(1, Math.min(20, parseInt(value || channel, 10) || 5));
           } else if (control === 'matrixdebounceframes') {
@@ -18012,7 +18878,7 @@ function handleConfigImportFile(event) {
       };
       Object.keys(imported.mappings).forEach(key => {
         const prev = (config.mappings || {})[key];
-        if (prev) for (let t = 1; t <= 3; t++) _restoreSkip(imported.mappings[key]['t' + t], prev['t' + t]);
+        if (prev) for (let t = 1; t <= NUM_TAP_TIERS; t++) _restoreSkip(imported.mappings[key]['t' + t], prev['t' + t]);
       });
       Object.keys(newSwitches).forEach(name => {
         const prev = (config.switches || {})[name];
@@ -18207,7 +19073,7 @@ function _cheatSheetTxSvg() {
 
 function _buildCheatSheetHtml() {
   const dash = '<span style="color:#bbb">—</span>';
-  const tapNames = ['', 'Single tap', 'Double tap', 'Triple tap'];   // local (the UI's tierNames is function-scoped)
+  const tapNames = ['', 'Single tap', 'Double tap', 'Triple tap', 'Long press'];   // local (the UI's tierNames is function-scoped)
   const tierHtml = arr => (Array.isArray(arr) && arr.length)
     ? arr.map(actionSummary).join(' <span style="color:#c0392b;font-weight:700">+</span> ') : '';
   // A tier cell carries BOTH views: a "commands" span (action summaries) and a
@@ -18228,10 +19094,13 @@ function _buildCheatSheetHtml() {
     for (let btn = 1; btn <= RC_TOTAL_SLOTS; btn++) {
       const m = config.mappings[String(mode * 100 + btn)];
       if (!m || !mappingHasActions(m)) continue;
-      rows += `<tr><td class="trig">${escH(getBtnLabel(btn))}</td><td data-label="Single tap">${cell(m.t1, m.t1note)}</td><td data-label="Double tap">${cell(m.t2, m.t2note)}</td><td data-label="Triple tap">${cell(m.t3, m.t3note)}</td></tr>`;
+      const cells = TIER_KEYS.map((k, i) =>
+        `<td data-label="${tapNames[i + 1]}">${cell(m[k], m[k + 'note'])}</td>`).join('');
+      rows += `<tr><td class="trig">${escH(getBtnLabel(btn))}</td>${cells}</tr>`;
     }
     if (!rows) continue;
-    buttonsHtml += `<div class="mblock"><h3>${escH(modeLabels[mode])}</h3><table><thead><tr><th>Button</th><th>Single tap</th><th>Double tap</th><th>Triple tap</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+    const heads = TIER_KEYS.map((_, i) => `<th>${tapNames[i + 1]}</th>`).join('');
+    buttonsHtml += `<div class="mblock"><h3>${escH(modeLabels[mode])}</h3><table><thead><tr><th>Button</th>${heads}</tr></thead><tbody>${rows}</tbody></table></div>`;
   }
   const buttonsSection = buttonsHtml ? `<section><h2>Buttons</h2>${buttonsHtml}</section>` : '';
 
@@ -18269,7 +19138,7 @@ function _buildCheatSheetHtml() {
   const addClip = (a, label) => { if (a && (a.type === 'play' || a.type === 'record') && a.cmd) (clipTriggers[a.cmd] = clipTriggers[a.cmd] || []).push(label); };
   for (let mode = 1; mode <= 3; mode++) for (let btn = 1; btn <= RC_TOTAL_SLOTS; btn++) {
     const m = config.mappings[String(mode * 100 + btn)]; if (!m) continue;
-    ['t1', 't2', 't3'].forEach((tk, ti) => (m[tk] || []).forEach(a => addClip(a, `${modeLabels[mode]} · ${getBtnLabel(btn)} · ${tapNames[ti + 1]}`)));
+    TIER_KEYS.forEach((tk, ti) => (m[tk] || []).forEach(a => addClip(a, `${modeLabels[mode]} · ${getBtnLabel(btn)} · ${tapNames[ti + 1]}`)));
   }
   for (const name of Object.keys(config.switches || {})) {
     const s = config.switches[name]; if (!s) continue;
@@ -18294,7 +19163,7 @@ function _buildCheatSheetHtml() {
       if (!m || !mappingHasActions(m)) continue;
       any = true;
       let r = '';
-      for (let t = 1; t <= 3; t++) {
+      for (let t = 1; t <= NUM_TAP_TIERS; t++) {
         if (!(m['t' + t] && m['t' + t].length) && !m['t' + t + 'note']) continue;
         r += `<tr><td class="cs-tl">${tapNames[t]}</td><td>${cell(m['t' + t], m['t' + t + 'note'])}</td></tr>`;
       }
@@ -18506,10 +19375,39 @@ async function _cfgKey(user, pw) {
     { name: 'PBKDF2', salt: enc.encode(CFG_KEY_SALT), iterations: CFG_PBKDF2_ITERS, hash: 'SHA-256' },
     base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
 }
+// ── gzip, BEFORE encryption ──────────────────────────────────────────────────
+// Order matters and is not a preference: ciphertext is indistinguishable from
+// random, so compressing AFTER encrypting saves nothing. Clip-bearing backups
+// are JSON full of repeated keys and small integers and typically shrink several
+// fold, which is what keeps them inside the Worker's per-slot cap.
+// A gzip payload is tagged so a reader can tell it from a plain one — old
+// backups stay readable, and a browser without CompressionStream just stores
+// uncompressed rather than failing.
+const CFG_GZIP_MAGIC = 0x1f;   // gzip's own first byte, used as the sniff
+async function _cfgMaybeGzip(bytes) {
+  if (typeof CompressionStream === 'undefined') return { bytes, gz: false };
+  try {
+    const cs = new CompressionStream('gzip');
+    const w  = cs.writable.getWriter(); w.write(bytes); w.close();
+    const buf = await new Response(cs.readable).arrayBuffer();
+    return { bytes: new Uint8Array(buf), gz: true };
+  } catch (_) { return { bytes, gz: false }; }
+}
+async function _cfgMaybeGunzip(bytes) {
+  // Sniff the gzip header rather than trusting a flag we might not have written.
+  if (!(bytes.length > 2 && bytes[0] === CFG_GZIP_MAGIC && bytes[1] === 0x8b)) return bytes;
+  if (typeof DecompressionStream === 'undefined')
+    throw new Error('this backup is compressed and this browser cannot decompress it');
+  const ds = new DecompressionStream('gzip');
+  const w  = ds.writable.getWriter(); w.write(bytes); w.close();
+  return new Uint8Array(await new Response(ds.readable).arrayBuffer());
+}
+
 async function _cfgEncrypt(user, pw, plaintext) {
   const key = await _cfgKey(user, pw);
   const iv  = crypto.getRandomValues(new Uint8Array(12));
-  const ct  = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(plaintext)));
+  const { bytes: body } = await _cfgMaybeGzip(new TextEncoder().encode(plaintext));
+  const ct  = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, body));
   const out = new Uint8Array(iv.length + ct.length);
   out.set(iv, 0); out.set(ct, iv.length);
   // Chunk the byte→string conversion: fromCharCode.apply over a whole large array
@@ -18524,7 +19422,8 @@ async function _cfgDecrypt(user, pw, b64) {
   const raw = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
   const key = await _cfgKey(user, pw);
   const pt  = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: raw.slice(0, 12) }, key, raw.slice(12));
-  return new TextDecoder().decode(pt);
+  // Transparent: pre-gzip backups decode exactly as before (the sniff misses).
+  return new TextDecoder().decode(await _cfgMaybeGunzip(new Uint8Array(pt)));
 }
 // Worker I/O on the /cfg/<key> route.
 async function _cfgPut(key, body) {
@@ -18575,19 +19474,46 @@ function _cfgSecureContextOk() {
   return false;
 }
 // Back up the CURRENT live config under (user, pw), with an optional human note.
-async function cfgBackup(user, pw, note) {
+// The Worker rejects a slot body over CFG_MAX_BYTES, and the check there is on
+// the base64 STRING, which is 4/3 of the ciphertext. Refuse client-side with a
+// useful message rather than eating a bare 413 — and refuse BEFORE the PUT,
+// because a slot write that lands while the manifest write fails leaves the ring
+// describing the wrong contents (see below).
+const CFG_SLOT_MAX_B64 = 4 * 1024 * 1024;   // keep in step with the Worker's CFG_MAX_BYTES
+
+async function cfgBackup(user, pw, note, clips) {
   if (!_cfgSecureContextOk()) return;
   if (!user || !pw) throw new Error('enter a username and password — together they encrypt + address the backup');
   const base     = await _cfgSlotBase(user, pw);
   const manifest = await _cfgLoadManifest(user, pw);
   const idx      = manifest.next % CFG_BACKUP_MAX;
-  const blob     = await _cfgEncrypt(user, pw, JSON.stringify({ v: 1, savedAt: Date.now(), config }));
+  const payload  = { v: 1, savedAt: Date.now(), config };
+  if (clips && clips.length) payload.clips = clips;
+  const blob     = await _cfgEncrypt(user, pw, JSON.stringify(payload));
+  if (blob.length > CFG_SLOT_MAX_B64)
+    throw new Error(`this backup is ${_fmtBytes(blob.length)} after compression — over the ` +
+                    `${_fmtBytes(CFG_SLOT_MAX_B64)} cloud slot limit. Back up without clips, or use the local file export.`);
   await _cfgPut(base + 's' + idx, blob);
   manifest.list = manifest.list.filter(e => e.i !== idx);   // slot reuse overwrites the oldest
-  manifest.list.push({ i: idx, ts: Date.now(), size: blob.length, note: (note || '').slice(0, 80) });
+  manifest.list.push({ i: idx, ts: Date.now(), size: blob.length, note: (note || '').slice(0, 80),
+                      clips: (clips && clips.length) || 0 });
   if (manifest.list.length > CFG_BACKUP_MAX) manifest.list = manifest.list.slice(-CFG_BACKUP_MAX);
   manifest.next = (idx + 1) % CFG_BACKUP_MAX;
-  await _cfgPut(base + 'm', await _cfgEncrypt(user, pw, JSON.stringify(manifest)));   // manifest encrypted too
+  // The slot is already durable at this point. If the manifest PUT fails, the
+  // ring describes the PREVIOUS backup while the slot holds the new one — a
+  // restore would then quietly return different content than the list advertises,
+  // and `next` stays un-advanced so the following backup overwrites this slot.
+  // The window was microscopic with a ~20 KB config; with clip-sized payloads and
+  // a shared hourly rate limit it is not. Retry before giving up, and if it still
+  // fails say plainly which half landed.
+  const mBlob = await _cfgEncrypt(user, pw, JSON.stringify(manifest));
+  let mErr = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try { await _cfgPut(base + 'm', mBlob); mErr = null; break; }
+    catch (e) { mErr = e; await new Promise(r => setTimeout(r, 400 * (attempt + 1))); }
+  }
+  if (mErr) throw new Error('the backup data uploaded, but its index did not (' + mErr.message +
+                            '). Back up again — this slot may be listed with the previous backup\'s details.');
   return manifest;
 }
 // Rename a backup's note in place — rewrites ONLY the (encrypted) manifest, no config
@@ -18618,6 +19544,17 @@ async function cfgRestore(user, pw, i) {
   if (typeof _syncMaestroChFromConfig === 'function') _syncMaestroChFromConfig();
   if (typeof renderMaestroLocations === 'function')   renderMaestroLocations();
   if (typeof renderWledSlots === 'function')          renderWledSlots();
+
+  // Clips are offered SEPARATELY and after the config, because the two commit
+  // very differently: the config lands in the tool and waits for Save, while each
+  // clip is written to the droid's flash immediately and cannot be undone.
+  // Restoring both silently under one click would hide that asymmetry.
+  if (Array.isArray(obj.clips) && obj.clips.length && (port || sharedActive) &&
+      confirm(`Config restored to the tool.\n\nThis backup also holds ${obj.clips.length} clip(s).\n\n` +
+              `Write them to the droid now? Existing clips are skipped by default — you will be ` +
+              `asked about each collision.\n\n(Clips write to flash immediately. The config still needs Save.)`)) {
+    clipsRestore(obj.clips).then(s => alert(s)).catch(e => alert('Clip restore failed.\n\n' + e.message));
+  }
   return obj;
 }
 // Save `text` to the user's disk as a downloaded file (mirrors the config-tool
@@ -18731,6 +19668,9 @@ function cfgOpenCloudModal() {
     + '<input id="cfg-cloud-remember" type="checkbox"' + (saved.p ? ' checked' : '') + '> Remember username + password on this device</label>'
     + '<div style="display:flex;gap:8px;margin-bottom:14px">'
     + '<input id="cfg-cloud-note" type="text" maxlength="80" placeholder="note for this backup (optional) — e.g. Leia dome v3" style="flex:1;min-width:0;' + inputCss + '">'
+    + '<label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--muted);white-space:nowrap" '
+    + 'title="Download every clip and include it in this backup. Clips are in NO other backup — flash is otherwise the only copy. Slow over the WCB mesh.">'
+    + '<input type="checkbox" id="cfg-cloud-clips" checked> include clips</label>'
     + '<button id="cfg-cloud-backup" class="btn btn-blue" style="padding:7px 14px;white-space:nowrap">⤴ Back up now</button></div>'
     + '<div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap">'
     + '<button id="cfg-cloud-upload" class="btn btn-ghost" style="padding:6px 12px;font-size:12px" title="Encrypt a config .json file from disk and store it as a cloud backup">⤒ Upload a config file → cloud</button>'
@@ -18818,11 +19758,27 @@ function cfgOpenCloudModal() {
     const { user, pw } = creds();
     if (!user || !pw) { setStatus('Enter a username and password first.', true); return; }
     _persistCreds();
-    setStatus('Encrypting + uploading…');
     try {
-      await cfgBackup(user, pw, $('cfg-cloud-note').value);
+      // Clips first: they have to come off the droid before anything can be
+      // encrypted, and that is the slow part. Only VERIFIED clips are included —
+      // clipsDownloadAll skips any that will not transfer completely and names
+      // them, because a backup that quietly holds a truncated clip is worse than
+      // one that says it is missing.
+      let clips = null;
+      const wantClips = $('cfg-cloud-clips') && $('cfg-cloud-clips').checked;
+      if (wantClips) {
+        if (!port && !sharedActive) { setStatus('Connect to the board to include clips (or untick it).', true); return; }
+        const res = await clipsDownloadAll((i, n, nm) => setStatus(`Downloading clip ${i + 1}/${n} — ${nm}…`));
+        if (res === null) { setStatus(''); return; }      // declined the size warning
+        clips = res.clips;
+        if (res.skipped.length)
+          alert(`${res.skipped.length} clip(s) could NOT be downloaded completely and are NOT in this backup:\n` +
+                res.skipped.map(s => `  • ${s.name} — ${s.why}`).join('\n'));
+      }
+      setStatus('Encrypting + uploading…');
+      await cfgBackup(user, pw, $('cfg-cloud-note').value, clips);
       $('cfg-cloud-note').value = '';
-      setStatus('✓ Backed up.');
+      setStatus('✓ Backed up.' + (clips ? ` (${clips.length} clip(s) included)` : ''));
       renderList();
     } catch (e) { setStatus(e.message || 'backup failed', true); }
   });

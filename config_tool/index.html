@@ -2319,7 +2319,7 @@
         <img src="../Images/r2logo.png" alt="R2 logo"
              style="width:72px;height:72px;object-fit:contain;opacity:0.9">
         <div style="font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:0.3px">
-          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">25.15:37.Q.AUG.2026</span>
+          NaviCore Config Tool &nbsp;·&nbsp; <span id="footer-dtg">28.15:44.Q.AUG.2026</span>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap">
@@ -2617,6 +2617,9 @@
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
         <button type="button" class="btn btn-ghost" style="padding:4px 10px;font-size:12px"
                 onclick="requestMeshStats()">↻ Refresh</button>
+        <button type="button" class="btn btn-ghost" style="padding:4px 10px;font-size:12px"
+                onclick="resetMeshStats()"
+                title="Zero every ESP-NOW counter on the NaviCore, without rebooting. These are session health, not lifetime history — one bad patch otherwise skews the ratios for as long as the board stays up.">⌫ Clear</button>
         <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:var(--muted)">
           <input type="checkbox" id="stats-autopoll" onchange="setMeshStatsAutoPoll(this.checked)">
           <span>auto every 5&nbsp;s</span>
@@ -2853,8 +2856,11 @@
             </div>
             <div class="wcb-send-row">
               <label>WiFi channel:</label>
-              <input type="number" id="wcb-channel" min="1" max="13" style="width:60px"
-                     oninput="config.wcbNetwork.channel = Math.max(1, Math.min(13, +this.value || 1)); updateWcbDirtyBadge()">
+              <!-- 1-11, not 1-13: WCB_Client::setMeshChannel() rejects >11 and returns without
+                   setting, so a saved 12/13 silently leaves the radio on its default channel
+                   while every readout claims 12/13. Paired with the clamp in rc_config.h. -->
+              <input type="number" id="wcb-channel" min="1" max="11" style="width:60px"
+                     oninput="config.wcbNetwork.channel = Math.max(1, Math.min(11, +this.value || 1)); updateWcbDirtyBadge()">
               <small style="color:var(--muted);font-size:10px">1-13 — must match every WCB (?WCBCH)</small>
             </div>
             <div class="btn-row" style="margin-top:8px">
@@ -3678,6 +3684,9 @@ let config = {
   txModel:          0,        // TX_MODEL_X18 default
   threeAxisGimbals: false,    // X20 hardware option (off by default)
   sbusOutEnabled:   false,    // SBUS-OUT passthrough (off by default — saves CPU when unused)
+  wifiEnabled:      false,    // SoftAP + comms endpoint (off by default; hidden toggle — see cfgOpenCloudModal)
+  wifiSsid:         '',       // SoftAP SSID ('' = firmware derives NaviCore-<deviceId>)
+  wifiPassword:     '',       // SoftAP WPA2 passphrase ('' = firmware refuses to raise the AP — never an open network)
   maeGateMs:        250,      // remote/via-WCB skip-if-running fail-open window (ms)
   boardType:        0,        // hardware pin profile: 0 = NaviCore v2 PCB (default), 1 = WCB HW 3.2
   tapWindowMs:   500,
@@ -3981,6 +3990,24 @@ function requestMeshStats() {
   if (_bridgeUploadInFlight || _bulkActive) return;
   sendJSON({ type: 'GET_MESH_STATS' }, /*silent=*/true).catch(() => {});
 }
+// Zero the board's ESP-NOW counters without a reboot. They are session health,
+// not lifetime history — one bad patch otherwise skews every ratio for as long as
+// the board stays up, which is exactly when you want a clean baseline to judge a
+// change against.
+async function resetMeshStats() {
+  if (!port && !sharedActive) { alert('Connect to the board first.'); return; }
+  if (!confirm('Zero every ESP-NOW counter on the NaviCore?\n\n' +
+               'Sent / ACKed / retries / failed / received, aggregate and per-peer. ' +
+               'This cannot be undone — but they are RAM-only session counters, so nothing ' +
+               'persistent is lost.')) return;
+  try {
+    await sendJSON({ type: 'RESET_MESH_STATS' }, /*silent=*/true);
+    // The board defers the reset to its loop(), so re-read after a beat rather
+    // than immediately — an instant refresh would race it and show stale numbers.
+    setTimeout(requestMeshStats, 350);
+    showToast('Mesh stats cleared', 'success');
+  } catch (e) { showToast('Could not clear stats — ' + (e.message || e), 'error'); }
+}
 function setMeshStatsAutoPoll(on) {
   if (_meshStatsTimer) { clearInterval(_meshStatsTimer); _meshStatsTimer = null; }
   // 5 s while the modal is open and you're actively watching. The background
@@ -4044,10 +4071,21 @@ function renderMeshStats() {
   // two failures belonging to nobody. Show the remainder as its own row instead
   // of leaving the reader to notice the columns don't add up.
   const sum = (idx) => (msg.peers || []).reduce((t, p) => t + (+p[idx] || 0), 0);
-  const rem = { sent: (+a.sent || 0) - sum(1), ackd: (+a.ackd || 0) - sum(2),
-                rty:  (+a.rty  || 0) - sum(3), fail: (+a.fail || 0) - sum(4),
-                ung:  (+a.ung  || 0) - sum(5), recv: (+a.recv || 0) - sum(6) };
-  if (Object.values(rem).some(v => v !== 0)) {
+  // A component can come out NEGATIVE, and it does not mean anything went wrong.
+  // The aggregate is read from the library's own counters and the rows from the peer
+  // table a moment later, so an ACK landing between the two reads leaves the aggregate
+  // one BEHIND the rows it is supposed to contain. Observed in the field: Sent 0 with
+  // Ack -1, i.e. peers summing to one more ack than the total they belong to.
+  //
+  // A count of -1 is not a quantity, it is two snapshots disagreeing by one, so clamp
+  // it away rather than rendering it. Gate on `> 0` (not `!== 0`) so a purely negative
+  // skew hides the row entirely instead of printing a line of zeroes — the row exists
+  // to explain a genuine remainder, and there isn't one here.
+  const clamp0 = v => (v > 0 ? v : 0);
+  const rem = { sent: clamp0((+a.sent || 0) - sum(1)), ackd: clamp0((+a.ackd || 0) - sum(2)),
+                rty:  clamp0((+a.rty  || 0) - sum(3)), fail: clamp0((+a.fail || 0) - sum(4)),
+                ung:  clamp0((+a.ung  || 0) - sum(5)), recv: clamp0((+a.recv || 0) - sum(6)) };
+  if (Object.values(rem).some(v => v > 0)) {
     html += `<tr style="color:var(--muted)"><td style="padding:2px 6px" `
           + `title="Counters the library holds for boards the status roster no longer lists — `
           + `usually a peer that has since dropped off the mesh. Shown so the columns add up.">`
@@ -4479,6 +4517,13 @@ async function openPortAndStart(p, settleMs = 4000, allowViaWcb = true, forceVia
   // session if they're actually bridging through a tethered WCB.
   viaWcbActive = false;
   { const tg = document.getElementById('via-wcb-toggle'); if (tg) tg.checked = false; }
+  // Re-sync the firmware buttons to the NEW transport. This assignment bypasses
+  // onViaWcbToggle(), which is the only other place that calls this — and on a
+  // SUCCESSFUL direct-USB auto-detect the toggle is never called at all, so
+  // without this the four fw buttons keep the PREVIOUS session's Via-WCB state:
+  // reconnecting over USB after a WCB session left "Update over WCB" as the only
+  // enabled option. Every site that assigns viaWcbActive must call this.
+  _updateFirmwareBtnState();
   updateTerminalSplit();   // fresh connect starts single-pane until auto-detect bridges
   await p.open({ baudRate: 115200 });
   // DEASSERT DTR/RTS IMMEDIATELY. On a NaviCore v2 the ESP32-S3 drives USB
@@ -4778,6 +4823,13 @@ async function disconnect() {
     // Network edits from Save (see saveConfigToBoard).
     viaWcbActive = false;
     { const tg = document.getElementById('via-wcb-toggle'); if (tg) tg.checked = false; }
+    // Re-sync the firmware buttons to the NEW transport. This assignment bypasses
+    // onViaWcbToggle(), which is the only other place that calls this — and on a
+    // SUCCESSFUL direct-USB auto-detect the toggle is never called at all, so
+    // without this the four fw buttons keep the PREVIOUS session's Via-WCB state:
+    // reconnecting over USB after a WCB session left "Update over WCB" as the only
+    // enabled option. Every site that assigns viaWcbActive must call this.
+    _updateFirmwareBtnState();
     updateTerminalSplit();   // collapse back to single-pane on disconnect
     // Stop the SBUS-staleness watchdog.  If we don't, the timer keeps
     // running across reconnects with stale _rcLastChMs values, and the
@@ -5214,11 +5266,16 @@ function renderWcbStatus(online) {
     // Prefer the reply's relayName; fall back to the cached WCB_META alias so the
     // relay shows its name over the bridge too (relayName can be shed by the fit-loop).
     const rn = String(wcbRelayName || (wcbAliases && wcbAliases[wcbRelay - 1]) || '').trim();
+    // Same stats line the roster chips get. The relay is the busiest link on the
+    // mesh — everything to and from the RC crosses it — so omitting it hid exactly
+    // the numbers most worth seeing. _meshStatsChipLine takes any peer id and the
+    // MESH_STATS reply already carries the relay row (the detail modal shows it),
+    // so this was only ever a missing call, not missing data.
     html += `<div class="wcb-chip">
       <span class="wcb-chip-dot online"></span>
       <span class="wcb-chip-name">WCB ${wcbRelay}${rn ? ' · ' + escH(rn) : ''} <small title="Relay — this WCB is bridging the config tool to the RC over ESP-NOW; it carries the mesh, not a droid board" style="color:var(--accent);font-weight:400">· relay 📡</small></span>
       <span class="wcb-chip-state online">Online</span>
-    </div>`;
+    </div>`+ _meshStatsChipLine(wcbRelay);
     shown++;
   }
   if (!shown) html = '<div class="noconn">No WCBs configured (set quantity in Config → WCB Network)</div>';
@@ -5417,6 +5474,28 @@ let _wcbKeepaliveTimer = null;
 // rcTelemetry::FRAG_CHUNK_BYTES so reassembly logic stays balanced.
 const FRAG_CHUNK_BYTES = 80;
 const FRAG_MAX_PARTS   = 192;   // SEND cap (SET_CONFIG upload): MUST match the RC's RECEIVE pool (rcTelemetry::FRAG_MAX_PARTS); 192 × 80 = 15 KB
+// ── Fragment pacing (Via-WCB only; Direct USB never fragments) ───────────────
+// The send loop waits max(wireMs × FRAG_PACE_LINK_MULT, FRAG_PACE_FLOOR_MS) between
+// fragments — see the long note at the pacing site in sendJSON() for why there are
+// two floors and which one bit us historically.
+//
+// FRAG_PACE_FLOOR_MS is THE tuning knob, and it is deliberately conservative. The
+// only two data points that exist are 50 ms = documented hard failure ("[SEND CB]
+// MAC-layer FAILED", then 100% failure) and 150 ms = known good; nothing in between
+// has ever been tried on hardware. 100 ms keeps 2x margin over the known-bad value
+// while cutting a 150-fragment SET_CONFIG from ~22 s to ~15 s.
+//
+// To tune: lower this, run a full-size save over the bridge, and watch the RC's
+// serial log. Clean = keep going. "MAC-layer FAILED" or a save that never ACKs =
+// you have found the edge; back off one step. A failure here is visible and
+// non-destructive — reassembly times out cleanly at the RC's 5 s FRAG_TIMEOUT_MS —
+// so this is a safe thing to probe.
+//
+// Below ~26 ms the LINK floor takes over and this knob stops having any effect;
+// that is the point of deriving it per-line rather than using one flat number.
+const FRAG_PACE_FLOOR_MS  = 100;
+const FRAG_PACE_LINK_MULT = 2;    // × the line's raw 115200 wire time — headroom for
+                                  // the bridge to drain its RX ring and hand off to ESP-NOW
 // RECEIVE cap: the RC can SEND a bigger fragmented download (CONFIG / CMDLIB / WCB_META)
 // because its send side is a cheap offset table, not the big receive pool
 // (rcTelemetry::FRAG_SEND_MAX_PARTS). The browser has ample RAM, so accept up to this.
@@ -5442,6 +5521,75 @@ function _utf8Chunks(str, maxBytes) {
     cur += ch; curBytes += chBytes;
   }
   if (cur) chunks.push(cur);
+  return chunks;
+}
+
+// Split for the bridge by MEASURED envelope size rather than a fixed byte count.
+//
+// FRAG_CHUNK_BYTES (80) is a WORST-CASE figure: 80 bytes that were all quotes
+// would escape to ~160 and, wrapped, still clear the 187 B cap. Real config JSON
+// is ~22% quote characters, so a fixed-80 fragment carries an envelope of ~138 B
+// against a 187 B budget — about 60% full, on every fragment. That matters twice
+// over the bridge: each fragment costs a fixed pacing delay regardless of payload
+// (so under-filling is wasted WALL-CLOCK), and the RC's receive pool is capped at
+// FRAG_MAX_PARTS — a fully-populated config lands near it, and the cap CANNOT
+// simply be raised (the RC crash-looped at 384; see rcTelemetry.h).
+//
+// So grow each chunk while the envelope it will produce still fits. Cost per
+// codepoint mirrors JSON's escaper — 2 bytes for a quote or backslash, 2 for the
+// five short control escapes, 6 for any other control char, otherwise its UTF-8
+// length — and `for..of` keeps surrogate pairs whole, so concatenating the slices
+// still reproduces the input exactly, which the RC's join()-based reassembly
+// requires. Every finished chunk is then verified against the REAL serialized
+// envelope and shrunk if it somehow exceeded, so the estimate can never ship an
+// oversized fragment.
+const FRAG_ENV_TARGET_BYTES = 180;   // aim here; FRAG_MAX_ENV_BYTES (187) is the hard cap
+// {"f":999,"of":999,"sid":99999,"s":"…"} — fixed punctuation plus worst-case digits.
+const FRAG_ENV_OVERHEAD     = 37;
+function _fragEscBytes(ch) {
+  const c = ch.codePointAt(0);
+  if (c === 0x22 || c === 0x5C) return 2;                       // " and backslash
+  if (c === 8 || c === 9 || c === 10 || c === 12 || c === 13) return 2;
+  if (c < 0x20) return 6;                                       // \u00XX
+  return c < 0x80 ? 1 : c < 0x800 ? 2 : c < 0x10000 ? 3 : 4;    // UTF-8 length
+}
+function _fragChunks(str) {
+  const budget = FRAG_ENV_TARGET_BYTES - FRAG_ENV_OVERHEAD;
+  const enc = new TextEncoder();
+  const chunks = [];
+  let cur = '', esc = 0;
+  const flush = () => {
+    if (!cur) return;
+    // Exact check against the real envelope, with worst-case header values. The
+    // estimate above should already keep us inside FRAG_ENV_TARGET_BYTES, so this
+    // is belt-and-braces — but anything it trims must be CARRIED INTO THE NEXT
+    // chunk, never dropped. Popping and discarding would silently truncate the
+    // payload, the RC would reassemble invalid JSON, and the save would fail with
+    // no ACK and no error. (Reachable via a lone surrogate, which JSON escapes to
+    // 6 bytes while _fragEscBytes counts 3.)
+    let carry = '';
+    while (cur && enc.encode(JSON.stringify({ f: 999, of: 999, sid: 99999, s: cur })).length
+                  > FRAG_MAX_ENV_BYTES) {
+      const cps = Array.from(cur);
+      carry = cps.pop() + carry;
+      cur = cps.join('');
+    }
+    if (cur) chunks.push(cur);
+    else if (carry) {            // one codepoint alone over the cap — impossible in
+      const cps = Array.from(carry);   // practice (max 6 escaped + 37 overhead), but
+      chunks.push(cps.shift());        // never spin: take one and let the send-loop
+      carry = cps.join('');            // guard report it.
+    }
+    cur = carry;
+    esc = 0;
+    for (const ch of cur) esc += _fragEscBytes(ch);
+  };
+  for (const ch of str) {
+    const cost = _fragEscBytes(ch);
+    if (esc + cost > budget && cur) flush();
+    cur += ch; esc += cost;
+  }
+  flush();
   return chunks;
 }
 
@@ -5510,7 +5658,7 @@ async function sendJSON(obj, silent = false) {
   // Chunk on UTF-8 byte budget + codepoint boundaries (not code-unit substring),
   // so a multi-byte character is never split across two fragments — the RC joins
   // the `s` slices, so the reassembled JSON must stay valid UTF-8.
-  const chunks = _utf8Chunks(inner, FRAG_CHUNK_BYTES);
+  const chunks = _fragChunks(inner);
   const total  = chunks.length;
   if (total > FRAG_MAX_PARTS) {
     const msg = `Send aborted — payload needs ${total} fragments (max ${FRAG_MAX_PARTS}). Use Direct USB for a config this large.`;
@@ -5547,21 +5695,40 @@ async function sendJSON(obj, silent = false) {
       return;
     }
     await sendLine(prefix + env, silent);
-    // Inter-fragment pacing: must be longer than the bridge's ESP-NOW
-    // MAC-layer + ETM round-trip (send → MAC ACK → app ACK → done).
-    // Empirically 50 ms was NOT enough — WiFi TX queue overflowed mid-
-    // burst on a 38-fragment SET_CONFIG, producing "[SEND CB] MAC-layer
-    // FAILED" interspersed with successful sends, then 100% failure once
-    // the receiver got overwhelmed.  150 ms gives plenty of headroom and
-    // a 38-fragment SET_CONFIG still completes in ~5.7 s — acceptable
-    // for an explicit Save (which is rare and user-initiated).
+    // Inter-fragment pacing. Two independent floors, take the larger:
     //
-    // If this proves still unreliable in the field we may need to:
-    //   1. Implement application-level ACK per fragment (RC sends a
-    //      `{"type":"FRAG_ACK","sid":N,"f":X}` after each, sender waits)
-    //   2. Move bridge-side outbound to a true queue with rate limiting
-    // For now, simple source-side rate limiting is the right tradeoff.
-    await new Promise(r => setTimeout(r, 150));
+    //  1. THE LINK. The bridge WCB builds WITHOUT CDCOnBoot=cdc (its FQBN is
+    //     esp32:esp32:esp32s3:PartitionScheme=min_spiffs), so its `Serial` is UART0
+    //     and 115200 is REAL — unlike NaviCore, where native USB-CDC ignores baud
+    //     entirely. At 8N1 that is 10 bits/byte = 11,520 B/s, so this line occupies
+    //     (bytes / 11.52) ms of wire whether we like it or not. Sending faster than
+    //     that does not go faster; it piles into the WCB's RX ring and drops a run of
+    //     bytes from the MIDDLE of a line — silent corruption, not loss. This is the
+    //     exact failure the OTA relay hit at PACE_MS=12 (see otaUpdateOverWcb).
+    //
+    //  2. THE MESH. Unlike the OTA path — which uses sendRawPacket, no ETM — every
+    //     `;w20,` here goes out ENSURED, so the bridge holds a slot in its 10-deep
+    //     ETM pending table (WCB.ino ETM_PENDING_MAX) until the RC ACKs. Outrun the
+    //     ACK round trip and the table saturates, evicts an outstanding delivery, and
+    //     retries burst into the congestion they were queued behind. THIS is what
+    //     killed the original 50 ms attempt ("[SEND CB] MAC-layer FAILED", then 100%
+    //     failure) — the UART was never the problem at 50 ms.
+    //
+    // Floor (2) is the one that needs a bench run to lower safely: it depends on the
+    // real mesh ACK round trip, which we cannot measure from here. FRAG_PACE_FLOOR_MS
+    // is therefore the single knob — lower it while watching the RC's serial log for
+    // "MAC-layer FAILED", and stop at the first rate that stays clean over a
+    // full-size (150+ fragment) SET_CONFIG.
+    //
+    // Deriving floor (1) per-line rather than using one fixed number is a real gain
+    // on its own: fragments are 49-140 B depending on how much the slice escapes, so
+    // a flat delay overpays for every short fragment and underpays for long ones.
+    if (i < total - 1) {                     // no pacing after the LAST fragment —
+                                             // there is nothing behind it to collide with
+      const lineBytes = prefix.length + envBytes + 1;          // +1 for the newline
+      const wireMs    = Math.ceil(lineBytes / 11.52);          // 115200 8N1 = 11.52 B/ms
+      await new Promise(r => setTimeout(r, Math.max(wireMs * FRAG_PACE_LINK_MULT, FRAG_PACE_FLOOR_MS)));
+    }
   }
   } finally {
     _bridgeUploadInFlight = false;   // resume the background polls
@@ -6361,34 +6528,101 @@ let _tlDownload = null;   // { name, src, header, events, evBuf } while EDITLOAD
 // its own session state rather than sharing _tlDownload, so the editor's path is
 // untouched.
 let _clipRange = null;
+let _clipDlLastMs = 0;    // Date.now() of the last [CLIPDL:] line from ANY source
+
+// Wait until the board has actually STOPPED streaming [CLIPDL:] lines.
+//
+// A range that times out while the board is still sending leaves that stream to
+// be adopted by the next request, because _clipRange is a single global. A stale
+// END then finishes the new session before its header arrives ("no reply from
+// the board"), a stale BEGIN overwrites its count/fp ("the clip changed on the
+// board mid-download"), and stale events land under a foreign clip's indices
+// ("-32 of 16 events"). Each failure left more undrained stream to poison the
+// next clip, so one timeout took out the rest of the backup. Draining to silence
+// between requests is what breaks that chain; the from/n gating above is the
+// second line of defence for anything that slips through.
+async function _clipDlQuiesce(quietMs = 500, capMs = 8000) {
+  const deadline = Date.now() + capMs;
+  for (;;) {
+    const idle = Date.now() - _clipDlLastMs;
+    if (idle >= quietMs || Date.now() >= deadline) return;
+    await new Promise(r => setTimeout(r, Math.min(quietMs - idle, 150)));
+  }
+}
 
 function _clipRangeFeed(text) {
   const s = _clipRange;
   if (!s) return false;
+  // Does this line answer the request WE sent? The board echoes from/n on both
+  // BEGIN and END, so the stream is already self-identifying — the tool simply
+  // was not checking. Anything that does not match belongs to an earlier request
+  // arriving late: consume it (return true, so it never reaches the terminal) but
+  // never let it touch this session. See _clipDlQuiesce for why late lines exist.
+  // A legacy pre-ranged firmware answers with a BEGIN carrying no `from` at all;
+  // that must still be accepted so the explicit "no ranged download" error below
+  // fires instead of an unexplained timeout.
+  const answersUs = (o) => {
+    if (!o || o.from === undefined) return true;   // legacy: no ranged support at all
+    if (+o.from !== s.reqFrom || +o.n !== s.reqCount) return false;
+    // `nm` is the decisive check — from/n alone cannot separate two clips asked
+    // the same range, and every clip is probed with (0,0). Absent means firmware
+    // older than the name echo, where the drain is the only defence; present and
+    // different is definitely another clip's line.
+    return o.nm === undefined || o.nm === s.reqName;
+  };
 
   if (text.startsWith('[CLIPDL:BEGIN]')) {
-    try { s.hdr = JSON.parse(text.slice(14)); } catch (_) { s.hdr = {}; }
-    s.evBuf = null; s.pendIdx = -1;
+    let h = {};
+    try { h = JSON.parse(text.slice(14)); } catch (_) { h = {}; }
+    if (!answersUs(h)) return true;          // a previous request's header
+    s.hdr = h;
+    s.evBuf = null; s.pendIdx = -1; s.pendBatch = false;
     return true;
   }
   if (text.startsWith('[CLIPDL:ERR]')) { s.err = text.slice(12).replace(/^,\d+\]?/, ''); s.finish(); return true; }
   if (text.startsWith('[CLIPDL:END]')) {
-    try { s.tail = JSON.parse(text.slice(12)); } catch (_) { s.tail = {}; }
+    let t = {};
+    try { t = JSON.parse(text.slice(12)); } catch (_) { t = {}; }
+    if (!answersUs(t)) return true;          // a previous request's END must not finish us
+    s.tail = t;
     s.finish();
     return true;
   }
 
-  const m = /^\[CLIPDL:EV,(\d+)\]/.exec(text);
-  if (m) { s.pendIdx = +m[1]; s.evBuf = text.slice(m[0].length); }
+  // Two event shapes. [CLIPDL:EV,<i>] is one event; [CLIPDL:EVB,<first>] is a run
+  // of CONSECUTIVE keyframes whose indices are positional from <first>. EVB is
+  // tested first rather than relying on "EV," not matching "EVB,".
+  const mb = /^\[CLIPDL:EVB,(\d+)\]/.exec(text);
+  const m  = mb || /^\[CLIPDL:EV,(\d+)\]/.exec(text);
+  if (m) { s.pendIdx = +m[1]; s.pendBatch = !!mb; s.evBuf = text.slice(m[0].length); }
   else if (s.evBuf !== null) { s.evBuf += text; }   // continuation of a wrapped line
   else return false;
 
   try {
-    const ev = JSON.parse(s.evBuf);
-    if (s.pendIdx >= 0) s.got.set(s.pendIdx, ev);
-    s.evBuf = null; s.pendIdx = -1;
+    const parsed = JSON.parse(s.evBuf);
+    // Only indices we actually ASKED for. Without this an event from another
+    // clip's stream is stored under its own absolute index, and because `got` is
+    // shared across every round of this download those foreign entries push
+    // got.size past total — which is how a 16-event clip reported "-32 of 16".
+    if (s.pendBatch) {
+      // {"e":[[t,k,a,b,c],…]} — rebuilt into exactly the per-event object shape the
+      // rest of the tool consumes, so the model builder and the file writer never
+      // need to know a batched form exists.
+      const rows = (parsed && parsed.e) || [];
+      for (let r = 0; r < rows.length; r++) {
+        const idx = s.pendIdx + r;
+        if (idx < s.reqFrom || idx >= s.reqFrom + s.reqCount) continue;
+        const q = rows[r];
+        s.got.set(idx, (+q[1] === 2)
+          ? { t: +q[0], k: 2, chan: +q[2], vol: +q[3] }
+          : { t: +q[0], k: +q[1], slot: +q[2], ch: +q[3], pos: +q[4] });
+      }
+    } else if (s.pendIdx >= s.reqFrom && s.pendIdx < s.reqFrom + s.reqCount) {
+      s.got.set(s.pendIdx, parsed);
+    }
+    s.evBuf = null; s.pendIdx = -1; s.pendBatch = false;
   } catch (_) {
-    if (s.evBuf.length > 4096) { s.evBuf = null; s.pendIdx = -1; }   // corrupt chain — next EV recovers
+    if (s.evBuf.length > 4096) { s.evBuf = null; s.pendIdx = -1; s.pendBatch = false; }   // corrupt chain — next EV recovers
   }
   return true;
 }
@@ -6404,26 +6638,66 @@ async function clipDownloadVerified(name, onProgress, opts) {
   // bridge's relay queue is only 16 deep, so a big burst is exactly what gets
   // dropped. Over USB the availableForWrite gate makes large slices safe.
   const CHUNK = viaWcbActive ? 48 : 400;
-  const MAX_ROUNDS = 40;
+  // Budget must SCALE with the work, not be a flat number. A clean pass already
+  // needs ceil(total/CHUNK) rounds, so a fixed 40 capped a mesh download at
+  // 40 x 48 = 1920 events — a larger clip could never finish even with zero
+  // packet loss, and the failure would have looked like loss. The x3 leaves room
+  // for re-requesting genuinely dropped events; +12 keeps small clips forgiving.
+  let MAX_ROUNDS = 40;   // raised once `total` is known, below
 
   const got = new Map();
   let total = -1, fp = null, meta = null;
 
   const runRange = async (from, count) => {
     await new Promise((resolve) => {
-      _clipRange = { hdr: null, tail: null, err: null, got, evBuf: null, pendIdx: -1,
-                     finish: null, timer: null };
+      // Own the session in a LOCAL, and check ownership before touching the
+      // global. done() previously read _clipRange, so if a second download
+      // started (two ⤓ clicks, or a backup while the editor loads a clip) it
+      // replaced the global and this session's 15 s timer then cleared the OTHER
+      // session's timer, nulled its state and resolved with it — cross-wiring the
+      // two and hanging the first download forever. Also made idempotent, so a
+      // reply arriving just as the timer fires cannot resolve twice.
+      const sess = { hdr: null, tail: null, err: null, got, evBuf: null, pendIdx: -1,
+                     finish: null, timer: null, settled: false,
+                     reqFrom: from, reqCount: count, reqName: name, timedOut: false,
+                     pendBatch: false };
       const done = () => {
-        clearTimeout(_clipRange.timer);
-        const s = _clipRange; _clipRange = null; resolve(s);
+        if (sess.settled) return;
+        sess.settled = true;
+        clearTimeout(sess.timer);
+        if (_clipRange === sess) _clipRange = null;   // never clear a newer session
+        resolve(sess);
       };
-      _clipRange.finish = done;
-      _clipRange.timer = setTimeout(done, 15000);   // a silent board must not hang the backup
-      sendRcCli(`?REC,EDITLOAD,${name},${from},${count}`, true);
+      sess.finish = done;
+      _clipRange = sess;
+      // Scale the deadline with the work: a flat 15 s is either too tight for a
+      // big slice over the mesh or needlessly slow to give up on a silent board.
+      // Flagged as a timeout because that is precisely the case where the board
+      // may STILL be streaming — the caller must drain before asking for more.
+      const budgetMs = 15000 + count * (viaWcbActive ? 120 : 10);
+      sess.budgetMs = budgetMs;
+      sess.timer = setTimeout(() => { sess.timedOut = true; done(); }, budgetMs);
+      // ",B" opts into batched keyframe lines. Safe to send unconditionally:
+      // firmware predating it parsed `count` with toInt(), which stops at the comma,
+      // so the flag was invisible — it simply replies in the per-event form, which
+      // the ingestion below still accepts. No version handshake needed.
+      sendRcCli(`?REC,EDITLOAD,${name},${from},${count},B`, true);
     }).then(s => {
       if (s.err) throw new Error(s.err);
-      if (!s.hdr) throw new Error('no reply from the board');
-      if (s.hdr.from === undefined) throw new Error('this firmware has no ranged download — reflash to back up clips');
+      // Distinguish the two: a board that stayed silent, versus one still busy
+      // streaming when our deadline expired. They need different user actions,
+      // and conflating them is what made a drain problem look like a dead board.
+      if (!s.hdr) throw new Error(s.timedOut
+        ? `timed out after ${Math.round(s.budgetMs / 1000)}s waiting for the board`
+        : 'no reply from the board');
+      if (s.hdr.from === undefined) {
+        // Flagged, not matched by message text: the timeline falls back to the
+        // legacy stream on this specific case, and a reworded message must not
+        // silently disable that fallback.
+        const err = new Error('this firmware has no ranged download — reflash to back up clips');
+        err.noRanged = true;
+        throw err;
+      }
       // fc is the FILE header's count; loadClip truncates silently when a clip
       // exceeds the buffer cap, so count alone would call a short read complete.
       if (+s.hdr.fc !== +s.hdr.count)
@@ -6442,8 +6716,14 @@ async function clipDownloadVerified(name, onProgress, opts) {
     });
   };
 
+  // Drain first. If a previous clip timed out, the board may still be streaming
+  // it — and its lines would otherwise be adopted by the probe below, which is
+  // the single request most vulnerable to it (every clip probes with the same
+  // (0,0), so from/n gating alone cannot tell two probes apart).
+  await _clipDlQuiesce();
   await runRange(0, 0);                      // header-only probe: count, fc, fp
   if (total === 0) return { name, header: { count: 0, ...meta }, events: [] };
+  MAX_ROUNDS = Math.ceil(total / CHUNK) * 3 + 12;
 
   for (let round = 0; round < MAX_ROUNDS; round++) {
     if (got.size >= total) break;
@@ -6563,7 +6843,7 @@ async function clipRestoreOne(clip, destName, onProgress) {
   for (let i = 0; i < events.length; i++) {
     const cmdStr = '?REC,EDITEV,' + i + ',' + JSON.stringify(events[i]);
     // Over the bridge the whole relayed line must fit one ESP-NOW packet.
-    if (viaWcbActive && cmdStr.length > 180)
+    if (viaWcbActive && new TextEncoder().encode(cmdStr).length > 180)
       throw new Error(`event ${i + 1}/${events.length} is too large for the WCB bridge (${cmdStr.length} chars) — restore over Direct USB`);
     const ackMark = '[CLIPUL:ACK,' + i + ']';
     let ok = false;
@@ -6616,7 +6896,18 @@ async function clipsRestore(clips) {
   if (!clips || !clips.length) return 'No clips in that file.';
   if (!port && !sharedActive) throw new Error('Connect to the board first.');
 
-  const existing = await clipsListOnce().catch(() => []);
+  // Do NOT swallow an enumeration failure. Falling back to [] makes every clip
+  // look new, which skips the collision prompt entirely and lets EDITEND
+  // overwrite EVERY existing clip silently — the exact blanket overwrite this
+  // whole flow is built to prevent. If we cannot see what is on the droid, we
+  // have no basis to decide anything, so refuse.
+  let existing;
+  try { existing = await clipsListOnce(); }
+  catch (e) {
+    throw new Error('Could not read the clip list from the board (' + e.message + ').\n\n' +
+                    'Refusing to restore: without knowing what is already there, this could ' +
+                    'silently overwrite clips that are newer than the backup.');
+  }
   const haveNames = new Set(existing.map(c => c.name));
 
   // Pre-flight the flash. A full clips partition mid-restore destroys the clip
@@ -6634,18 +6925,29 @@ async function clipsRestore(clips) {
   let written = 0; const skipped = [], failed = [];
   for (const clip of clips) {
     let dest = clip.name;
-    if (haveNames.has(dest)) {
+    let abort = false, skip = false;
+    // LOOP the collision check on the CURRENT dest. Checking once meant a typed
+    // "restore alongside it" name was accepted without ever being tested — so
+    // typing the name of a DIFFERENT existing clip destroyed that one instead,
+    // which is worse than the overwrite the prompt was protecting against.
+    // Sanitising to the firmware's own _clipPath char class first also means the
+    // name we test is the name EDITEND will actually write.
+    while (haveNames.has(dest)) {
       const choice = prompt(
         `"${dest}" already exists on the droid.\n\n` +
         `The board does not record when a clip was made, so neither of us can tell which copy is newer — ` +
         `overwriting is not undoable.\n\n` +
         `Type:  skip  (default) · overwrite · or a NEW NAME to restore alongside it`, 'skip');
-      if (choice === null) break;                       // Cancel = stop the whole restore
+      if (choice === null) { abort = true; break; }     // Cancel = stop the whole restore
       const c = choice.trim();
-      if (!c || /^skip$/i.test(c)) { skipped.push(dest); continue; }
-      if (!/^overwrite$/i.test(c)) dest = c.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 30);
-      if (!dest) { skipped.push(clip.name); continue; }
+      if (!c || /^skip$/i.test(c)) { skip = true; break; }
+      if (/^overwrite$/i.test(c)) break;                // deliberate — leave dest as-is
+      const clean = c.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 30);
+      if (!clean) { skip = true; break; }               // nothing usable left after sanitising
+      dest = clean;                                     // re-tested by the loop condition
     }
+    if (abort) break;
+    if (skip) { skipped.push(clip.name); continue; }
     try {
       const n = await clipRestoreOne(clip, dest);
       const bad = await clipVerifyOnBoard(dest, n);     // genuine flash read-back
@@ -6662,6 +6964,10 @@ async function clipsRestore(clips) {
 }
 
 function _clipDlFeed(src, text) {
+  // Stamped BEFORE any dispatch and for EVERY [CLIPDL:] line, including ones no
+  // session claims — _clipDlQuiesce() waits on this, and the drain we need to
+  // wait out is exactly the period when no session owns the stream.
+  _clipDlLastMs = Date.now();
   // A verified ranged download owns the [CLIPDL:*] stream while it runs.
   if (_clipRange) return _clipRangeFeed(text);
   if (!_tlDownload) return false;
@@ -6844,7 +7150,21 @@ function openTimelineEditor(name) {
           (viaWcbActive ? 'Direct USB is far more reliable for this.' : 'Close and reopen to retry.'));
       }
     })
-    .catch(e => _tlShowLoadError('Could not load "' + name + '" — ' + e.message));
+    .catch(e => {
+      // Firmware without ranged download must still be able to open the editor.
+      // The tool is published to Pages and users flash FROM it, so a board a
+      // version or two behind is normal — refusing outright would strand them
+      // with no timeline at all. Fall back to the legacy whole-clip stream, which
+      // is exactly what this path used before; it cannot retry a dropped event,
+      // so the integrity story is weaker, but weaker beats unavailable.
+      if (e && e.noRanged) {
+        _tlSetStatus('Loading (older firmware — no retry on a dropped event)…');
+        _tlDownload = { name, src: null, header: null, events: [], evBuf: null };
+        sendRcCli('?REC,EDITLOAD,' + name);
+        return;
+      }
+      _tlShowLoadError('Could not load "' + name + '" — ' + e.message);
+    });
 }
 
 function _tlShowLoadError(msg) {
@@ -7008,7 +7328,7 @@ async function _tlSave() {
       // Via WCB the whole relayed command must fit one ESP-NOW packet (~187
       // usable bytes with the CRC suffix) — a longer line is silently truncated
       // to malformed JSON and NAKs forever. Fail fast with a useful message.
-      if (viaWcbActive && cmdStr.length > 180) {
+      if (viaWcbActive && new TextEncoder().encode(cmdStr).length > 180) {
         throw new Error(`event ${i + 1}/${events.length} is too large to send over the WCB bridge ` +
                         `(${cmdStr.length} chars) — connect over USB, or shorten that action's command/note`);
       }
@@ -9093,6 +9413,34 @@ function handleBoardMessage(line) {
     // temporary[] = slots advertising the WDP "temporary" flag (live-only, never persisted);
     // absent on older firmware → none.
     wcbTemporary = Array.isArray(msg.temporary) ? msg.temporary : [];
+    // rows[] = the SPARSE roster the bridged reply falls back to when the
+    // positional arrays will not fit one ESP-NOW packet: one [id, online,
+    // client, temporary] per REAL board, with `known` implied by presence.
+    // Expanded here into the very same positional arrays the renderer already
+    // consumes, so nothing downstream has to know which form arrived.
+    //
+    // Why it exists: the positional form costs a slot for every id up to the
+    // highest, so a mgmt relay at id 19 made the reply overflow, and the old
+    // remedy trimmed from the TOP — dropping that relay first, and only over the
+    // bridge. Direct USB has no packet budget and always showed it, which is what
+    // made the bug look like "the board is gone" instead of "the reply did not
+    // fit". rows[] is also the ONLY bridged form that carries `temporary`.
+    if (Array.isArray(msg.rows)) {
+      let hiId = 0;
+      for (const r of msg.rows) hiId = Math.max(hiId, +r[0] || 0);
+      const on = new Array(hiId).fill(0), kn = new Array(hiId).fill(0);
+      const cl = new Array(hiId).fill(0), tp = new Array(hiId).fill(0);
+      for (const r of msg.rows) {
+        const id = +r[0];
+        if (!(id >= 1 && id <= hiId)) continue;   // ignore a malformed row rather than index off the end
+        on[id - 1] = +r[1] ? 1 : 0;
+        kn[id - 1] = 1;                           // presence in rows[] IS "known"
+        cl[id - 1] = +r[2] ? 1 : 0;
+        tp[id - 1] = +r[3] ? 1 : 0;
+      }
+      msg.online = on;                            // feed the same fields the dense path sets
+      wcbKnown = kn; wcbClients = cl; wcbTemporary = tp;
+    }
     // Forget de-flicker: this reply may be one the RC BUILT before it processed a
     // FORGET_PEER (or a bridge-reordered one), still carrying known[id]=1. While an
     // id is inside its post-forget window, blank it in the mask so a stale/reordered
@@ -9300,6 +9648,9 @@ function applyConfig(data) {
     applyTxModel(config.txModel, false);
   }
   if (data.sbusOutEnabled !== undefined) config.sbusOutEnabled = !!data.sbusOutEnabled;
+  if (data.wifiEnabled    !== undefined) config.wifiEnabled    = !!data.wifiEnabled;
+  if (data.wifiSsid       !== undefined) config.wifiSsid       = String(data.wifiSsid || '').slice(0, 32);
+  if (data.wifiPassword   !== undefined) config.wifiPassword   = String(data.wifiPassword || '').slice(0, 63);
   if (data.maeGateMs      !== undefined) config.maeGateMs = Math.max(50, Math.min(5000, +data.maeGateMs || 250));
   if (data.boardType      !== undefined) config.boardType      = +data.boardType | 0;
   if (data.tapWindowMs   !== undefined) {
@@ -9576,6 +9927,87 @@ function _parseMaestroSettings(xmlText) {
 }
 
 // Look up imported range/name for a logical Maestro slot (1-8) + channel (0-31).
+// ── Per-channel endpoint editor ──────────────────────────────────────────────
+// Until now these endpoints could ONLY arrive by importing a Control Center
+// settings file, which leaves you stuck whenever a channel's real travel differs
+// from what that file says — and they are not cosmetic. They set the timeline's
+// vertical scale, they CLAMP every timeline edit (_tlClampUs), and
+// _applyMaestroRangesToKnobs pushes them onto every passthrough knob output
+// targeting the Maestro, so a wrong endpoint is also what your stick maps to.
+//
+// Stored in QUARTER-microseconds (the Pololu wire unit) — this edits in µs and
+// converts, because µs is what every other field in the tool shows.
+function _openMaestroChEditor(slot) {
+  const key = String(slot);
+  const cur = _maestroCh[key] || {};
+  const rows = Object.keys(cur).map(Number).sort((a, b) => a - b);
+
+  const ov = document.createElement('div');
+  ov.className = 'modal-overlay open';
+  ov.style.zIndex = 4000;
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  ov.innerHTML =
+    '<div class="modal" style="max-width:520px;width:92%">' +
+      '<div class="modal-header"><span class="modal-title">Maestro ' + slot + ' — channel endpoints</span></div>' +
+      '<div style="padding:14px 16px;max-height:60vh;overflow:auto">' +
+        '<div class="noconn" style="margin-bottom:10px">Values are in <b>µs</b>. These set the timeline scale, <b>clamp timeline edits</b>, ' +
+        'and are pushed onto any passthrough knob output targeting this Maestro — so they should match the servo\'s real travel. ' +
+        'Leave a channel out entirely to let the timeline auto-scale to the recorded data and drop the clamp.</div>' +
+        '<div id="mae-ch-rows"></div>' +
+        '<button type="button" class="btn btn-ghost" id="mae-ch-add" style="font-size:11px;padding:3px 10px;margin-top:8px">+ add channel</button>' +
+      '</div>' +
+      '<div class="modal-footer">' +
+        '<button class="btn btn-ghost" id="mae-ch-cancel">Cancel</button>' +
+        '<button class="btn btn-success" id="mae-ch-ok">Apply</button>' +
+      '</div>' +
+    '</div>';
+  document.body.appendChild(ov);
+
+  const host = ov.querySelector('#mae-ch-rows');
+  const addRow = (ch, name, minUs, maxUs) => {
+    const r = document.createElement('div');
+    r.style.cssText = 'display:grid;grid-template-columns:52px 1fr 74px 74px auto;gap:6px;align-items:center;margin-bottom:5px';
+    r.innerHTML =
+      '<input type="number" min="0" max="31" value="' + (ch ?? '') + '" class="mc-ch" style="font-size:11px;padding:2px 4px" title="Channel 0-31">' +
+      '<input type="text" maxlength="23" value="' + esc(name || '') + '" class="mc-nm" placeholder="name (optional)" style="font-size:11px;padding:2px 4px">' +
+      '<input type="number" min="0" max="3000" value="' + (minUs ?? '') + '" class="mc-min" placeholder="min µs" style="font-size:11px;padding:2px 4px">' +
+      '<input type="number" min="0" max="3000" value="' + (maxUs ?? '') + '" class="mc-max" placeholder="max µs" style="font-size:11px;padding:2px 4px">' +
+      '<button type="button" class="btn btn-ghost mc-del" style="font-size:11px;padding:2px 7px" title="Remove this channel">✕</button>';
+    r.querySelector('.mc-del').addEventListener('click', () => r.remove());
+    host.appendChild(r);
+  };
+  if (rows.length) rows.forEach(ch => addRow(ch, cur[ch].name, Math.round((+cur[ch].min || 0) / 4), Math.round((+cur[ch].max || 0) / 4)));
+  else addRow('', '', '', '');
+  ov.querySelector('#mae-ch-add').addEventListener('click', () => addRow('', '', '', ''));
+
+  const close = () => ov.remove();
+  ov.querySelector('#mae-ch-cancel').addEventListener('click', close);
+  ov.addEventListener('click', e => { if (e.target === ov) close(); });
+  ov.querySelector('#mae-ch-ok').addEventListener('click', () => {
+    const map = {};
+    let bad = null;
+    host.querySelectorAll(':scope > div').forEach(r => {
+      const ch = parseInt(r.querySelector('.mc-ch').value, 10);
+      const mn = parseInt(r.querySelector('.mc-min').value, 10);
+      const mx = parseInt(r.querySelector('.mc-max').value, 10);
+      if (!Number.isFinite(ch)) return;                        // blank row — ignore
+      if (ch < 0 || ch > 31) { bad = 'channel ' + ch + ' is out of range (0-31)'; return; }
+      if (!Number.isFinite(mn) || !Number.isFinite(mx)) { bad = 'channel ' + ch + ' needs both a min and a max'; return; }
+      if (mn >= mx) { bad = 'channel ' + ch + ': min must be below max'; return; }
+      map[String(ch)] = { min: mn * 4, max: mx * 4, name: (r.querySelector('.mc-nm').value || '').slice(0, 23) };
+    });
+    if (bad) { alert(bad); return; }
+    if (Object.keys(map).length) _maestroCh[String(slot)] = map; else delete _maestroCh[String(slot)];
+    // Mirror into the config so it persists with everything else — the config is
+    // authoritative and _syncMaestroChFromConfig rebuilds the mirror from it.
+    if (Array.isArray(config.maestros) && config.maestros[slot - 1])
+      config.maestros[slot - 1].channels = _maestroChSlotToArray(slot);
+    close();
+    renderMaestroLocations();
+    showToast('Maestro ' + slot + ' endpoints updated — Save to write them to the droid', 'success');
+  });
+}
+
 function _maestroChInfo(slot, ch) {
   const s = _maestroCh[String(slot)];
   return (s && s[String(ch)]) || null;
@@ -9676,15 +10108,22 @@ function _smoothProfileOptions(sel, includeNone, includeUnlimited) {
 // limit, where LOWER positive = more easing and 0 = off (instant) — the inverse of
 // easing, which is why the slider felt backwards. Biased (quadratic) so the slider's
 // travel spans the useful slow range instead of crowding it at one end.
+// Slider-end captions, keyed by which limit the slider drives. Left end is
+// ease=0 (raw 0 = the Maestro limit OFF = full speed / instant); right end is
+// ease=100 (the tightest limit = slowest / gentlest).
+// Kept short deliberately: both pairs plus two sliders have to fit ONE row beside
+// the channel picker, and the longer comparatives ("snappier"/"gentler") pushed it
+// to wrap onto a second line.
+const _SMOOTH_END_LABELS = { spd: ['faster', 'slower'], acc: ['snappy', 'gentle'] };
 function easeToRaw(ease, rawMax) { return ease <= 0 ? 0 : Math.max(1, Math.round(rawMax * Math.pow(1 - ease / 100, 2))); }
 function rawToEase(raw, rawMax) { return (!raw || raw <= 0) ? 0 : Math.round((1 - Math.sqrt(Math.min(rawMax, raw) / rawMax)) * 100); }
 
 // One channel row for the Maestro-tab smoothing editor (channel + 2 sliders + remove).
 function _smoothChanRow(mid, entry) {
   const row = document.createElement('div');
-  row.style.cssText = 'display:flex;align-items:center;gap:8px;flex-wrap:wrap';
+  row.style.cssText = 'display:flex;align-items:center;gap:6px;flex-wrap:wrap';
   const chSel = document.createElement('select');
-  chSel.style.minWidth = '150px';
+  chSel.style.minWidth = '118px';
   chSel.innerHTML = _maestroChOptions(mid, entry.ch);
   chSel.onchange = () => { entry.ch = +chSel.value; };
   // Slider reads as EASING: right = more easing (slower/gentler), left = snappy/off.
@@ -9693,13 +10132,20 @@ function _smoothChanRow(mid, entry) {
   const mkSlider = (label, rawMax, key) => {
     const box = document.createElement('div');
     box.style.cssText = 'display:flex;align-items:center;gap:5px';
-    const lab = document.createElement('span'); lab.style.cssText = 'font-size:11px;color:var(--muted);min-width:42px'; lab.textContent = label;
-    const less = document.createElement('span'); less.style.cssText = 'font-size:9px;color:var(--muted)'; less.textContent = 'less';
+    const lab = document.createElement('span'); lab.style.cssText = 'font-size:11px;color:var(--muted);min-width:34px'; lab.textContent = label;
+    // Label the ends by the RESULTING MOTION, not by the amount of easing.
+    // "less/more" described the easing, but sits next to a field called "Speed" —
+    // so "less" reads as "less speed" (slower) when it actually means less easing
+    // (FASTER). Naming the outcome removes the ambiguity: the slider is only ever
+    // adjusted to make a servo move a certain way.
+    const ends = _SMOOTH_END_LABELS[key] || ['faster', 'slower'];
+    const less = document.createElement('span'); less.style.cssText = 'font-size:9px;color:var(--muted)'; less.textContent = ends[0];
     const s = document.createElement('input'); s.type = 'range'; s.min = 0; s.max = 100; s.step = 1;
     s.dataset.sk = key;   // 'spd'/'acc' — lets the "All channels" master move this slider live
-    s.value = rawToEase(entry[key] || 0, rawMax); s.style.width = '110px';
-    s.title = `Right = more ${label.toLowerCase()} easing (slower / gentler). Far left = off (snappy).`;
-    const more = document.createElement('span'); more.style.cssText = 'font-size:9px;color:var(--muted)'; more.textContent = 'more';
+    s.value = rawToEase(entry[key] || 0, rawMax); s.style.width = '90px';
+    s.title = `${label}: left = no easing (Maestro limit off, servo moves at full ${key === 'acc' ? 'acceleration' : 'speed'}), ` +
+              `right = maximum easing (${key === 'acc' ? 'gentlest ramp' : 'slowest'}).`;
+    const more = document.createElement('span'); more.style.cssText = 'font-size:9px;color:var(--muted)'; more.textContent = ends[1];
     s.oninput = () => { entry[key] = easeToRaw(+s.value, rawMax); };
     box.appendChild(lab); box.appendChild(less); box.appendChild(s); box.appendChild(more);
     return box;
@@ -9763,10 +10209,10 @@ function renderSmoothingPane() {
       m.appendChild(Object.assign(document.createElement('span'), { textContent: `All channels (${visible.length}):`, style: 'font-size:12px;color:var(--accent2);font-weight:600;min-width:130px' }));
       const mkMaster = (label, rawMax, key) => {
         const box = document.createElement('div'); box.style.cssText = 'display:flex;align-items:center;gap:5px';
-        box.appendChild(Object.assign(document.createElement('span'), { textContent: label, style: 'font-size:11px;color:var(--muted);min-width:42px' }));
-        box.appendChild(Object.assign(document.createElement('span'), { textContent: 'less', style: 'font-size:9px;color:var(--muted)' }));
+        box.appendChild(Object.assign(document.createElement('span'), { textContent: label, style: 'font-size:11px;color:var(--muted);min-width:34px' }));
+        box.appendChild(Object.assign(document.createElement('span'), { textContent: (_SMOOTH_END_LABELS[key]||['faster','slower'])[0], style: 'font-size:9px;color:var(--muted)' }));
         const s = document.createElement('input'); s.type = 'range'; s.min = 0; s.max = 100; s.step = 1;
-        s.value = rawToEase(visible[0][key] || 0, rawMax); s.style.width = '110px';
+        s.value = rawToEase(visible[0][key] || 0, rawMax); s.style.width = '90px';
         s.title = `Set ${label.toLowerCase()} easing on ALL ${visible.length} configured channel(s) at once.`;
         s.oninput = () => {
           const raw = easeToRaw(+s.value, rawMax);
@@ -9775,7 +10221,7 @@ function renderSmoothingPane() {
           wrap.querySelectorAll(`input[type=range][data-sk="${key}"]`).forEach(el => { el.value = s.value; });
         };
         box.appendChild(s);
-        box.appendChild(Object.assign(document.createElement('span'), { textContent: 'more', style: 'font-size:9px;color:var(--muted)' }));
+        box.appendChild(Object.assign(document.createElement('span'), { textContent: (_SMOOTH_END_LABELS[key]||['faster','slower'])[1], style: 'font-size:9px;color:var(--muted)' }));
         return box;
       };
       m.appendChild(mkMaster('Speed', 500, 'spd'));
@@ -9849,6 +10295,8 @@ function renderMaestroLocations() {
       <span style="display:flex;gap:4px;justify-content:flex-end">
         <button type="button" class="btn btn-ghost" data-mae-import="${i+1}" style="font-size:11px;padding:2px 8px"
                 title="Import this Maestro's settings file (Control Center → File → Save settings file…) to pull in its per-channel min/max endpoints and names.">📁 Import</button>
+        <button type="button" class="btn btn-ghost" data-mae-edit="${i+1}" style="font-size:11px;padding:2px 6px"
+                title="Edit this Maestro's per-channel endpoints and names by hand — for a channel whose real travel differs from the imported settings file, or to add one without importing at all.">✎</button>
         ${impN?`<button type="button" class="btn btn-ghost" data-mae-clearimp="${i+1}" style="font-size:11px;padding:2px 6px" title="Forget the imported settings for this Maestro.">✕</button>`:''}
       </span>
     `;
@@ -9913,6 +10361,9 @@ function renderMaestroLocations() {
   });
   wrap.querySelectorAll('[data-mae-clearimp]').forEach(btn => {
     btn.addEventListener('click', () => _clearMaestroImport(+btn.dataset.maeClearimp));
+  });
+  wrap.querySelectorAll('[data-mae-edit]').forEach(btn => {
+    btn.addEventListener('click', () => _openMaestroChEditor(+btn.dataset.maeEdit));
   });
   // 2-way read buttons (Local + Remote): fire the query CLI; the reply returns as a
   // [MAE:<slot>] marker handled by _maeReadFeed. GET carries the picked channel.
@@ -16258,7 +16709,7 @@ function _pushBudgetInfo() {
   // fragmenter at all, so it consumes none of the 192-slot pool.
   if (bytes <= FRAG_MAX_ENV_BYTES) return { branches, bytes, frags: 1, empty: false, single: true };
 
-  const chunks = _utf8Chunks(inner, FRAG_CHUNK_BYTES);
+  const chunks = _fragChunks(inner);
   // sendJSON has a SECOND abort the fragment count alone cannot predict: it
   // re-checks EACH fragment's escaped envelope against FRAG_MAX_ENV_BYTES and
   // bails mid-send if one is over. A chunk of 80 quote/backslash-heavy bytes can
@@ -16827,6 +17278,16 @@ let _fwFlashing = false;
 // invalidated, fall back to any other already-granted port (still no picker).
 // Returns true if the session resumed, false if we gave up (caller tells the
 // user to click Connect).
+// Diagnostic sink for the post-flash / post-OTA reconnect. reopenAfterFlash is a
+// top-level function, so it cannot reach the OTA panel's local `log` closure —
+// and its failure previously surfaced as one line ("reconnect manually") that is
+// identical whether the port never opened or opened and the board never answered.
+// Those need different fixes, so they need different log lines.
+function _otaLog(msg) {
+  try { appendTerminalLine('< [reconnect] ' + msg, 'rx'); } catch (_) {}
+  console.log('[reconnect]', msg);
+}
+
 async function reopenAfterFlash(p) {
   // Let the board fully boot (setup() has a ~1.5 s delay) AND the native-USB
   // device re-enumerate before the first attempt.
@@ -16855,8 +17316,15 @@ async function reopenAfterFlash(p) {
     try {
       const live = await openPortAndStart(p, 600, /*allowViaWcb=*/false);
       if (live) return true;                 // the NaviCore answered — real session
+      // Distinguish the two failure shapes in the log. "opened, no PONG" means the
+      // board is not answering (still booting, or resetting under us); "open()
+      // failed" means the USB device is not present yet. Without this the give-up
+      // message says only "reconnect manually", which is the same text for both
+      // and leaves nothing to diagnose from.
+      _otaLog(`reconnect ${cycle + 1}/12: port opened but no PONG in ~3 s`);
       await disconnect();                    // opened but no PONG yet (still booting) — retry
-    } catch (_) {
+    } catch (e) {
+      _otaLog(`reconnect ${cycle + 1}/12: open() failed — ${(e && e.message) || e}`);
       try { await p.close(); } catch (_) {}  // open() failed (device still down) — retry
     }
     // (b) Only if the handle was truly invalidated AND there is exactly ONE device
@@ -16984,27 +17452,85 @@ async function otaUpdateOverUsb() {
     }
     if (!/^\[OTA:BEGIN,OK/.test(m)) throw new Error('board rejected BEGIN — ' + m);
 
-    // DATA — ACK-paced; advance the local offset to the board's contiguous cursor.
+    // DATA — WINDOWED (pipelined) Go-Back-N over the board's write cursor, the same
+    // shape otaUpdateOverWcb() uses for the relay path.
+    //
+    // WHY THIS IS NOT send-one-wait-one any more. The old loop paid a full round
+    // trip per 1 KB chunk. Over direct USB that is ~5 ms and invisible; over a
+    // WebSocket to the droid's SoftAP it is ~70 ms measured, and 1136 chunks × 70 ms
+    // is ~78 s for a 1.1 MB image — slower than USB by an order of magnitude for
+    // reasons that have nothing to do with link bandwidth.
+    //
+    // The firmware already supports this and always did: otaWrite() rejects
+    // anything that is not exactly at its cursor ("gap/dup -> caller rewinds"), and
+    // both [OTA:ACK,n] and [OTA:NAK,n] carry that cursor. So we can send ahead and
+    // let the cursor pull us along; a gap simply rewinds. Sender-only change —
+    // works against firmware already in the field.
+    //
+    // WINDOW is bounded by what the RECEIVER can hold, not by what we would like.
+    // Each in-flight DATA line is ~1.4 KB of text; 8 of them is ~11 KB, which the
+    // board's 4 KB serial RX buffer cannot hold at once — but it does not have to,
+    // because the sender still paces and the board drains continuously. Keep it
+    // modest for that reason rather than raising it until something breaks.
     setStatus('OTA: streaming…');
-    let offset = 0, stalls = 0;
-    while (offset < size) {
-      const slice = bytes.subarray(offset, Math.min(offset + CHUNK, size));
-      wait = _otaAwaitMarker(10000);
-      await sendLine(`?OTALOCAL,DATA,${offset},${toB64(slice)}`, true);
-      m = await wait;
-      const ack = /^\[OTA:ACK,(\d+)\]/.exec(m);
-      const nak = /^\[OTA:NAK,(\d+)\]/.exec(m);
-      const before = offset;
-      if (ack)      offset = parseInt(ack[1], 10);
-      else if (nak) { offset = parseInt(nak[1], 10); log(`Resyncing to cursor ${offset}…`); }
-      else          throw new Error('unexpected response — ' + m);
-      // Bound non-advancing ACK/NAKs: each _otaAwaitMarker re-arms its own
-      // timeout, so a board that keeps re-ACKing the same offset (< size) would
-      // otherwise spin forever without ever timing out.
-      if (offset === before) { if (++stalls > 60) throw new Error(`OTA stalled at ${offset} — board not advancing`); }
-      else stalls = 0;
-      setProgress(offset, size);
+    const WINDOW = 8;                  // chunks in flight
+    let confirmed = 0;                 // board's ACK'd write cursor
+    let nextSend  = 0;                 // next offset to transmit
+    let noAdvance = 0;                 // consecutive cursor-stuck ACKs
+    let stalls    = 0;
+    while (confirmed < size) {
+      // Fill the window — send ahead without waiting per chunk.
+      while (nextSend < size && (nextSend - confirmed) < WINDOW * CHUNK) {
+        const slice = bytes.subarray(nextSend, Math.min(nextSend + CHUNK, size));
+        await sendLine(`?OTALOCAL,DATA,${nextSend},${toB64(slice)}`, true);
+        nextSend += CHUNK;
+      }
+      // Consume one cursor marker (buffered ones return immediately).
+      //
+      // ACK and NAK are treated IDENTICALLY: both simply report the board's write
+      // cursor. It is tempting to rewind the instant a NAK arrives — it names the
+      // resume point, after all — but that is wrong and expensive. Once a chunk is
+      // lost, EVERY chunk already in flight behind it is NAK'd with the same
+      // cursor, and those NAKs keep arriving after we have already rewound. Acting
+      // on each one throws away the progress just made and the transfer collapses:
+      // simulated at 28,088 sends for a 64-chunk image, a 440x amplification, from
+      // ONE lost chunk. Count them instead and rewind once per window.
+      let m2;
+      try {
+        m2 = await _otaAwaitMarker(10000);
+      } catch (_) {
+        // No marker at all. The tail of the window was lost, so nothing is coming
+        // and nothing further would be sent — a genuine deadlock without this.
+        // Rewind to the cursor and refill.
+        if (++stalls > 20) throw new Error(`OTA stalled at ${confirmed} — board not responding`);
+        nextSend = confirmed; noAdvance = 0;
+        continue;
+      }
+      const cur = /^\[OTA:(?:ACK|NAK),(\d+)\]/.exec(m2);
+      if (!cur) throw new Error('unexpected response — ' + m2);
+      const cursor = parseInt(cur[1], 10);
+
+      if (cursor > confirmed) {                  // progress
+        confirmed = cursor; noAdvance = 0; stalls = 0;
+      } else if (nextSend > confirmed) {
+        // Not advancing while chunks are outstanding. After a whole window of that,
+        // the chunk AT the cursor is genuinely lost rather than merely reordered —
+        // a reorder advances first and resets the counter.
+        if (++noAdvance >= WINDOW) { nextSend = confirmed; noAdvance = 0; }
+        if (++stalls > 200) throw new Error(`OTA stalled at ${confirmed} — board not advancing`);
+      }
+      setProgress(confirmed, size);
     }
+
+    // Drop any DATA-phase markers still buffered. The windowed loop above emits
+    // more ACKs than it consumes (the in-flight tail, plus any dups or resends),
+    // and _otaAwaitMarker returns a buffered marker IMMEDIATELY. Leave them and
+    // END's wait resolves against a stale [OTA:ACK,n] instead of [OTA:END,OK],
+    // which reads as "verify/finalize failed" on a perfectly good image. Safe to
+    // clear here: END has not been sent yet, so no genuine END marker can exist.
+    // (otaUpdateOverWcb does the same thing after its windowed loop, for the same
+    // reason — worth keeping the two paths symmetrical.)
+    _otaPendingMarkers = [];
 
     // END — verify (SHA) + switch boot slot + reboot into the new image.
     setStatus('OTA: verifying…');
@@ -17046,6 +17572,29 @@ async function otaUpdateOverUsb() {
 // device (the relay WCB) does NOT reboot — so there's no USB reconnect; the
 // target re-joins the mesh on its own. Chunks are 192 B (the ESP-NOW OTA payload),
 // ACK-paced on the relay's [OTA:ACK,<src>,<session>,<offset>,<status>] markers.
+// CRC-32 (reflected, poly 0xEDB88320, init/final 0xFFFFFFFF) — byte-for-byte the
+// same function as calculateCRC32() in the WCB's WCB.ino, which is what verifies
+// the value. Used to protect each ?OTA,DATA line across the USB->WCB serial hop:
+// that hop is where an RX-ring overflow can drop a run of bytes out of the MIDDLE
+// of a line, leaving text that is still valid base64 and still decodes cleanly —
+// silent corruption that nothing catches until the target's SHA-256 at 100%. The
+// ESP-NOW hop needs no cover: 802.11 already CRCs its frames in hardware.
+let _crc32Tab = null;
+function _crc32Hex(str) {
+  if (!_crc32Tab) {
+    _crc32Tab = new Uint32Array(256);
+    for (let n = 0; n < 256; n++) {
+      let c = n;
+      for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+      _crc32Tab[n] = c >>> 0;
+    }
+  }
+  let crc = 0xFFFFFFFF;
+  for (let i = 0; i < str.length; i++)
+    crc = (_crc32Tab[(crc ^ str.charCodeAt(i)) & 0xFF] ^ (crc >>> 8)) >>> 0;
+  return ((crc ^ 0xFFFFFFFF) >>> 0).toString(16).toUpperCase().padStart(8, '0');
+}
+
 async function otaUpdateOverWcb() {
   if (_otaInProgress || _fwFlashing) return;
   if (!viaWcbActive) {
@@ -17137,7 +17686,15 @@ async function otaUpdateOverWcb() {
     setStatus('OTA-WCB: streaming…');
     otaStartMs = Date.now();   // start the elapsed clock at the first DATA packet
     const WINDOW  = 8;      // packets in flight (< the target's 12-deep RX queue)
-    const PACE_MS = 12;     // small gap between sends so a burst can't flood the relay/USB
+    // Pace to the LINK, not faster than it. One DATA line is ~284 B (192 firmware
+    // bytes -> 256 base64 chars + header), and 284 B at 115200 8N1 is ~24.7 ms of
+    // wire time. At the old 12 ms this emitted ~2x what the link could carry, so a
+    // full window (8 x 284 = 2272 B) piled into the WCB's RX ring — which was 2 KB,
+    // i.e. the window could not fit even if the WCB drained nothing. The overflow
+    // dropped a run of bytes from the middle of a line, which is silent corruption,
+    // not loss (see the relay's crc32 check). 25 ms costs nothing real: the serial
+    // link is the bottleneck for a ~1.2 MB image either way.
+    const PACE_MS = 25;
     let confirmed = 0;      // target's ACK'd write cursor (bytes)
     let nextSend  = 0;      // next offset to transmit (bytes)
     let noAdvance = 0;      // consecutive cursor-stuck ACKs → the packet at `confirmed` is lost
@@ -17146,7 +17703,15 @@ async function otaUpdateOverWcb() {
       // Fill the window (send-ahead, don't wait per packet).
       while (nextSend < size && (nextSend - confirmed) < WINDOW * CHUNK) {
         const slice = bytes.subarray(nextSend, Math.min(nextSend + CHUNK, size));
-        await sendLine(`?OTA,DATA,${target},${session},${nextSend},${toB64(slice)}`, true);
+        const b64 = toB64(slice);
+        // "<offset>:<crc32>" — the suffix rides on the OFFSET field, not as a new
+        // trailing field, because the relay parses the offset with String::toInt(),
+        // which stops at the ':'. A WCB that predates the check therefore reads the
+        // offset exactly as before and ignores the suffix; appending a field instead
+        // would have been swept into the base64 and failed every packet on old
+        // firmware. Covers offset AND payload, so a mangled offset is caught too.
+        const crc = _crc32Hex(`${nextSend},${b64}`);
+        await sendLine(`?OTA,DATA,${target},${session},${nextSend}:${crc},${b64}`, true);
         nextSend += CHUNK;
         if (PACE_MS) await new Promise(r => setTimeout(r, PACE_MS));
       }
@@ -17375,8 +17940,12 @@ async function runFirmwareFlash({ eraseNvs, sourceBtn, label, defaultLabel }) {
 // can't reset the target chip into download mode — attempting flash via
 // Via WCB would fail mid-write and likely brick the RC.  We disable the
 // buttons (greyed out + tooltip) whenever viaWcbActive is true, and
-// re-enable when it's cleared.  Also called once after DOM is ready to
-// pick up the localStorage-restored viaWcbActive state on page load.
+// re-enable when it's cleared.
+// INVARIANT: every site that assigns viaWcbActive must call this. There are
+// three (openPortAndStart, the disconnect path, onViaWcbToggle) and only the
+// last used to — so the buttons kept a dead session's transport. Note the flag
+// is deliberately NOT persisted (see onViaWcbToggle); the microtask call below
+// just sets the initial Direct-USB state before anything is connected.
 function _updateFirmwareBtnState() {
   const btnFlash = document.getElementById('btn-fw-flash');
   const btnWipe  = document.getElementById('btn-fw-wipe');
@@ -17420,7 +17989,8 @@ function _updateFirmwareBtnState() {
   }
 }
 // Run once after the listeners below are bound, so the initial state
-// (which may have viaWcbActive=true from localStorage restore) is reflected.
+// (Direct USB, nothing connected yet) is reflected. The flag is NOT persisted,
+// so this is always the Direct-USB state — see onViaWcbToggle.
 // Done with a microtask so it runs after DOMContentLoaded handlers settle.
 queueMicrotask(_updateFirmwareBtnState);
 
@@ -18609,7 +19179,7 @@ function handleConfigImportFile(event) {
                 else if (field === 'password') wp.password = String(raw);
                 else if (field === 'quantity') wp.quantity = Math.max(1, Math.min(20, Number(raw) || 4));
                 else if (field === 'deviceid') wp.deviceId = Math.max(1, Math.min(20, Number(raw) || 20));
-                else if (field === 'channel')  wp.channel  = Math.max(1, Math.min(13, Number(raw) || 1));
+                else if (field === 'channel')  wp.channel  = Math.max(1, Math.min(11, Number(raw) || 1));   // 1-11: setMeshChannel() rejects >11
               }
             }
           } else if (control === 'mp3transport' || control === 'mp3target' ||
@@ -18770,7 +19340,7 @@ function handleConfigImportFile(event) {
           if (!Number.isFinite(buttonId) || buttonId < 1 || buttonId > RC_TOTAL_SLOTS) continue;
           if (buttonId === RC_PHYSICAL_SLOTS) continue;   // slot 21 "Unassigned" sentinel
           if (!Number.isFinite(mode) || mode < 1 || mode > 3) continue;
-          if (!Number.isFinite(tier) || tier < 1 || tier > 3) continue;
+          if (!Number.isFinite(tier) || tier < 1 || tier > NUM_TAP_TIERS) continue;
           let center = null;
           if (indexes.pwmValue >= 0) {
             const v = Number(cellStr(row, indexes.pwmValue));
@@ -19431,7 +20001,29 @@ async function _cfgPut(key, body) {
     method: 'PUT',
     headers: { 'Content-Type': 'application/octet-stream', 'X-CS-Token': CS_QR_TOKEN },
     body });
-  if (!r.ok) throw new Error('upload failed (' + r.status + ')');
+  if (!r.ok) {
+    // Name the cause. The Worker is deployed by PASTING
+    // tools/cheatsheet-relay-worker.js into the Cloudflare dashboard — there is no
+    // wrangler config — so the deployed copy can silently lag the repo, and the tool
+    // has no way to read its version. Every failure here therefore has to say what to
+    // DO, or a stale Worker simply reads as "cloud backup is broken".
+    //
+    // 413 is the one that matters: cfgBackup already refused anything over
+    // CFG_SLOT_MAX_B64 BEFORE the PUT, so a 413 does NOT mean the payload is too big.
+    // It means the deployed Worker is still enforcing an older, smaller CFG_MAX_BYTES.
+    const redeploy = " Redeploy tools/cheatsheet-relay-worker.js from the Cloudflare dashboard.";
+    const hint =
+      r.status === 413 ? " — this passed the tool's own " + _fmtBytes(CFG_SLOT_MAX_B64) +
+                         " check, so the deployed Worker has an OLDER, smaller limit." + redeploy :
+      r.status === 404 || r.status === 405
+                       ? " — the deployed Worker has no /cfg/ route." + redeploy :
+      r.status === 403 ? " — the Worker rejected the upload token; its UPLOAD_TOKEN secret and" +
+                         " this tool's CS_QR_TOKEN must match." :
+      r.status === 429 ? " — the Worker's hourly upload cap (shared with the cheat-sheet relay)" +
+                         " is reached. Try again later." :
+      r.status >= 500  ? " — the Worker errored; check its KV binding CS in the dashboard." : "";
+    throw new Error("cloud upload failed (" + r.status + ")" + hint);
+  }
 }
 async function _cfgFetch(key) {
   const r = await fetch(CS_QR_ENDPOINT + '/cfg/' + key, { headers: { 'X-CS-Token': CS_QR_TOKEN } });
@@ -19596,7 +20188,11 @@ async function cfgDownload(user, pw, i, note, ts) {
   catch (e) { throw new Error('decryption failed — wrong username/password or corrupted backup'); }
   if (!obj || !obj.config) throw new Error('backup contained no config');
   const savedAt = obj.savedAt || ts || 0;
+  // Carry clips through. Rebuilding `out` from config alone would hand back a
+  // file that LOOKS like a complete backup and silently is not — the worst shape
+  // for a backup artifact, since you would only find out at restore.
   const out = { navicore: 'config-backup/v1', savedAt, note: note || '', config: obj.config };
+  if (Array.isArray(obj.clips) && obj.clips.length) out.clips = obj.clips;
   const slug = (note || '').replace(/[^\w-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 24);
   const day  = savedAt ? new Date(savedAt).toISOString().slice(0, 10) : 'export';
   _cfgDownloadTextFile('navicore-config-' + (slug ? slug + '-' : '') + day + '.json',
@@ -19614,10 +20210,18 @@ async function cfgUploadFile(user, pw, file) {
   const base     = await _cfgSlotBase(user, pw);
   const manifest = await _cfgLoadManifest(user, pw);
   const idx      = manifest.next % CFG_BACKUP_MAX;
-  const blob     = await _cfgEncrypt(user, pw, JSON.stringify({ v: 1, savedAt: Date.now(), config: cfg }));
+  // Carry clips from the file into the cloud slot too — uploading a bundle must
+  // not quietly downgrade it to config-only.
+  const upClips  = (parsed && Array.isArray(parsed.clips) && parsed.clips.length) ? parsed.clips : null;
+  const upBody   = { v: 1, savedAt: Date.now(), config: cfg };
+  if (upClips) upBody.clips = upClips;
+  const blob     = await _cfgEncrypt(user, pw, JSON.stringify(upBody));
+  if (blob.length > CFG_SLOT_MAX_B64)
+    throw new Error(`that backup is ${_fmtBytes(blob.length)} after compression — over the ` +
+                    `${_fmtBytes(CFG_SLOT_MAX_B64)} cloud slot limit. Keep it as a local file instead.`);
   await _cfgPut(base + 's' + idx, blob);
   manifest.list = manifest.list.filter(e => e.i !== idx);
-  manifest.list.push({ i: idx, ts: Date.now(), size: blob.length,
+  manifest.list.push({ i: idx, ts: Date.now(), size: blob.length, clips: (upClips ? upClips.length : 0),
                        note: (((parsed && parsed.note) || file.name || '') + ' (uploaded)').slice(0, 80) });
   if (manifest.list.length > CFG_BACKUP_MAX) manifest.list = manifest.list.slice(-CFG_BACKUP_MAX);
   manifest.next = (idx + 1) % CFG_BACKUP_MAX;
@@ -19677,13 +20281,74 @@ function cfgOpenCloudModal() {
     + '<button id="cfg-cloud-loadfile" class="btn btn-ghost" style="padding:6px 12px;font-size:12px" title="Load a config .json file from disk straight into the tool (no cloud)">📂 Load a config file → tool</button>'
     + '<input id="cfg-cloud-file" type="file" accept=".json,application/json" style="display:none"></div>'
     + '<div id="cfg-cloud-status" style="font-size:12.5px;color:var(--muted,#9a9aa2);min-height:16px;margin-bottom:8px"></div>'
-    + '<div id="cfg-cloud-list-wrap"></div></div>';
+    + '<div id="cfg-cloud-list-wrap"></div>'
+    // ── Droid WiFi (hidden) ──────────────────────────────────────────────────
+    // Deliberately parked inside the cloud-backup modal rather than given a tab or
+    // a section of its own. That modal is already behind the 4x-wordmark gesture, so
+    // this inherits an existing hiding place instead of inventing a second secret —
+    // one obscure entry point is easier to reason about than two. Nothing about this
+    // is security: the tool is public and readable. The real gate is the firmware's
+    // wifiEnabled defaulting false, with the bring-up code unreachable while it is.
+    + '<div style="border-top:1px solid var(--border,#3a3a44);margin:18px 0 12px"></div>'
+    + '<label style="display:flex;align-items:flex-start;gap:8px;font-size:12.5px;cursor:pointer">'
+    + '<input id="cfg-wifi-enable" type="checkbox"' + (config.wifiEnabled ? ' checked' : '') + ' style="margin-top:3px;flex:none">'
+    + '<span><b>Enable droid WiFi</b> <span style="color:var(--muted,#9a9aa2)">— experimental, off by default</span><br>'
+    + '<span style="color:var(--muted,#9a9aa2);line-height:1.5">Raises a SoftAP on the droid for wireless access. '
+    + 'Takes effect after <b>Save</b> and a <b>reboot</b> — the AP has to be up before the mesh starts. '
+    + 'The AP is created on your mesh channel (<b>' + ((config.wcbNetwork && config.wcbNetwork.channel) || 1) + '</b>): the ESP32 has one radio, '
+    + 'so any other channel would take this droid off its own mesh. Leave off unless you are using the app.</span></span></label>'
+    + '<div style="display:flex;gap:8px;margin:10px 0 0 24px">'
+    + '<input id="cfg-wifi-ssid" type="text" maxlength="32" placeholder="AP name (blank = NaviCore-' + ((config.wcbNetwork && config.wcbNetwork.deviceId) || 20) + ')" '
+    + 'value="' + esc(config.wifiSsid) + '" style="flex:1;min-width:0;' + inputCss + '">'
+    + '<input id="cfg-wifi-pw" type="password" maxlength="63" placeholder="AP password (8+ chars)" '
+    + 'value="' + esc(config.wifiPassword) + '" style="flex:1;min-width:0;' + inputCss + '">'
+    + '<button id="cfg-wifi-pw-eye" type="button" title="Show / hide password" aria-label="Show AP password" style="padding:7px 10px;cursor:pointer;' + inputCss + '">👁</button></div>'
+    + '<div id="cfg-wifi-note" style="font-size:12px;color:var(--accent-bright,#5cb0ff);min-height:15px;margin:6px 0 0 24px"></div>'
+    + '</div>';
   document.body.appendChild(ov);
   const $  = id => document.getElementById(id);
   const setStatus = (t, err) => { const s = $('cfg-cloud-status'); s.textContent = t; s.style.color = err ? '#e5737b' : 'var(--muted,#9a9aa2)'; };
   const close = () => ov.remove();
   ov.addEventListener('click', e => { if (e.target === ov) close(); });
   $('cfg-cloud-close').addEventListener('click', close);
+  // Droid WiFi toggle. Writes straight to `config` like every other config control
+  // (the dirty badge is derived by polling/diffing against the baseline, so there is
+  // nothing to notify) — it does NOT send anything on its own. Save writes it, and
+  // the board only acts on it at boot, so say both out loud: a silent toggle here
+  // would look applied while the radio stayed exactly as it was.
+  // Restate the pending state after every edit. The firmware FAILS CLOSED on a
+  // password under 8 chars (WPA2's minimum) — it refuses to raise the AP rather
+  // than falling back to an open network — so a too-short password must be called
+  // out HERE. Otherwise the user saves, reboots, finds no AP, and has nothing to
+  // go on but a serial line they are not watching.
+  const _wifiNote = () => {
+    const note = $('cfg-wifi-note');
+    if (!note) return;
+    const on = $('cfg-wifi-enable').checked;
+    const pw = $('cfg-wifi-pw').value || '';
+    if (!on) { note.style.color = 'var(--muted,#9a9aa2)'; note.textContent = 'WiFi will be OFF after you Save and reboot.'; return; }
+    if (pw.length < 8) {
+      note.style.color = '#e5737b';
+      note.textContent = pw.length
+        ? 'Password is ' + pw.length + ' characters — WPA2 needs 8. The board will refuse to start the AP.'
+        : 'Set a password (8+ characters). The board will not start an open AP.';
+      return;
+    }
+    note.style.color = 'var(--accent-bright,#5cb0ff)';
+    note.textContent = 'WiFi will be ON after you Save and reboot. Join "'
+      + (($('cfg-wifi-ssid').value || '').trim() || ('NaviCore-' + ((config.wcbNetwork && config.wcbNetwork.deviceId) || 20)))
+      + '" from the app.';
+  };
+  $('cfg-wifi-enable').addEventListener('change', e => { config.wifiEnabled = e.target.checked; _wifiNote(); });
+  $('cfg-wifi-ssid').addEventListener('input', e => { config.wifiSsid     = e.target.value.slice(0, 32); _wifiNote(); });
+  $('cfg-wifi-pw').addEventListener('input',   e => { config.wifiPassword = e.target.value.slice(0, 63); _wifiNote(); });
+  $('cfg-wifi-pw-eye').addEventListener('click', () => {
+    const p = $('cfg-wifi-pw'), eye = $('cfg-wifi-pw-eye');
+    const show = p.type === 'password';
+    p.type = show ? 'text' : 'password';
+    eye.textContent = show ? '🙈' : '👁';
+  });
+  _wifiNote();
   // 👁 show/hide the password field.
   $('cfg-cloud-pw-eye').addEventListener('click', () => {
     const p = $('cfg-cloud-pw'), eye = $('cfg-cloud-pw-eye');
